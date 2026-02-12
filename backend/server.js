@@ -18,24 +18,26 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 // Configure CORS to allow requests from Codespaces and localhost
+// 1. Ajoutez votre URL Vercel dans cette liste (ou via .env)
 const allowedOrigins = [
-  'https://lyft-zone.vercel.app/'
   'http://localhost:3000',
   'http://127.0.0.1:3000',
-  'http://localhost:5000',
-  'http://127.0.0.1:5000',
-];
+  process.env.FRONTEND_URL, // Ajoutez ceci pour Render
+].filter(Boolean); // Retire les valeurs vides si FRONTEND_URL n'est pas défini
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Autoriser requêtes sans origin (Postman, curl)
     if (!origin) return callback(null, true);
 
-    // Autoriser localhost
-    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // Vérification localhost ou URL spécifique
+    const isAllowed = allowedOrigins.includes(origin);
+    
+    // Vérification Codespaces ou Vercel (wildcard)
+    const isPreview = /\.github\.dev$/.test(origin) || /\.vercel\.app$/.test(origin);
 
-    // Autoriser tous les sous-domaines github.dev (Codespaces)
-    if (/\.github\.dev$/.test(origin)) return callback(null, true);
+    if (isAllowed || isPreview) {
+      return callback(null, true);
+    }
 
     console.log(`CORS blocked origin: ${origin}`);
     return callback(new Error('Not allowed by CORS'));
