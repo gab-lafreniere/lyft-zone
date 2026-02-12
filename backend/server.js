@@ -19,6 +19,7 @@ const PORT = process.env.PORT || 5000;
 // Middleware
 // Configure CORS to allow requests from Codespaces and localhost
 const allowedOrigins = [
+  'https://lyft-zone.vercel.app/'
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'http://localhost:5000',
