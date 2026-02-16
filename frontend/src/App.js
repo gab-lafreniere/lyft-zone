@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { fetchExercises } from './services/api';
+import { fetchExercises, savePlan } from './services/api';
 import ExerciseGrid from './components/ExerciseGrid';
 import SelectedExercisesPanel from './components/SelectedExercisesPanel';
 import PlanBuilder from './components/PlanBuilder';
@@ -71,13 +71,17 @@ function App() {
   };
 
   /**
-   * Handle saving a plan draft
-   * Logs the plan to console and stores it in state
+   * Handle saving a plan: envoie le programme au backend (Phase 1 Program + TrainingSessions)
    */
-  const handleSavePlan = (plan) => {
-    setSavedPlans([...savedPlans, plan]);
-    console.log('✅ Plan Draft Saved!', plan);
-    alert(`Plan "${plan.name}" has been saved! Check the console for the full plan object.`);
+  const handleSavePlan = async (programPayload) => {
+    try {
+      const data = await savePlan(programPayload);
+      setSavedPlans([...savedPlans, data]);
+      alert(`Plan "${programPayload.name}" a été enregistré.`);
+    } catch (err) {
+      console.error('Error saving plan:', err);
+      alert(err.message || 'Erreur lors de l’enregistrement du plan.');
+    }
   };
 
   return (

@@ -98,29 +98,28 @@ const PlanBuilder = ({ selectedExercises, onSavePlan }) => {
   const handleSavePlan = () => {
     if (!validatePlan()) return;
 
-    // Build the plan object
-    const plan = {
+    // Payload Phase 1 : Program + sessions avec exerciseSlots (backend)
+    const programPayload = {
+      userId: 'default-user',
       name: planName.trim(),
-      weeks: parseInt(weeks),
-      trainingDaysPerWeek: planDays.length,
-      days: planDays.map((day) => ({
-        dayNumber: day.dayNumber,
+      durationWeeks: parseInt(weeks, 10) || null,
+      sessionsPerWeek: planDays.length,
+      sessions: planDays.map((day, i) => ({
         name: day.name,
-        exercises: day.exercises.map((ex) => ({
-          name: ex.name,
+        orderIndex: i + 1,
+        exerciseSlots: day.exercises.map((ex, j) => ({
+          exerciseId: ex.id,
+          orderIndex: j + 1,
           sets: ex.sets,
-          reps: ex.reps,
-          tempo: ex.tempo,
-          rir: ex.rir,
+          repsTarget: ex.reps,
+          intensityMode: 'rir',
+          intensityValue: ex.rir ?? 2,
+          tempo: ex.tempo || null,
         })),
       })),
     };
 
-    // Log to console for review
-    console.log('Plan Draft Ready to Save:', plan);
-
-    // Call the parent callback
-    onSavePlan(plan);
+    onSavePlan(programPayload);
   };
 
   return (
@@ -244,7 +243,7 @@ const PlanBuilder = ({ selectedExercises, onSavePlan }) => {
           {/* Info Box */}
           <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <p className="text-sm text-blue-900">
-              <span className="font-semibold">📋 Tip:</span> Check the browser console (F12) after saving to see the complete plan object that will be sent to the backend in Phase 3.
+              <span className="font-semibold">Tip:</span> Le plan est enregistré côté backend (Program + séances avec exerciseSlots).
             </p>
           </div>
         </>

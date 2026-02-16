@@ -5,8 +5,11 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { sequelize, testConnection, syncDatabase } = require('./db');
+const { testConnection, syncDatabase } = require('./db');
 const { populateExercisesFromJSON } = require('./controllers/exerciseController');
+
+// Charger les modèles et associations avant sync
+require('./models');
 
 // Import routes
 const exerciseRoutes = require('./routes/exercises');

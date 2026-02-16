@@ -38,12 +38,13 @@ const TrainingDayBuilder = ({
     if (!exercise) return;
 
     const newDayExercise = {
+      id: exercise.id,
       name: exercise.name,
       muscleGroup: exercise.muscleGroup,
       equipment: exercise.equipment,
       sets: 3,
       reps: '8-10',
-      tempo: exercise.tempo,
+      tempo: exercise.tempo ?? exercise.recommendedTempo,
       rir: 2,
     };
 

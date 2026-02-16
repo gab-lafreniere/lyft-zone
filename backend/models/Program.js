@@ -1,11 +1,11 @@
-// Plan Model
-// Defines the TrainingPlan schema for the database
-// Fields: id, userId, name, exercises (JSON), createdAt
+// Program Model (Phase 1)
+// Template hebdomadaire : N types de séances répétées chaque semaine.
+// Champs: id, userId, name, durationWeeks, sessionsPerWeek, createdAt
 
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../db');
 
-const Plan = sequelize.define('Plan', {
+const Program = sequelize.define('Program', {
   id: {
     type: DataTypes.INTEGER,
     primaryKey: true,
@@ -19,8 +19,12 @@ const Plan = sequelize.define('Plan', {
     type: DataTypes.STRING,
     allowNull: false,
   },
-  exercises: {
-    type: DataTypes.JSON,
+  durationWeeks: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  sessionsPerWeek: {
+    type: DataTypes.INTEGER,
     allowNull: false,
   },
   createdAt: {
@@ -28,8 +32,8 @@ const Plan = sequelize.define('Plan', {
     defaultValue: DataTypes.NOW,
   },
 }, {
-  tableName: 'plans',
+  tableName: 'programs',
   timestamps: false,
 });
 
-module.exports = Plan;
+module.exports = Program;

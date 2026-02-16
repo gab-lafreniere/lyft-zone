@@ -1,31 +1,54 @@
-// Plan Controller
-// Handles business logic for training plans
-// Functions: createPlan, getPlansByUserId
+// Plan Controller (Phase 1)
+// Refactor minimal : crée Program + TrainingSessions (exerciseSlots en JSON).
+// Pas de logique IA ni génération automatique.
 
-const Plan = require('../models/Plan');
+const { Program, TrainingSession } = require('../models');
 
-// Create a new training plan
+// Créer un programme et ses séances
 const createPlan = async (req, res) => {
   try {
-    const { userId, name, exercises } = req.body;
+    const { userId, name, durationWeeks, sessionsPerWeek, sessions } = req.body;
 
-    if (!userId || !name || !exercises) {
+    if (!userId || !name || sessionsPerWeek == null) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: userId, name, exercises',
+        message: 'Missing required fields: userId, name, sessionsPerWeek',
       });
     }
 
-    const plan = await Plan.create({
+    if (!Array.isArray(sessions) || sessions.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'sessions must be a non-empty array',
+      });
+    }
+
+    const program = await Program.create({
       userId,
       name,
-      exercises,
+      durationWeeks: durationWeeks ?? null,
+      sessionsPerWeek,
+    });
+
+    const sessionRecords = await Promise.all(
+      sessions.map((s) =>
+        TrainingSession.create({
+          programId: program.id,
+          name: s.name || `Session ${s.orderIndex ?? 0}`,
+          orderIndex: s.orderIndex ?? 0,
+          exerciseSlots: Array.isArray(s.exerciseSlots) ? s.exerciseSlots : [],
+        })
+      )
+    );
+
+    const programWithSessions = await Program.findByPk(program.id, {
+      include: [{ model: TrainingSession, as: 'TrainingSessions' }],
     });
 
     res.status(201).json({
       success: true,
       message: 'Plan created successfully',
-      data: plan,
+      data: programWithSessions,
     });
   } catch (error) {
     console.error('Error creating plan:', error);
@@ -37,20 +60,24 @@ const createPlan = async (req, res) => {
   }
 };
 
-// Get all plans for a specific user
+// Récupérer tous les programmes d'un utilisateur (avec séances)
 const getPlansByUserId = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    const plans = await Plan.findAll({
+    const programs = await Program.findAll({
       where: { userId },
-      order: [['createdAt', 'DESC']],
+      include: [{ model: TrainingSession, as: 'TrainingSessions' }],
+      order: [
+        ['createdAt', 'DESC'],
+        [TrainingSession, 'orderIndex', 'ASC'],
+      ],
     });
 
     res.status(200).json({
       success: true,
-      count: plans.length,
-      data: plans,
+      count: programs.length,
+      data: programs,
     });
   } catch (error) {
     console.error('Error fetching plans:', error);

@@ -52,11 +52,11 @@ const getExerciseById = async (req, res) => {
   }
 };
 
-// Populate exercises from JSON file if database is empty
+// Populate exercises from JSON file if database is empty (Phase 1: mapping champs canoniques)
 const populateExercisesFromJSON = async () => {
   try {
     const count = await Exercise.count();
-    
+
     if (count > 0) {
       console.log(`✓ Database already has ${count} exercises`);
       return;
@@ -64,7 +64,25 @@ const populateExercisesFromJSON = async () => {
 
     const dataPath = path.join(__dirname, '../data/exercises.json');
     const rawData = fs.readFileSync(dataPath, 'utf8');
-    const exercises = JSON.parse(rawData);
+    const raw = JSON.parse(rawData);
+
+    const exercises = raw.map((ex) => ({
+      name: ex.name,
+      muscleGroup: ex.muscleGroup,
+      equipment: ex.equipment,
+      difficulty: ex.difficulty,
+      imageUrl: ex.imageUrl,
+      tempo: ex.tempo,
+      primaryMuscleGroup: ex.muscleGroup ?? ex.primaryMuscleGroup,
+      loadType: Exercise.equipmentToLoadType(ex.equipment),
+      recommendedTempo: ex.tempo ?? ex.recommendedTempo,
+      externalId: ex.externalId ?? null,
+      secondaryMuscleGroups: ex.secondaryMuscleGroups ?? [],
+      exerciseType: ex.exerciseType ?? 'compound',
+      tensionProfile: ex.tensionProfile ?? null,
+      systemicFatigueLevel: ex.systemicFatigueLevel ?? null,
+      substituteExerciseIds: ex.substituteExerciseIds ?? [],
+    }));
 
     await Exercise.bulkCreate(exercises);
     console.log(`✓ Populated ${exercises.length} exercises from JSON`);

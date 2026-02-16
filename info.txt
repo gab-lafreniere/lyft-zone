@@ -1,0 +1,337 @@
+Projet: Lyft-Zone
+
+Repository: https://github.com/gab-lafreniere/lyft-zone
+
+Environnement
+- Développement local uniquement
+- Frontend et backend lancés via un seul script terminal
+- Variables d’environnement chargées depuis le dossier lyft-zone (.env)
+- APIs externes uniquement si open source ou self-hosted
+- Aucun service payant obligatoire
+
+Le dossier lyft-zone contient une application web dont l’objectif est
+d’accompagner les utilisateurs dans leur évolution physique au gym
+avec une approche factuelle, structurée et orientée esthétique bodybuilding classic.
+
+L’application ne couvre PAS:
+- la nutrition
+- la récupération hors séance
+- les recommandations médicales
+
+---
+
+PHILOSOPHIE D’ENTRAÎNEMENT
+
+L’application est fondée sur les principes fondamentaux de l’entraînement en musculation:
+
+1. Surcharge progressive  
+Augmentation planifiée de la difficulté par charge, répétitions, volume, fréquence ou tempo.
+
+2. Volume d’entraînement  
+Gestion du nombre total de séries efficaces par muscle et par semaine.
+
+3. Intensité de l’effort  
+Gestion de la proximité de l’échec musculaire via RIR ou RPE.
+
+4. Tension mécanique  
+Charge, amplitude complète et contrôle du mouvement.
+
+5. Fréquence d’entraînement  
+Nombre de stimulations hebdomadaires par muscle.
+
+6. Temps sous tension  
+Tempo contrôlé et durée de sollicitation musculaire.
+
+7. Choix des exercices  
+Combinaison intelligente de polyarticulaires et isolations.
+
+8. Structure du programme  
+Organisation des séances, ordre des exercices et gestion de la fatigue.
+
+Ces facteurs sont gérés automatiquement par le système.
+L’utilisateur n’a jamais à faire de calcul mental.
+
+---
+
+VISION PRODUIT
+
+Lyft-Zone est un coach IA spécialisé en esthétique bodybuilding classic.
+
+L’objectif n’est pas uniquement la performance, mais la construction
+d’un physique harmonieux selon les standards du bodybuilding classic
+(symétrie, proportions, équilibre musculaire, lignes esthétiques).
+
+-----------------------------------
+PRINCIPES D’ENTRAÎNEMENT COUVERTS
+-----------------------------------
+
+1. Surcharge progressive  
+Augmentation planifiée de la difficulté par charge, répétitions, volume, fréquence ou tempo.
+
+2. Volume d’entraînement  
+Gestion du nombre total de séries efficaces par muscle et par semaine.
+
+3. Intensité de l’effort  
+Gestion de la proximité de l’échec musculaire via RIR ou RPE.
+
+4. Tension mécanique  
+Charge, amplitude complète et contrôle du mouvement.
+
+5. Fréquence d’entraînement  
+Nombre de stimulations hebdomadaires par muscle.
+
+6. Temps sous tension  
+Tempo contrôlé et durée de sollicitation musculaire.
+
+7. Choix des exercices  
+Combinaison intelligente de polyarticulaires et isolations.
+
+8. Structure du programme  
+Organisation des séances, ordre des exercices et gestion de la fatigue.
+
+---
+
+ARCHITECTURE GLOBALE
+
+Modules principaux:
+
+- Générateur intelligent de programmes
+- Base d’exercices avancée (self-hosted)
+- Planification et périodisation
+- Suivi des séances en temps réel
+- Suivi de la progression
+- Analyse de performance
+- Analyse esthétique par IA
+- Coach IA longitudinal
+- Historique et ajustements automatiques
+- Gestion utilisateur et préférences
+
+--------------------------------------------------
+ARCHITECTURE TECHNIQUE
+--------------------------------------------------
+
+- Frontend: React
+- Backend: Node.js + Express
+- Base de données: backend only
+- Le frontend n’est jamais la source de vérité
+- Toute logique métier vit côté backend
+
+Déploiement:
+- Frontend: Vercel
+- Backend: Render
+
+--------------------------------------------------
+RÈGLES DE DÉVELOPPEMENT
+--------------------------------------------------
+
+1. Ne jamais inventer de logique d’entraînement
+   Toutes les règles doivent être explicitement définies
+
+2. Séparer strictement:
+   - règles métier
+   - logique IA
+   - affichage UI
+
+3. Toujours privilégier:
+   - clarté
+   - explicabilité
+   - évolutivité
+
+4. Pas de sur ingénierie
+   Chaque abstraction doit être justifiée par un besoin réel
+
+--------------------------------------------------
+PRIORITÉS ACTUELLES
+--------------------------------------------------
+
+Phase 1: Fondations
+- Base d’exercices fiable
+- Modèle de séance clair
+- Modèle de programme clair
+- Calcul du volume par muscle
+- Gestion simple de la surcharge progressive
+
+Phase 2: Suivi
+- Enregistrement des performances
+- Historique par exercice
+- Analyse de progression basique
+
+Phase 3: IA
+- Assistance à la génération
+- Justification des choix
+- Ajustements intelligents
+
+---
+
+BASE D’EXERCICES
+
+Source:
+- Dataset open source ExerciseDB
+- Hébergé et enrichi localement
+
+Données par exercice:
+- Groupe musculaire principal et secondaires
+- Type: polyarticulaire ou isolation
+- Profil de tension: étirée, moyenne, raccourcie
+- Charge typique: libre, machine, poids du corps
+- Niveau de fatigue systémique
+- Tempo recommandé
+- Substituts intelligents
+
+L’IA n’invente jamais d’exercices.
+Elle ne travaille que sur la base interne.
+
+---
+
+GÉNÉRATION DES PLANS D’ENTRAÎNEMENT
+
+Objectif:
+Créer des plans qui respectent automatiquement
+surcharge, volume, intensité, fréquence et structure.
+
+Entrées utilisateur:
+- Objectif principal
+- Nombre de séances par semaine
+- Durée cible
+- Équipement disponible
+- Contraintes et préférences
+
+Logique:
+- Le backend calcule toutes les règles (volume, fréquence, fatigue)
+- L’IA assemble, personnalise et optimise le plan
+- L’IA justifie ses choix comme un coach humain
+
+---
+
+GESTION DE L’INTENSITÉ
+
+- Modes supportés: RIR, RPE, reps fixes
+- Recommandations automatiques par exercice
+- Ajustements intelligents si baisse de performance
+
+---
+
+SURCHARGE PROGRESSIVE
+
+Méthodes supportées:
+- Charge
+- Répétitions
+- Séries
+- Densité
+- Double progression
+
+Les règles sont automatiques et invisibles pour l’utilisateur.
+
+---
+
+SUIVI DES SÉANCES
+
+- Mode entraînement plein écran
+- Input rapide poids, reps, RIR
+- Chronomètre de repos intégré
+- Mobile first strict
+
+---
+
+PERSISTANCE DES DONNÉES
+
+Toutes les données utilisateur sont persistées côté backend:
+
+- Utilisateur
+- Programmes
+- Séances
+- Performances par exercice
+- Historique de progression
+- États de fatigue
+- Décisions automatiques appliquées
+
+Le frontend n’est jamais la source de vérité.
+
+---
+
+ANALYSE ESTHÉTIQUE PAR IA
+
+Fonction clé du produit.
+
+Processus:
+1. Check-in photo (4 angles standards)
+2. Les images sont analysées puis supprimées définitivement
+3. L’IA applique des connaissances en bodybuilding classic
+4. Analyse des proportions musculaires et de l’harmonie globale
+5. Identification des muscles sous-développés esthétiquement
+6. Croisement avec:
+   - historique d’entraînement
+   - volume réel par muscle
+   - progression mesurée
+7. Recommandations de focus pour les prochains cycles
+
+Ton utilisé:
+- Neutre
+- Factuel
+- Coaching
+- Aucune promesse médicale
+
+---
+
+COACH IA LONGITUDINAL
+
+L’IA agit comme un coach dans le temps:
+
+- Compare les check-ins visuels
+- Analyse l’évolution esthétique
+- Vérifie si les points faibles s’améliorent
+- Explique les résultats
+- Ajuste les cycles futurs
+- Propose deload ou changements de stratégie si nécessaire
+
+L’IA n’outrepasse jamais les règles d’entraînement définies par le moteur backend.
+
+--------------------------------------------------
+IA ET RÈGLES
+--------------------------------------------------
+
+L’IA:
+- N’invente jamais d’exercices
+- Ne contourne jamais les règles backend
+- Explique toujours ses décisions
+- Reste factuelle et neutre
+
+Le moteur backend décide.
+L’IA assiste et optimise.
+
+---
+
+UX ET DESIGN
+
+Principes clés:
+- Zéro calcul mental pendant l’entraînement
+- Décisions complexes uniquement hors séance
+- Mobile first obligatoire
+- Interface claire, minimaliste, inspirée de plateformes modernes type 21st.dev
+- Une décision à la fois
+- Feedback immédiat
+
+Wizard:
+- 4 à 6 étapes maximum
+- Intention utilisateur, pas stratégie
+- Résumé clair avant validation
+
+---
+
+CONTRAINTES POUR L’AGENT IA
+
+- Projet local uniquement
+- Créer un fichier cursorrules adapté à ce projet
+- Fournir un script unique pour lancer frontend + backend
+- Gérer les commits et pushs GitHub
+- Messages de commit clairs, explicites et structurés
+- Respecter la vision produit sans simplification abusive
+
+--------------------------------------------------
+RÈGLE FINALE
+--------------------------------------------------
+
+Si un doute existe:
+- Ne pas deviner
+- Poser la question
+- Proposer une solution minimale
