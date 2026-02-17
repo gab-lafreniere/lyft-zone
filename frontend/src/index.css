@@ -13,3 +13,7 @@ body {
   background: #f7f7f8;
   color: #0f172a;
 }
+
+button, a, div {
+    position: static;
+  }
