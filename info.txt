@@ -1,115 +1,159 @@
 Projet: Lyft-Zone
-
 Repository: https://github.com/gab-lafreniere/lyft-zone
 
-Environnement
+==================================================
+ENVIRONNEMENT
+==================================================
 - Développement local uniquement
 - Frontend et backend lancés via un seul script terminal
 - Variables d’environnement chargées depuis le dossier lyft-zone (.env)
 - APIs externes uniquement si open source ou self-hosted
 - Aucun service payant obligatoire
 
-Le dossier lyft-zone contient une application web dont l’objectif est
-d’accompagner les utilisateurs dans leur évolution physique au gym
-avec une approche factuelle, structurée et orientée esthétique bodybuilding classic.
-
-L’application ne couvre PAS:
-- la nutrition
-- la récupération hors séance
-- les recommandations médicales
-
----
-
-PHILOSOPHIE D’ENTRAÎNEMENT
-
-L’application est fondée sur les principes fondamentaux de l’entraînement en musculation:
-
-1. Surcharge progressive  
-Augmentation planifiée de la difficulté par charge, répétitions, volume, fréquence ou tempo.
-
-2. Volume d’entraînement  
-Gestion du nombre total de séries efficaces par muscle et par semaine.
-
-3. Intensité de l’effort  
-Gestion de la proximité de l’échec musculaire via RIR ou RPE.
-
-4. Tension mécanique  
-Charge, amplitude complète et contrôle du mouvement.
-
-5. Fréquence d’entraînement  
-Nombre de stimulations hebdomadaires par muscle.
-
-6. Temps sous tension  
-Tempo contrôlé et durée de sollicitation musculaire.
-
-7. Choix des exercices  
-Combinaison intelligente de polyarticulaires et isolations.
-
-8. Structure du programme  
-Organisation des séances, ordre des exercices et gestion de la fatigue.
-
-Ces facteurs sont gérés automatiquement par le système.
-L’utilisateur n’a jamais à faire de calcul mental.
-
----
-
+==================================================
 VISION PRODUIT
+==================================================
+Lyft-Zone est une application web qui accompagne les utilisateurs dans leur évolution physique au gym avec une approche factuelle, structurée et orientée esthétique bodybuilding classic.
 
-Lyft-Zone est un coach IA spécialisé en esthétique bodybuilding classic.
+Objectif: construire un physique harmonieux selon des critères de classic physique (symétrie, proportions, équilibre musculaire, lignes esthétiques) tout en restant clair et explicable.
 
-L’objectif n’est pas uniquement la performance, mais la construction
-d’un physique harmonieux selon les standards du bodybuilding classic
-(symétrie, proportions, équilibre musculaire, lignes esthétiques).
+Hors scope:
+- nutrition
+- récupération hors séance
+- recommandations médicales
 
------------------------------------
-PRINCIPES D’ENTRAÎNEMENT COUVERTS
------------------------------------
+==================================================
+PHILOSOPHIE D’ENTRAÎNEMENT
+==================================================
+Le système applique automatiquement les fondamentaux suivants, sans calcul mental pour l’utilisateur:
+1. Surcharge progressive (charge, reps, séries, densité, double progression)
+2. Volume d’entraînement (séries efficaces par muscle et par semaine)
+3. Intensité de l’effort (RIR ou RPE, ou reps fixes)
+4. Tension mécanique (charge, amplitude, contrôle)
+5. Fréquence d’entraînement (stimulations hebdomadaires par muscle)
+6. Temps sous tension (tempo et durée)
+7. Choix des exercices (polyarticulaires + isolations intelligentes)
+8. Structure du programme (ordre, fatigue, cohérence)
 
-1. Surcharge progressive  
-Augmentation planifiée de la difficulté par charge, répétitions, volume, fréquence ou tempo.
+==================================================
+MODÈLE PRODUIT: CYCLES ET PLANS
+==================================================
+Concept central: Cycle d’entraînement
+- Un cycle dure typiquement 6 à 8 semaines
+- Un cycle contient:
+  - un plan de référence (plan initial généré)
+  - zéro ou plusieurs versions modifiées (par l’utilisateur et ou par l’IA)
+  - des séances planifiées dans un calendrier
+  - des métadonnées (date début, date fin, statut actif ou expiré)
 
-2. Volume d’entraînement  
-Gestion du nombre total de séries efficaces par muscle et par semaine.
+Génération initiale
+- Le wizard de nouvel utilisateur crée automatiquement:
+  - un premier cycle (6 à 8 semaines)
+  - un plan de référence
+  - les séances planifiées sur le calendrier
+  - une date de fin de cycle
 
-3. Intensité de l’effort  
-Gestion de la proximité de l’échec musculaire via RIR ou RPE.
+Deux modes de fonctionnement
+A) Mode plan fixe (sans Coach IA)
+- Le plan ne se modifie pas automatiquement au fil du temps
+- L’utilisateur peut:
+  - modifier le plan manuellement
+  - créer un nouveau plan et donc un nouveau cycle à tout moment
+- Aucune recommandation basée sur l’historique ou le check-in
 
-4. Tension mécanique  
-Charge, amplitude complète et contrôle du mouvement.
+B) Mode Coach IA (plan adaptatif)
+- Le plan est vivant pendant le cycle
+- L’IA peut proposer et appliquer des ajustements (ex: deload, volume, substitutions, préférences, contraintes)
+- L’utilisateur peut aussi modifier manuellement le plan
+  - Chaque changement doit est tracé avec une source: IA ou utilisateur
+  - Un changement par l'IA doit être avant tout accepter ou refuser auprès de l'utilisateur
+  - Le système recalcule les contraintes (volume, fréquence, fatigue) côté backend
+- Historique des versions:
+  - plan de référence toujours consultable
+  - versions modifiées consultables et comparables
 
-5. Fréquence d’entraînement  
-Nombre de stimulations hebdomadaires par muscle.
+Fin de cycle et régénération
+- En mode Coach IA, un check-in est requis à la fin du cycle pour régénérer un nouveau plan et planifier le prochain cycle
+- Si l’utilisateur ne fait rien:
+  - le plan actuel reste utilisable temporairement
+  - des rappels sont envoyés (ex: 7 jours avant la fin, à la fin, puis rappels doux)
 
-6. Temps sous tension  
-Tempo contrôlé et durée de sollicitation musculaire.
+==================================================
+ENTRÉES UTILISATEUR DU WIZARD
+==================================================
+Le wizard vise l’intention utilisateur (pas la stratégie) et doit rester court (4 à 6 étapes maximum).
 
-7. Choix des exercices  
-Combinaison intelligente de polyarticulaires et isolations.
+Entrées principales:
+- Objectif principal (force, masse musculaire, cardio, mobilité)
+- Disponibilités (séances par semaine, durée par séance)
+- Environnement et équipements disponibles
+- Contraintes et préférences (exercices à éviter, zones sensibles, blessures)
+- Priorités musculaires (optionnel)
 
-8. Structure du programme  
-Organisation des séances, ordre des exercices et gestion de la fatigue.
+Champ additionnel:
+- Profil utilisateur (ex: sexe) si cela sert à ajuster factuellement le style du programme
+  - Important: présentation neutre et utilitaire, aucune norme de valeur
 
----
+Sélection du mode:
+- Plan fixe ou Coach IA
 
+==================================================
+PRIORITÉS MUSCULAIRES
+==================================================
+Pectoraux
+- Haut des pectoraux
+
+Épaules
+- Deltoïde moyen (largeur d’épaules)
+- Deltoïde postérieur (arrière d’épaule)
+
+Dos
+- Grand dorsal (largeur du dos)
+- Épaisseur du milieu du dos
+
+Bras
+Biceps
+- Longue portion (pic du biceps)
+
+Triceps
+- Longue portion (volume global du bras)
+
+Jambes
+Quadriceps
+- Vaste interne (sweep près du genou)
+
+Ischios jambiers
+- Ensemble des ischios
+
+Fessiers
+- Grand fessier
+
+Mollets
+- Gastrocnémien
+- Soléaire
+
+Abdominaux
+- Grand droit
+- Obliques
+
+==================================================
 ARCHITECTURE GLOBALE
-
+==================================================
 Modules principaux:
-
-- Générateur intelligent de programmes
+- Générateur de plans et de cycles
 - Base d’exercices avancée (self-hosted)
-- Planification et périodisation
-- Suivi des séances en temps réel
-- Suivi de la progression
-- Analyse de performance
-- Analyse esthétique par IA
-- Coach IA longitudinal
-- Historique et ajustements automatiques
+- Planification et périodisation (cycle, calendrier)
+- Suivi des séances en temps réel (mode entraînement)
+- Suivi de la progression (historique, graphiques)
+- Analyse de performance (basique Phase 2)
+- Analyse esthétique par IA (Phase 3)
+- Coach IA longitudinal (Phase 3)
+- Historique des versions de plan et ajustements
 - Gestion utilisateur et préférences
 
---------------------------------------------------
+==================================================
 ARCHITECTURE TECHNIQUE
---------------------------------------------------
-
+==================================================
 - Frontend: React
 - Backend: Node.js + Express
 - Base de données: backend only
@@ -120,51 +164,49 @@ Déploiement:
 - Frontend: Vercel
 - Backend: Render
 
---------------------------------------------------
+==================================================
 RÈGLES DE DÉVELOPPEMENT
---------------------------------------------------
-
+==================================================
 1. Ne jamais inventer de logique d’entraînement
    Toutes les règles doivent être explicitement définies
-
 2. Séparer strictement:
    - règles métier
    - logique IA
    - affichage UI
-
 3. Toujours privilégier:
    - clarté
    - explicabilité
    - évolutivité
-
 4. Pas de sur ingénierie
    Chaque abstraction doit être justifiée par un besoin réel
 
---------------------------------------------------
+==================================================
 PRIORITÉS ACTUELLES
---------------------------------------------------
-
+==================================================
 Phase 1: Fondations
 - Base d’exercices fiable
 - Modèle de séance clair
-- Modèle de programme clair
+- Modèle de programme et de cycle clair
 - Calcul du volume par muscle
 - Gestion simple de la surcharge progressive
+- Planning calendrier pour le cycle actif
 
 Phase 2: Suivi
 - Enregistrement des performances
 - Historique par exercice
 - Analyse de progression basique
+- Volume par muscle dans le temps
 
 Phase 3: IA
 - Assistance à la génération
 - Justification des choix
-- Ajustements intelligents
+- Ajustements intelligents dans le cycle
+- Check-in et régénération de cycle
+- Historique des versions (IA et utilisateur)
 
----
-
+==================================================
 BASE D’EXERCICES
-
+==================================================
 Source:
 - Dataset open source ExerciseDB
 - Hébergé et enrichi localement
@@ -181,145 +223,119 @@ Données par exercice:
 L’IA n’invente jamais d’exercices.
 Elle ne travaille que sur la base interne.
 
----
-
-GÉNÉRATION DES PLANS D’ENTRAÎNEMENT
-
-Objectif:
-Créer des plans qui respectent automatiquement
-surcharge, volume, intensité, fréquence et structure.
-
-Entrées utilisateur:
-- Objectif principal
-- Nombre de séances par semaine
-- Durée cible
-- Équipement disponible
-- Contraintes et préférences
-
-Logique:
-- Le backend calcule toutes les règles (volume, fréquence, fatigue)
-- L’IA assemble, personnalise et optimise le plan
-- L’IA justifie ses choix comme un coach humain
-
----
-
-GESTION DE L’INTENSITÉ
-
-- Modes supportés: RIR, RPE, reps fixes
-- Recommandations automatiques par exercice
-- Ajustements intelligents si baisse de performance
-
----
-
-SURCHARGE PROGRESSIVE
-
-Méthodes supportées:
-- Charge
-- Répétitions
-- Séries
-- Densité
-- Double progression
-
-Les règles sont automatiques et invisibles pour l’utilisateur.
-
----
-
+==================================================
 SUIVI DES SÉANCES
-
+==================================================
 - Mode entraînement plein écran
 - Input rapide poids, reps, RIR
 - Chronomètre de repos intégré
 - Mobile first strict
+- Enregistrement automatique côté backend
 
----
-
+==================================================
 PERSISTANCE DES DONNÉES
-
+==================================================
 Toutes les données utilisateur sont persistées côté backend:
-
 - Utilisateur
-- Programmes
-- Séances
+- Cycles
+- Plans (référence + versions)
+- Séances (planifiées et complétées)
 - Performances par exercice
 - Historique de progression
-- États de fatigue
-- Décisions automatiques appliquées
+- États de fatigue et décisions appliquées
 
-Le frontend n’est jamais la source de vérité.
-
----
-
+==================================================
 ANALYSE ESTHÉTIQUE PAR IA
-
-Fonction clé du produit.
+==================================================
+Fonction clé du produit (Phase 3).
 
 Processus:
 1. Check-in photo (4 angles standards)
 2. Les images sont analysées puis supprimées définitivement
-3. L’IA applique des connaissances en bodybuilding classic
-4. Analyse des proportions musculaires et de l’harmonie globale
-5. Identification des muscles sous-développés esthétiquement
-6. Croisement avec:
-   - historique d’entraînement
-   - volume réel par muscle
-   - progression mesurée
-7. Recommandations de focus pour les prochains cycles
+3. Analyse des proportions et de l’harmonie globale
+4. Identification des muscles sous-développés esthétiquement
+5. Croisement avec historique d’entraînement, volume réel, progression
+6. Recommandations de focus pour le prochain cycle
 
-Ton utilisé:
-- Neutre
-- Factuel
-- Coaching
-- Aucune promesse médicale
+Ton:
+- neutre
+- factuel
+- coaching
+- aucune promesse médicale
 
----
+==================================================
+GESTION DE L’INTENSITÉ
+==================================================
+Modes supportés:
+- RIR (Reps In Reserve)
+- RPE (Rate of Perceived Exertion)
+- Reps fixes
 
-COACH IA LONGITUDINAL
+Règles:
+- Recommandations automatiques par exercice selon le contexte du cycle
+- Ajustements intelligents si baisse de performance ou signes de fatigue
+- Le moteur backend reste l’autorité sur la cohérence volume, intensité et fatigue
+- L’IA explique toujours les choix et les changements proposés
 
-L’IA agit comme un coach dans le temps:
+==================================================
+MÉTHODES D’INTENSIFICATION
+==================================================
+Méthodes supportées (par exercice ou par bloc):
+- Drop sets
+- Rest-pause
+- Supersets
+- Giant sets
+- Tempo lent
+- Pré-fatigue
+- Négatives
+- Partial reps
 
-- Compare les check-ins visuels
-- Analyse l’évolution esthétique
-- Vérifie si les points faibles s’améliorent
-- Explique les résultats
-- Ajuste les cycles futurs
-- Propose deload ou changements de stratégie si nécessaire
+Principes:
+- Ces méthodes sont des outils optionnels, jamais obligatoires
+- Elles sont encadrées par des règles de fatigue et de récupération côté backend
+- Le système vérifie l’impact sur le volume, l’intensité et la charge systémique
 
-L’IA n’outrepasse jamais les règles d’entraînement définies par le moteur backend.
+Contrôle par mode:
+- En mode Coach IA:
+  - Possibilité d’activer ou désactiver l’usage automatique des méthodes d’intensification
+  - Si activé, l’IA peut les proposer de façon parcimonieuse et justifiée
+  - Si désactivé, l’IA n’en applique aucune automatiquement
+- En mode Plan fixe:
+  - L’utilisateur peut ajouter ou retirer manuellement ces méthodes dans l’éditeur de plan
+  - Le moteur recalcule les contraintes et avertit si la charge devient incohérente
 
---------------------------------------------------
-IA ET RÈGLES
---------------------------------------------------
+Traçabilité:
+- Toute application d’une méthode d’intensification est enregistrée dans la version du plan
+- La source est indiquée: IA ou utilisateur
+- L’historique des versions permet de voir quand et pourquoi une méthode a été ajoutée ou retirée
 
-L’IA:
-- N’invente jamais d’exercices
-- Ne contourne jamais les règles backend
-- Explique toujours ses décisions
-- Reste factuelle et neutre
-
-Le moteur backend décide.
-L’IA assiste et optimise.
-
----
-
+==================================================
 UX ET DESIGN
-
+==================================================
 Principes clés:
 - Zéro calcul mental pendant l’entraînement
 - Décisions complexes uniquement hors séance
 - Mobile first obligatoire
-- Interface claire, minimaliste, inspirée de plateformes modernes type 21st.dev
+- Interface claire et minimaliste, inspiration modern product UI
 - Une décision à la fois
 - Feedback immédiat
 
 Wizard:
 - 4 à 6 étapes maximum
-- Intention utilisateur, pas stratégie
 - Résumé clair avant validation
+- Choix du mode: plan fixe ou Coach IA
 
----
+Navigation produit recommandée:
+- Home
+- Program
+- Train (focus)
+- Progress
+- AI Coach
+- Profil et paramètres via avatar
 
+==================================================
 CONTRAINTES POUR L’AGENT IA
-
+==================================================
 - Projet local uniquement
 - Créer un fichier cursorrules adapté à ce projet
 - Fournir un script unique pour lancer frontend + backend
@@ -327,10 +343,9 @@ CONTRAINTES POUR L’AGENT IA
 - Messages de commit clairs, explicites et structurés
 - Respecter la vision produit sans simplification abusive
 
---------------------------------------------------
+==================================================
 RÈGLE FINALE
---------------------------------------------------
-
+==================================================
 Si un doute existe:
 - Ne pas deviner
 - Poser la question
