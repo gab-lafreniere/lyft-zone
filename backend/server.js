@@ -22,6 +22,9 @@ const PORT = process.env.PORT || 5001; // en local, évite 5000
 // 1. Ajoutez votre URL Vercel dans cette liste (ou via .env)
 const allowedOrigins = [
   'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:5000',
+  'http://localhost:5001',
   'http://127.0.0.1:3000',
   process.env.FRONTEND_URL, // Ajoutez ceci pour Render
 ].filter(Boolean); // Retire les valeurs vides si FRONTEND_URL n'est pas défini
