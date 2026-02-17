@@ -31,7 +31,7 @@ function App() {
         setLoading(true);
         setError(null);
         const data = await fetchExercises();
-        setExercises(data);
+        setExercises(Array.isArray(data) ? data : []);
       } catch (err) {
         setError(err.message || 'Failed to load exercises. Please try again.');
         console.error('Error loading exercises:', err);
