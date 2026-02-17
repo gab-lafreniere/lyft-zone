@@ -21,13 +21,15 @@ const steps = [
 const initial = {
   goal: null,
   coachMode: "ai",
-  cycleWeeks: 8,
+  programWeeks: 8,
 
   sessionsPerWeek: 4,
   minutesPerSession: 60,
 
   environment: null,
   equipment: [],
+  equipmentTouched: false,
+
 
   avoid: [],
   sensitiveAreas: [],
@@ -75,7 +77,7 @@ export default function Wizard() {
             <div className="text-xs font-semibold text-white/60">
               Step {stepIndex + 1} sur {steps.length}
             </div>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight">Créer ton cycle</h1>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight">Créer ton programme d’entraînement</h1>
             <p className="mt-1 text-sm text-white/70">{step.label}</p>
           </div>
 
@@ -107,8 +109,8 @@ export default function Wizard() {
             <div className="text-xs font-semibold text-white/60">Aperçu</div>
             <div className="mt-2 grid grid-cols-2 gap-2">
               <div className="rounded-2xl bg-white/10 p-3">
-                <div className="text-[11px] font-semibold text-white/60">Cycle</div>
-                <div className="text-sm font-semibold">{data.cycleWeeks} semaines</div>
+                <div className="text-[11px] font-semibold text-white/60">Durée du programme</div>
+                <div className="text-sm font-semibold">{data.programWeeks} semaines</div>
               </div>
               <div className="rounded-2xl bg-white/10 p-3">
                 <div className="text-[11px] font-semibold text-white/60">Mode</div>

@@ -2,11 +2,21 @@ import { useMemo, useState } from "react";
 import Button from "../../ui/Button";
 import Card from "../../ui/Card";
 import Chip from "../../ui/Chip";
-import { CYCLE_WEEKS, COACH_MODE, GOALS, MUSCLE_PRIORITIES } from "./wizardData";
+import { PROGRAM_WEEKS, COACH_MODE, GOALS, MUSCLE_PRIORITIES } from "./wizardData";
 
-function toggle(list, id) {
-  return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+
+const PRIORITY_LABELS = Object.fromEntries(
+  MUSCLE_PRIORITIES.flatMap((sec) => sec.items.map((it) => [it.id, it.label]))
+);
+
+
+function toggleMax2(list, id) {
+    if (list.includes(id)) return list.filter((x) => x !== id);
+    if (list.length >= 2) return list;
+    return [...list, id];
 }
+  
+
 
 export default function StepGoal({ data, set }) {
   const [openMuscles, setOpenMuscles] = useState(false);
@@ -41,13 +51,14 @@ export default function StepGoal({ data, set }) {
       <div className="grid grid-cols-2 gap-2">
         <Card className="bg-white/10 border-white/10">
           <div className="p-4">
-            <div className="text-sm font-semibold">Cycle</div>
+            <div className="text-sm font-semibold">Durée du programme</div>
             <div className="mt-3 flex flex-wrap gap-2">
-              {CYCLE_WEEKS.map((w) => (
+              {PROGRAM_WEEKS.map((w) => (
                 <Chip
                   key={w.id}
-                  selected={data.cycleWeeks === w.id}
-                  onClick={() => set({ cycleWeeks: w.id })}
+                  tone="dark"
+                  selected={data.programWeeks === w.id}
+                  onClick={() => set({ programWeeks: w.id })}
                   className="bg-white/5 border-white/10 text-white/80"
                 >
                   {w.label}
@@ -87,7 +98,7 @@ export default function StepGoal({ data, set }) {
             <div>
               <div className="text-sm font-semibold">Priorités musculaires</div>
               <div className="mt-1 text-xs text-white/60">
-                Optionnel. Aide à orienter le focus du cycle.
+                Optionnel. Aide à orienter le focus du plan d'entraînement.
               </div>
             </div>
 
@@ -107,7 +118,7 @@ export default function StepGoal({ data, set }) {
                 key={id}
                 className="rounded-2xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/80"
               >
-                {id}
+                {PRIORITY_LABELS[id] || id}
               </span>
             ))}
             {selectedCount > 4 && (
@@ -154,9 +165,10 @@ export default function StepGoal({ data, set }) {
                     {sec.items.map((it) => (
                       <Chip
                         key={it.id}
+                        tone="dark"
                         selected={data.musclePriorities.includes(it.id)}
                         onClick={() =>
-                          set({ musclePriorities: toggle(data.musclePriorities, it.id) })
+                          set({ musclePriorities: toggleMax2(data.musclePriorities, it.id) })
                         }
                         className="bg-white/5 border-white/10 text-white/80"
                       >

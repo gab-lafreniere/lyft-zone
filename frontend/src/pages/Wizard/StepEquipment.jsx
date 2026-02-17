@@ -1,6 +1,15 @@
 import Card from "../../ui/Card";
 import Chip from "../../ui/Chip";
 import { ENVIRONMENTS, EQUIPMENT } from "./wizardData";
+import { ENVIRONMENTS, EQUIPMENT, EQUIPMENT_PRESETS } from "./wizardData";
+
+const chooseEnv = (envId) => {
+  if (!data.equipmentTouched) {
+    set({ environment: envId, equipment: EQUIPMENT_PRESETS[envId] || [] });
+  } else {
+    set({ environment: envId });
+  }
+};
 
 function toggle(list, id) {
   return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];

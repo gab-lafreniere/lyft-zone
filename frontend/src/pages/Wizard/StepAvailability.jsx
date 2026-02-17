@@ -11,6 +11,7 @@ export default function StepAvailability({ data, set }) {
           <div className="mt-3">
             <Stepper
               value={data.sessionsPerWeek}
+              tone="dark"
               min={2}
               max={6}
               onChange={(v) => set({ sessionsPerWeek: v })}

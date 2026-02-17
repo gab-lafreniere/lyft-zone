@@ -5,23 +5,28 @@ export const GOALS = [
     { id: "mobility", label: "Mobilité", icon: "🧘" },
   ];
   
-  export const CYCLE_WEEKS = [
+  export const PROGRAM_WEEKS = [
     { id: 6, label: "6 semaines" },
+    { id: 7, label: "7 semaines" },
     { id: 8, label: "8 semaines" },
   ];
+  
   
   export const COACH_MODE = [
     {
       id: "ai",
       label: "Coach IA",
-      hint: "Plan adaptatif, versions, check-in fin de cycle",
+      hint:
+        "Propose des ajustements pendant le programme (deload, substitutions, volume), suit l’historique et demande un check-in à la fin pour régénérer le prochain programme.",
     },
     {
       id: "fixed",
       label: "Plan fixe",
-      hint: "Plan stable, modifications manuelles uniquement",
+      hint:
+        "Génère un programme stable. Rien ne change automatiquement. Tu regénères un nouveau programme seulement quand tu le demandes.",
     },
   ];
+  
   
   export const ENVIRONMENTS = [
     { id: "full_gym", label: "Gym complet", icon: "🏋️" },
@@ -42,6 +47,14 @@ export const GOALS = [
     { id: "squat_rack", label: "Rack à squat" },
     { id: "pullup_bar", label: "Barre traction" },
   ];
+  export const EQUIPMENT_PRESETS = {
+    full_gym: ["dumbbells", "barbell", "cables", "machines", "bench", "squat_rack", "pullup_bar"],
+    commercial_gym: ["dumbbells", "machines", "cables", "bench"],
+    home_gym: ["dumbbells", "bands", "bench"],
+    bodyweight: [],
+    machines_only: ["machines"],
+  };
+  
   
   export const AVOID = [
     { id: "no_heavy", label: "Pas de charges lourdes" },
