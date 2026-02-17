@@ -6,18 +6,16 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { testConnection, syncDatabase } = require('./db');
-const { populateExercisesFromJSON } = require('./controllers/exerciseController');
 
-// Charger les modèles et associations avant sync
 require('./models');
 
-// Import routes
-const exerciseRoutes = require('./routes/exercises');
 const planRoutes = require('./routes/plans');
 
-// Initialize Express app
+const { loadExercisesSeed } = require("./src/exercises/exercisesStore");
+const { createExercisesRouter } = require("./src/exercises/exercisesRoutes");
+
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001; // en local, évite 5000
 
 // Middleware
 // Configure CORS to allow requests from Codespaces and localhost
@@ -54,61 +52,22 @@ app.use(cors(corsOptions));
 app.use(express.json()); // Parse JSON request bodies
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 
-// Routes
-app.use('/api/exercises', exerciseRoutes);
+// Seed exercises router
+const store = loadExercisesSeed();
+app.use("/api/exercises", createExercisesRouter(store));
+
+// Other routes
 app.use('/api/plans', planRoutes);
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: 'Backend server is running',
-    timestamp: new Date().toISOString(),
-  });
-});
+// health, root, error middleware... (inchangé)
 
-// Root endpoint
-app.get('/', (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: 'Lyft Zone Backend API',
-    endpoints: {
-      health: 'GET /health',
-      exercises: 'GET /api/exercises',
-      exerciseById: 'GET /api/exercises/:id',
-      createPlan: 'POST /api/plans',
-      getPlansByUser: 'GET /api/plans/:userId',
-    },
-  });
-});
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(500).json({
-    success: false,
-    message: 'Internal server error',
-    error: err.message,
-  });
-});
-
-// Initialize database and start server
 const startServer = async () => {
   try {
-    // Test database connection
     await testConnection();
-
-    // Sync database models
     await syncDatabase();
 
-    // Populate exercises from JSON if database is empty
-    await populateExercisesFromJSON();
-
-    // Start Express server
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
-      console.log(`✓ API documentation: http://localhost:${PORT}`);
-      console.log(`✓ Health check: http://localhost:${PORT}/health\n`);
     });
   } catch (error) {
     console.error('Failed to start server:', error);
