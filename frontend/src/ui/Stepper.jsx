@@ -11,31 +11,20 @@ export default function Stepper({ value, min = 0, max = 10, onChange, tone = "da
 
   const labelTone = tone === "dark" ? "text-white/60" : "text-ink/60";
   const valueTone = tone === "dark" ? "text-white" : "text-ink";
+  const btnTone = tone === "dark" ? "bg-white/10 text-white touch-manipulation" : "touch-manipulation";
 
   return (
     <div className={`select-none flex items-center justify-between ${shell}`}>
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={dec}
-        disabled={value <= min}
-        className={`touch-manipulation ${tone === "dark" ? "bg-white/10 text-white" : ""}`}
-      >
+      <Button variant="secondary" size="sm" onClick={dec} disabled={value <= min} className={btnTone}>
         -
       </Button>
 
       <div className="text-center">
-        <div className={`touch-manipulation ${tone === "dark" ? "bg-white/10 text-white" : ""}`}>Par semaine</div>
-        <div className={`touch-manipulation ${tone === "dark" ? "bg-white/10 text-white" : ""}`}>{value}</div>
+        <div className={`text-xs font-semibold ${labelTone}`}>Par semaine</div>
+        <div className={`text-xl font-semibold ${valueTone}`}>{value}</div>
       </div>
 
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={inc}
-        disabled={value >= max}
-        className={`touch-manipulation ${tone === "dark" ? "bg-white/10 text-white" : ""}`}
-      >
+      <Button variant="secondary" size="sm" onClick={inc} disabled={value >= max} className={btnTone}>
         +
       </Button>
     </div>
