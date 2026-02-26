@@ -10,7 +10,7 @@ export default function MainLayout() {
       <main
         className={[
           "mx-auto w-full max-w-[420px] px-3 pt-3",
-          hideTabs ? "pb-3" : "pb-20",
+          hideTabs ? "pb-6" : "pb-20",
         ].join(" ")}
       >
         <Outlet />
