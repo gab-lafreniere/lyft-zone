@@ -9,7 +9,7 @@ export default function MainLayout() {
     <div className="min-h-[100dvh] bg-surface text-ink">
       <main
         className={[
-          "mx-auto w-full max-w-[420px] px-3 pt-3",
+          "mx-auto w-full max-w-[420px] px-6 pt-3",
           hideTabs ? "pb-6" : "pb-20",
         ].join(" ")}
       >
