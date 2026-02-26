@@ -7,12 +7,7 @@ export default function MainLayout() {
 
   return (
     <div className="min-h-[100dvh] bg-surface text-ink">
-      <main
-        className={[
-          "mx-auto w-full max-w-[420px] px-6 pt-3 bg-surface",
-          hideTabs ? "pb-6" : "pb-20",
-        ].join(" ")}
-      >
+      <main className="px-3 space-y-2.5">
         <Outlet />
       </main>
 
