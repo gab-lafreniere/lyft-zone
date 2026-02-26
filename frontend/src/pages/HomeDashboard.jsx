@@ -2,7 +2,7 @@ export default function HomeDashboard() {
   return (
     <div className="bg-background-light text-slate-900 antialiased font-display flex flex-col h-full">
       {/* Header Section */}
-      <header className="px-0 pt-4 pb-1">
+      <header className="px-0 pt-0 pb-1">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="size-12 rounded-full overflow-hidden border-2 border-white shadow-sm">
@@ -321,6 +321,8 @@ export default function HomeDashboard() {
             </div>
           </div>
         </section>
+        {/* Navigation Spacer */}
+        <div className="h-[calc(64px+max(8px,env(safe-area-inset-bottom)))]"></div>
       </main>
       {/* Bottom Navigation */}
     </div>
