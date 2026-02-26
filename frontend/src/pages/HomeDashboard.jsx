@@ -51,7 +51,7 @@ export default function HomeDashboard() {
       </header>
 
       {/* Main Content Scrollable Area */}
-      <main className="flex-1 px-0 overflow-hidden flex flex-col gap-2.5">
+      <main className="px-0 flex flex-col gap-2.5">
         {/* Hero Card (Today's Session) */}
         <section className="relative group rounded-xl overflow-hidden shadow-lg">
           <img

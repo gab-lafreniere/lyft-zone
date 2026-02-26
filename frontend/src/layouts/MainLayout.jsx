@@ -6,8 +6,8 @@ export default function MainLayout() {
   const hideTabs = location.pathname.startsWith("/train");
 
   return (
-    <div className="min-h-[100dvh] bg-surface text-ink">
-      <main className="flex-1 px-6 space-y-2.5 overflow-y-auto hide-scrollbar">
+    <div className="min-h-[100dvh] bg-surface text-ink flex flex-col">
+      <main className="flex-1 px-6 overflow-y-auto hide-scrollbar">
         <Outlet />
       </main>
 
