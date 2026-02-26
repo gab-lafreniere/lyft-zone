@@ -6,8 +6,15 @@ export default function MainLayout() {
   const hideTabs = location.pathname.startsWith("/train");
 
   return (
-    <div className="min-h-screen bg-surface text-ink">
-      <main className="mx-auto w-full max-w-[420px] px-4 pt-4 pb-24">
+    <div className="min-h-[100dvh] bg-surface text-ink">
+      <main
+        className={[
+          "mx-auto w-full max-w-[420px] px-4 pt-4",
+          hideTabs
+            ? "pb-4"
+            : "pb-[calc(96px+env(safe-area-inset-bottom))]",
+        ].join(" ")}
+      >
         <Outlet />
       </main>
 
