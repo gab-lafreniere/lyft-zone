@@ -1,11 +1,20 @@
 import { useEffect, useState } from "react";
 export default function HomeDashboard() {
-    const [compact, setCompact] = useState(false);
+    const [compactProgress, setCompactProgress] = useState(0);
 
     useEffect(() => {
+        let ticking = false;
         const onScroll = () => {
-          const y = window.scrollY;
-          setCompact((prev) => (prev ? y > 10 : y > 26));
+          if (ticking) return;
+          ticking = true;
+          window.requestAnimationFrame(() => {
+            const y = window.scrollY;
+            const next = Math.min(1, Math.max(0, y / 72));
+            setCompactProgress((prev) =>
+              Math.abs(prev - next) > 0.01 ? next : prev
+            );
+            ticking = false;
+          });
         };
       
         onScroll();
@@ -19,17 +28,24 @@ export default function HomeDashboard() {
       <header
         className={[
             "sticky top-0 z-40 px-0 bg-background-light/85 backdrop-blur-md",
-            "transition-all duration-300 ease-out",
-            compact ? "pt-2 pb-2" : "pt-0 pb-3",
+            "transition-[backdrop-filter,background-color] duration-300 ease-out",
         ].join(" ")}
+        style={{
+          paddingTop: `${8 - compactProgress * 6}px`,
+          paddingBottom: `${12 - compactProgress * 4}px`,
+        }}
         >
-        <div className={["flex items-center justify-between transition-all duration-300 ease-out", compact ? "mb-2" : "mb-4"].join(" ")}>
+        <div
+          className="flex items-center justify-between"
+          style={{ marginBottom: `${16 - compactProgress * 8}px` }}
+        >
             <div className="flex items-center gap-3">
             <div
-                className={[
-                "rounded-full overflow-hidden border-2 border-white shadow-sm transition-all duration-300 ease-out",
-                compact ? "size-9" : "size-12",
-                ].join(" ")}
+                className="rounded-full overflow-hidden border-2 border-white shadow-sm"
+                style={{
+                  width: `${48 - compactProgress * 10}px`,
+                  height: `${48 - compactProgress * 10}px`,
+                }}
             >
                 <img
                 alt="Alex"
@@ -40,29 +56,35 @@ export default function HomeDashboard() {
 
             <div className="leading-tight">
                 <p
-                  className={[
-                    "text-xs text-slate-500 font-medium uppercase tracking-wider",
-                    "origin-top transition-all duration-250 ease-out overflow-hidden",
-                    compact
-                      ? "max-h-0 opacity-0 -translate-y-1"
-                      : "max-h-5 opacity-100 translate-y-0",
-                  ].join(" ")}
+                  className="text-xs text-slate-500 font-medium uppercase tracking-wider origin-top overflow-hidden pointer-events-none"
+                  style={{
+                    opacity: 1 - compactProgress,
+                    transform: `translateY(${-6 * compactProgress}px)`,
+                    maxHeight: `${20 * (1 - compactProgress)}px`,
+                  }}
                 >
                     Good morning
                 </p>
-                <h1 className={["font-bold text-slate-900 transition-all duration-300 ease-out", compact ? "text-base" : "text-xl"].join(" ")}>
+                <h1
+                  className="font-bold text-slate-900"
+                  style={{ fontSize: `${20 - compactProgress * 3}px`, lineHeight: 1.2 }}
+                >
                 Alex Johnson
                 </h1>
             </div>
             </div>
 
-            <div className={["flex items-center transition-all duration-300 ease-out", compact ? "gap-2" : "gap-3"].join(" ")}>
+            <div
+              className="flex items-center"
+              style={{ gap: `${12 - compactProgress * 4}px` }}
+            >
             <button
                 type="button"
-                className={[
-                "glass rounded-full flex items-center justify-center text-slate-700 shadow-sm transition-all duration-300 ease-out",
-                compact ? "size-9" : "size-10",
-                ].join(" ")}
+                className="glass rounded-full flex items-center justify-center text-slate-700 shadow-sm"
+                style={{
+                  width: `${40 - compactProgress * 4}px`,
+                  height: `${40 - compactProgress * 4}px`,
+                }}
                 aria-label="Notifications"
             >
                 <span className="material-symbols-outlined text-[22px]">notifications</span>
@@ -70,10 +92,11 @@ export default function HomeDashboard() {
 
             <button
                 type="button"
-                className={[
-                "glass rounded-full flex items-center justify-center text-slate-700 shadow-sm transition-all duration-300 ease-out",
-                compact ? "size-9" : "size-10",
-                ].join(" ")}
+                className="glass rounded-full flex items-center justify-center text-slate-700 shadow-sm"
+                style={{
+                  width: `${40 - compactProgress * 4}px`,
+                  height: `${40 - compactProgress * 4}px`,
+                }}
                 aria-label="Settings"
             >
                 <span className="material-symbols-outlined text-[22px]">settings</span>
@@ -82,12 +105,12 @@ export default function HomeDashboard() {
         </div>
 
         <div
-          className={[
-            "overflow-hidden origin-top transition-all duration-250 ease-out",
-            compact
-              ? "max-h-0 opacity-0 -translate-y-1"
-              : "max-h-10 opacity-100 translate-y-0",
-          ].join(" ")}
+          className="overflow-hidden origin-top"
+          style={{
+            opacity: 1 - compactProgress,
+            transform: `translateY(${-6 * compactProgress}px)`,
+            maxHeight: `${36 * (1 - compactProgress)}px`,
+          }}
         >
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent-teal/50 border border-primary/20">
             <span className="size-1.5 rounded-full bg-primary animate-pulse"></span>
