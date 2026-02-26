@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import MainLayout from "../layouts/MainLayout";
 
-import Home from "../pages/Home";
+import HomeDashboard from "../pages/HomeDashboard";
 import Program from "../pages/Program";
 import Train from "../pages/Train";
 import Progress from "../pages/Progress";
@@ -13,7 +13,7 @@ export default function AppRouter() {
     <BrowserRouter>
       <Routes>
         <Route element={<MainLayout />}>
-          <Route path="/" element={<Home />} />
+          <Route path="/" element={<HomeDashboard />} />
           <Route path="/program" element={<Program />} />
           <Route path="/train" element={<Train />} />
           <Route path="/progress" element={<Progress />} />

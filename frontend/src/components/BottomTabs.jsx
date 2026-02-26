@@ -1,35 +1,31 @@
 import { NavLink } from "react-router-dom";
 
-function Tab({ to, label, icon }) {
+const base =
+  "flex flex-col items-center gap-1 text-slate-400 hover:text-slate-600";
+const active = "text-primary";
+
+function Tab({ to, icon, label }) {
   return (
     <NavLink
       to={to}
-      end
-      className={({ isActive }) =>
-        [
-          "flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-[11px] font-medium",
-          isActive
-            ? "bg-accent/10 text-ink"
-            : "text-ink/60 active:bg-black/5",
-        ].join(" ")
-      }
+      className={({ isActive }) => `${base} ${isActive ? active : ""}`}
+      end={to === "/"}
     >
-      <div className="text-[18px] leading-none">{icon}</div>
-      <div className="leading-none">{label}</div>
+      <span className="material-symbols-outlined text-[28px]">{icon}</span>
+      <span className="text-[10px] font-medium uppercase tracking-widest">
+        {label}
+      </span>
     </NavLink>
   );
 }
 
 export default function BottomTabs() {
   return (
-    <nav className="fixed inset-x-0 bottom-0 border-t border-black/10 bg-white/80 backdrop-blur">
-      <div className="mx-auto grid w-full max-w-[420px] grid-cols-5 gap-2 px-3 pt-2 pb-4">
-        <Tab to="/" label="Home" icon="🏠" />
-        <Tab to="/program" label="Program" icon="🗓️" />
-        <Tab to="/train" label="Train" icon="🏋️" />
-        <Tab to="/progress" label="Progress" icon="📈" />
-        <Tab to="/ai" label="AI" icon="✨" />
-      </div>
+    <nav className="bg-white/80 backdrop-blur-md border-t border-slate-100 px-6 flex items-center justify-between py-2 pb-6">
+      <Tab to="/" icon="home" label="Home" />
+      <Tab to="/program" icon="description" label="Program" />
+      <Tab to="/progress" icon="bar_chart" label="Insights" />
+      <Tab to="/coach" icon="person" label="Coach" />
     </nav>
   );
 }
