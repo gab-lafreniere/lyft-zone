@@ -3,7 +3,10 @@ export default function HomeDashboard() {
     const [compact, setCompact] = useState(false);
 
     useEffect(() => {
-        const onScroll = () => setCompact(window.scrollY > 18);
+        const onScroll = () => {
+          const y = window.scrollY;
+          setCompact((prev) => (prev ? y > 10 : y > 26));
+        };
       
         onScroll();
         window.addEventListener("scroll", onScroll, { passive: true });
@@ -16,15 +19,15 @@ export default function HomeDashboard() {
       <header
         className={[
             "sticky top-0 z-40 px-0 bg-background-light/85 backdrop-blur-md",
-            "transition-all",
+            "transition-all duration-300 ease-out",
             compact ? "pt-2 pb-2" : "pt-0 pb-3",
         ].join(" ")}
         >
-        <div className={["flex items-center justify-between", compact ? "mb-2" : "mb-4"].join(" ")}>
+        <div className={["flex items-center justify-between transition-all duration-300 ease-out", compact ? "mb-2" : "mb-4"].join(" ")}>
             <div className="flex items-center gap-3">
             <div
                 className={[
-                "rounded-full overflow-hidden border-2 border-white shadow-sm transition-all",
+                "rounded-full overflow-hidden border-2 border-white shadow-sm transition-all duration-300 ease-out",
                 compact ? "size-9" : "size-12",
                 ].join(" ")}
             >
@@ -36,22 +39,28 @@ export default function HomeDashboard() {
             </div>
 
             <div className="leading-tight">
-                {!compact && (
-                <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
+                <p
+                  className={[
+                    "text-xs text-slate-500 font-medium uppercase tracking-wider",
+                    "origin-top transition-all duration-250 ease-out overflow-hidden",
+                    compact
+                      ? "max-h-0 opacity-0 -translate-y-1"
+                      : "max-h-5 opacity-100 translate-y-0",
+                  ].join(" ")}
+                >
                     Good morning
                 </p>
-                )}
-                <h1 className={["font-bold text-slate-900 transition-all", compact ? "text-base" : "text-xl"].join(" ")}>
+                <h1 className={["font-bold text-slate-900 transition-all duration-300 ease-out", compact ? "text-base" : "text-xl"].join(" ")}>
                 Alex Johnson
                 </h1>
             </div>
             </div>
 
-            <div className={["flex items-center transition-all", compact ? "gap-2" : "gap-3"].join(" ")}>
+            <div className={["flex items-center transition-all duration-300 ease-out", compact ? "gap-2" : "gap-3"].join(" ")}>
             <button
                 type="button"
                 className={[
-                "glass rounded-full flex items-center justify-center text-slate-700 shadow-sm transition-all",
+                "glass rounded-full flex items-center justify-center text-slate-700 shadow-sm transition-all duration-300 ease-out",
                 compact ? "size-9" : "size-10",
                 ].join(" ")}
                 aria-label="Notifications"
@@ -62,7 +71,7 @@ export default function HomeDashboard() {
             <button
                 type="button"
                 className={[
-                "glass rounded-full flex items-center justify-center text-slate-700 shadow-sm transition-all",
+                "glass rounded-full flex items-center justify-center text-slate-700 shadow-sm transition-all duration-300 ease-out",
                 compact ? "size-9" : "size-10",
                 ].join(" ")}
                 aria-label="Settings"
@@ -72,14 +81,21 @@ export default function HomeDashboard() {
             </div>
         </div>
 
-        {!compact && (
+        <div
+          className={[
+            "overflow-hidden origin-top transition-all duration-250 ease-out",
+            compact
+              ? "max-h-0 opacity-0 -translate-y-1"
+              : "max-h-10 opacity-100 translate-y-0",
+          ].join(" ")}
+        >
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent-teal/50 border border-primary/20">
             <span className="size-1.5 rounded-full bg-primary animate-pulse"></span>
             <p className="text-[11px] font-semibold text-slate-700 uppercase tracking-tight">
                 Week 4 of 8 · Hypertrophy Phase
             </p>
             </div>
-        )}
+        </div>
       </header>
 
       {/* Main Content Scrollable Area */}
