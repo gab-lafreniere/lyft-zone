@@ -2,7 +2,7 @@ export default function HomeDashboard() {
   return (
     <div className="bg-background-light text-slate-900 antialiased font-display flex flex-col h-full">
       {/* Header Section */}
-      <header className="px-6 pt-4 pb-1">
+      <header className="px-0 pt-4 pb-1">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="size-12 rounded-full overflow-hidden border-2 border-white shadow-sm">
@@ -51,7 +51,7 @@ export default function HomeDashboard() {
       </header>
 
       {/* Main Content Scrollable Area */}
-      <main className="flex-1 px-6 overflow-hidden flex flex-col gap-2.5">
+      <main className="flex-1 px-0 overflow-hidden flex flex-col gap-2.5">
         {/* Hero Card (Today's Session) */}
         <section className="relative group rounded-xl overflow-hidden shadow-lg">
           <img

@@ -9,10 +9,8 @@ export default function MainLayout() {
     <div className="min-h-[100dvh] bg-surface text-ink">
       <main
         className={[
-          "mx-auto w-full max-w-[420px] px-4 pt-4",
-          hideTabs
-            ? "pb-4"
-            : "pb-[calc(96px+env(safe-area-inset-bottom))]",
+          "mx-auto w-full max-w-[420px] px-3 pt-3",
+          hideTabs ? "pb-3" : "pb-20",
         ].join(" ")}
       >
         <Outlet />
