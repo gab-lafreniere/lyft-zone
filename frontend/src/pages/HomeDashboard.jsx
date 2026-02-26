@@ -14,7 +14,7 @@ export default function HomeDashboard() {
       }, []);
 
     return (
-        <div id="home-scroll" className="bg-background-light text-slate-900 antialiased font-display h-full overflow-y-auto hide-scrollbar">
+        <div id="home-scroll" className="bg-background-light text-slate-900 antialiased font-display h-full min-h-0 overflow-y-auto hide-scrollbar">
       {/* Header Section */}
       <header
         className={[
