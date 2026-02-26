@@ -1,5 +1,3 @@
-import { Link } from "react-router-dom";
-
 export default function HomeDashboard() {
   return (
     <div className="bg-background-light text-slate-900 antialiased font-display flex flex-col h-full">
