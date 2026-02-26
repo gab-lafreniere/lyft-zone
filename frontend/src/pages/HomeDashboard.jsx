@@ -1,90 +1,48 @@
 import { useEffect, useState } from "react";
+
 export default function HomeDashboard() {
-    const [compactProgress, setCompactProgress] = useState(0);
+    const [scrolled, setScrolled] = useState(false);
 
     useEffect(() => {
-        let ticking = false;
-        const onScroll = () => {
-          if (ticking) return;
-          ticking = true;
-          window.requestAnimationFrame(() => {
-            const y = window.scrollY;
-            const next = Math.min(1, Math.max(0, y / 72));
-            setCompactProgress((prev) =>
-              Math.abs(prev - next) > 0.01 ? next : prev
-            );
-            ticking = false;
-          });
-        };
-      
-        onScroll();
-        window.addEventListener("scroll", onScroll, { passive: true });
-        return () => window.removeEventListener("scroll", onScroll);
-      }, []);
+      const onScroll = () => setScrolled(window.scrollY > 4);
+      onScroll();
+      window.addEventListener("scroll", onScroll, { passive: true });
+      return () => window.removeEventListener("scroll", onScroll);
+    }, []);
 
     return (
-        <div className="bg-background-light text-slate-900 antialiased font-display">
+        <div className="-mx-6 bg-background-light text-slate-900 antialiased font-display">
       {/* Header Section */}
       <header
         className={[
-            "sticky top-0 z-40 px-0 bg-background-light/85 backdrop-blur-md",
-            "transition-[backdrop-filter,background-color] duration-300 ease-out",
+          "sticky top-0 z-40 px-6 pt-1 pb-1 bg-background-light transition-shadow duration-200",
+          scrolled ? "shadow-[0_6px_18px_rgba(15,23,42,0.08)]" : "shadow-none",
         ].join(" ")}
-        style={{
-          paddingTop: `${8 - compactProgress * 6}px`,
-          paddingBottom: `${12 - compactProgress * 4}px`,
-        }}
-        >
-        <div
-          className="flex items-center justify-between"
-          style={{ marginBottom: `${16 - compactProgress * 8}px` }}
-        >
+      >
+        <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
             <div
-                className="rounded-full overflow-hidden border-2 border-white shadow-sm"
-                style={{
-                  width: `${48 - compactProgress * 10}px`,
-                  height: `${48 - compactProgress * 10}px`,
-                }}
+                className="size-12 rounded-full overflow-hidden border-2 border-white shadow-sm"
             >
                 <img
-                alt="Alex"
+                alt="Workout image"
                 className="w-full h-full object-cover"
                 src="https://lh3.googleusercontent.com/aida-public/AB6AXuAOqSnukIxxig6axnIuq0lGlXj4I6ciPTu5Oe88ZY9cv2aT0AGMV8O7q5dWRK5NhL8gG_ZGNViFE8Y1UQkVSlmp5fOYhI8JHcttUzj0NOrT1vuOpfl1qv5htMMAa3UbR-GLVKqaFMZEFu7S6NIgmO1wD7ueqr9NvXWcPoFBh2muyPArPBj6n1FJPWTbqVRbkXxLqRBvoj5UFAvRDCvxx0M7Pm0Q92fcft6HhL6Xd_Nrzyt9pt97KXKUgOy5jUvSjdrZ1iUBZJAwA68"
                 />
             </div>
 
             <div className="leading-tight">
-                <p
-                  className="text-xs text-slate-500 font-medium uppercase tracking-wider origin-top overflow-hidden pointer-events-none"
-                  style={{
-                    opacity: 1 - compactProgress,
-                    transform: `translateY(${-6 * compactProgress}px)`,
-                    maxHeight: `${20 * (1 - compactProgress)}px`,
-                  }}
-                >
-                    Good morning
+                <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
+                  Good morning
                 </p>
-                <h1
-                  className="font-bold text-slate-900"
-                  style={{ fontSize: `${20 - compactProgress * 3}px`, lineHeight: 1.2 }}
-                >
-                Alex Johnson
-                </h1>
+                <h1 className="font-bold text-xl text-slate-900">Alex Johnson</h1>
             </div>
             </div>
 
-            <div
-              className="flex items-center"
-              style={{ gap: `${12 - compactProgress * 4}px` }}
-            >
+            <div className="flex items-center gap-3">
             <button
                 type="button"
-                className="glass rounded-full flex items-center justify-center text-slate-700 shadow-sm"
-                style={{
-                  width: `${40 - compactProgress * 4}px`,
-                  height: `${40 - compactProgress * 4}px`,
-                }}
+                className="glass size-10 rounded-full flex items-center justify-center text-slate-700 shadow-sm"
                 aria-label="Notifications"
             >
                 <span className="material-symbols-outlined text-[22px]">notifications</span>
@@ -92,37 +50,24 @@ export default function HomeDashboard() {
 
             <button
                 type="button"
-                className="glass rounded-full flex items-center justify-center text-slate-700 shadow-sm"
-                style={{
-                  width: `${40 - compactProgress * 4}px`,
-                  height: `${40 - compactProgress * 4}px`,
-                }}
+                className="glass size-10 rounded-full flex items-center justify-center text-slate-700 shadow-sm"
                 aria-label="Settings"
             >
                 <span className="material-symbols-outlined text-[22px]">settings</span>
             </button>
             </div>
         </div>
-
-        <div
-          className="overflow-hidden origin-top"
-          style={{
-            opacity: 1 - compactProgress,
-            transform: `translateY(${-6 * compactProgress}px)`,
-            maxHeight: `${36 * (1 - compactProgress)}px`,
-          }}
-        >
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent-teal/50 border border-primary/20">
-            <span className="size-1.5 rounded-full bg-primary animate-pulse"></span>
-            <p className="text-[11px] font-semibold text-slate-700 uppercase tracking-tight">
-                Week 4 of 8 · Hypertrophy Phase
-            </p>
-            </div>
-        </div>
       </header>
 
       {/* Main Content Scrollable Area */}
-      <main className="px-0 flex flex-col gap-2.5 pt-1">
+      <main className="px-6 flex flex-col gap-2.5 pt-1">
+        <div className="inline-flex w-fit items-center gap-2 px-3 py-1 rounded-full bg-accent-teal/50 border border-primary/20">
+          <span className="size-1.5 rounded-full bg-primary animate-pulse"></span>
+          <p className="text-[11px] font-semibold text-slate-700 uppercase tracking-tight">
+            Week 4 of 8 · Hypertrophy Phase
+          </p>
+        </div>
+
         {/* Hero Card (Today's Session) */}
         <section className="relative group rounded-xl overflow-hidden shadow-lg">
           <img
@@ -130,7 +75,8 @@ export default function HomeDashboard() {
             className="absolute inset-0 w-full h-full object-cover"
             src="https://lh3.googleusercontent.com/aida-public/AB6AXuCEPstqrEn1FRzNtnYTq447xhXDZPDl7UrsIXnlBjrCaGK7kbUC_K9xtKuDK7S3iqy43UFTU-XxY-z2QrP_jKxlZyZhrmavYgqacCnsDX9jVVph5C6J8jft5x3xJMfKDH4CCbT6y-LVErnpTGCQvYmiuKMf0XAE5qeMossuciJ7AyU783X5YiBTxrR6sY25JDGxTfNenIjjgoSwpQ1qMztyZjHzLSTLTijLN8TdqqxSEKf7asdiMEYyRTNUUQSdUf66OemeFKBvupM"
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/50 to-transparent"></div>
+
+          <div className="absolute inset-0 bg-gradient-to-t from-black/95 to-black/35"></div>
 
           <div className="relative p-4 flex flex-col justify-end min-h-[140px] sm:min-h-[160px]">
             <div className="mb-3">
