@@ -3,18 +3,15 @@ export default function HomeDashboard() {
     const [compact, setCompact] = useState(false);
 
     useEffect(() => {
-        const scroller = document.getElementById("home-scroll");
-        if (!scroller) return;
-      
-        const onScroll = () => setCompact(scroller.scrollTop > 18);
+        const onScroll = () => setCompact(window.scrollY > 18);
       
         onScroll();
-        scroller.addEventListener("scroll", onScroll, { passive: true });
-        return () => scroller.removeEventListener("scroll", onScroll);
+        window.addEventListener("scroll", onScroll, { passive: true });
+        return () => window.removeEventListener("scroll", onScroll);
       }, []);
 
     return (
-        <div id="home-scroll" className="bg-background-light text-slate-900 antialiased font-display h-full min-h-0 overflow-y-auto hide-scrollbar">
+        <div className="bg-background-light text-slate-900 antialiased font-display">
       {/* Header Section */}
       <header
         className={[
