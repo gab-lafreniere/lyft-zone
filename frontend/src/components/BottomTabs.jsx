@@ -21,7 +21,7 @@ function Tab({ to, icon, label }) {
 
 export default function BottomTabs() {
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-t border-slate-100 px-6 pt-2 pb-[calc(8px+env(safe-area-inset-bottom))]">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-t border-slate-100 px-6 pt-2 pb-[max(8px,env(safe-area-inset-bottom))]">
       <div className="flex items-center justify-between">
         <Tab to="/" icon="home" label="Home" />
         <Tab to="/program" icon="description" label="Program" />
