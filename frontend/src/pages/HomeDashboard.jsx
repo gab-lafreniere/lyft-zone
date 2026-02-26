@@ -3,23 +3,22 @@ export default function HomeDashboard() {
     const [compact, setCompact] = useState(false);
 
     useEffect(() => {
-      const scroller = document.getElementById("app-scroll");
-      if (!scroller) return;
-  
-      const onScroll = () => {
-        setCompact(scroller.scrollTop > 18);
-      };
-  
-      onScroll();
-      scroller.addEventListener("scroll", onScroll, { passive: true });
-      return () => scroller.removeEventListener("scroll", onScroll);
-    }, []);
+        const scroller = document.getElementById("home-scroll");
+        if (!scroller) return;
+      
+        const onScroll = () => setCompact(scroller.scrollTop > 18);
+      
+        onScroll();
+        scroller.addEventListener("scroll", onScroll, { passive: true });
+        return () => scroller.removeEventListener("scroll", onScroll);
+      }, []);
+
     return (
-    <div className="bg-background-light text-slate-900 antialiased font-display flex flex-col h-full">
+        <div id="home-scroll" className="bg-background-light text-slate-900 antialiased font-display h-full overflow-y-auto hide-scrollbar">
       {/* Header Section */}
       <header
         className={[
-            "sticky top-0 z-40 bg-background-light/85 backdrop-blur-md",
+            "sticky top-0 z-40 px-0 bg-background-light/85 backdrop-blur-md",
             "transition-all",
             compact ? "pt-2 pb-2" : "pt-0 pb-3",
         ].join(" ")}
