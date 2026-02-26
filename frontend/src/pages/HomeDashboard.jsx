@@ -1,57 +1,93 @@
+import { useEffect, useRef, useState } from "react";
 export default function HomeDashboard() {
-  return (
+    const [compact, setCompact] = useState(false);
+
+    useEffect(() => {
+      const scroller = document.getElementById("app-scroll");
+      if (!scroller) return;
+  
+      const onScroll = () => {
+        setCompact(scroller.scrollTop > 18);
+      };
+  
+      onScroll();
+      scroller.addEventListener("scroll", onScroll, { passive: true });
+      return () => scroller.removeEventListener("scroll", onScroll);
+    }, []);
+    return (
     <div className="bg-background-light text-slate-900 antialiased font-display flex flex-col h-full">
       {/* Header Section */}
-      <header className="px-0 pt-0 pb-1">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="size-12 rounded-full overflow-hidden border-2 border-white shadow-sm">
-              <img
+      <header
+        className={[
+            "sticky top-0 z-40 bg-background-light/85 backdrop-blur-md",
+            "transition-all",
+            compact ? "pt-2 pb-2" : "pt-0 pb-3",
+        ].join(" ")}
+        >
+        <div className={["flex items-center justify-between", compact ? "mb-2" : "mb-4"].join(" ")}>
+            <div className="flex items-center gap-3">
+            <div
+                className={[
+                "rounded-full overflow-hidden border-2 border-white shadow-sm transition-all",
+                compact ? "size-9" : "size-12",
+                ].join(" ")}
+            >
+                <img
                 alt="Alex"
                 className="w-full h-full object-cover"
                 src="https://lh3.googleusercontent.com/aida-public/AB6AXuAOqSnukIxxig6axnIuq0lGlXj4I6ciPTu5Oe88ZY9cv2aT0AGMV8O7q5dWRK5NhL8gG_ZGNViFE8Y1UQkVSlmp5fOYhI8JHcttUzj0NOrT1vuOpfl1qv5htMMAa3UbR-GLVKqaFMZEFu7S6NIgmO1wD7ueqr9NvXWcPoFBh2muyPArPBj6n1FJPWTbqVRbkXxLqRBvoj5UFAvRDCvxx0M7Pm0Q92fcft6HhL6Xd_Nrzyt9pt97KXKUgOy5jUvSjdrZ1iUBZJAwA68"
-              />
+                />
             </div>
-            <div>
-              <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
-                Good morning
-              </p>
-              <h1 className="text-xl font-bold text-slate-900">Alex Johnson</h1>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-3">
+            <div className="leading-tight">
+                {!compact && (
+                <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
+                    Good morning
+                </p>
+                )}
+                <h1 className={["font-bold text-slate-900 transition-all", compact ? "text-base" : "text-xl"].join(" ")}>
+                Alex Johnson
+                </h1>
+            </div>
+            </div>
+
+            <div className={["flex items-center transition-all", compact ? "gap-2" : "gap-3"].join(" ")}>
             <button
-              type="button"
-              className="size-10 glass rounded-full flex items-center justify-center text-slate-700 shadow-sm"
-              aria-label="Notifications"
+                type="button"
+                className={[
+                "glass rounded-full flex items-center justify-center text-slate-700 shadow-sm transition-all",
+                compact ? "size-9" : "size-10",
+                ].join(" ")}
+                aria-label="Notifications"
             >
-              <span className="material-symbols-outlined text-[22px]">
-                notifications
-              </span>
+                <span className="material-symbols-outlined text-[22px]">notifications</span>
             </button>
+
             <button
-              type="button"
-              className="size-10 glass rounded-full flex items-center justify-center text-slate-700 shadow-sm"
-              aria-label="Settings"
+                type="button"
+                className={[
+                "glass rounded-full flex items-center justify-center text-slate-700 shadow-sm transition-all",
+                compact ? "size-9" : "size-10",
+                ].join(" ")}
+                aria-label="Settings"
             >
-              <span className="material-symbols-outlined text-[22px]">
-                settings
-              </span>
+                <span className="material-symbols-outlined text-[22px]">settings</span>
             </button>
-          </div>
+            </div>
         </div>
 
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent-teal/50 border border-primary/20">
-          <span className="size-1.5 rounded-full bg-primary animate-pulse"></span>
-          <p className="text-[11px] font-semibold text-slate-700 uppercase tracking-tight">
-            Week 4 of 8 · Hypertrophy Phase
-          </p>
-        </div>
+        {!compact && (
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent-teal/50 border border-primary/20">
+            <span className="size-1.5 rounded-full bg-primary animate-pulse"></span>
+            <p className="text-[11px] font-semibold text-slate-700 uppercase tracking-tight">
+                Week 4 of 8 · Hypertrophy Phase
+            </p>
+            </div>
+        )}
       </header>
 
       {/* Main Content Scrollable Area */}
-      <main className="px-0 flex flex-col gap-2.5">
+      <main className="px-0 flex flex-col gap-2.5 pt-1">
         {/* Hero Card (Today's Session) */}
         <section className="relative group rounded-xl overflow-hidden shadow-lg">
           <img

@@ -7,7 +7,7 @@ export default function MainLayout() {
 
   return (
     <div className="min-h-[100dvh] bg-surface text-ink flex flex-col">
-      <main className="flex-1 px-6 overflow-y-auto hide-scrollbar">
+      <main id="app-scroll" className="flex-1 px-6 overflow-y-auto">
         <Outlet />
       </main>
 

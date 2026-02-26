@@ -28,10 +28,3 @@ body {
   backdrop-filter: blur(8px);
   border: 1px solid rgba(25, 230, 212, 0.1);
 }
-.hide-scrollbar {
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-}
-.hide-scrollbar::-webkit-scrollbar {
-  display: none;
-}
