@@ -61,7 +61,7 @@ export default function HomeDashboard() {
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/50 to-transparent"></div>
 
-          <div className="relative p-4 flex flex-col justify-end min-h-[160px]">
+          <div className="relative p-4 flex flex-col justify-end min-h-[140px] sm:min-h-[160px]">
             <div className="mb-3">
               <p className="text-[9px] font-bold text-primary uppercase tracking-widest mb-0.5">
                 Today's Focus
@@ -79,7 +79,7 @@ export default function HomeDashboard() {
 
             <button
               type="button"
-              className="w-full bg-primary hover:bg-[#15cfbf] text-slate-950 font-black py-2.5 rounded-xl transition-all shadow-xl flex items-center justify-center gap-2"
+              className="w-full bg-primary hover:bg-[#15cfbf] text-slate-950 font-black py-2 sm:py-2.5 rounded-xl transition-all shadow-xl flex items-center justify-center gap-2"
             >
               <span className="uppercase tracking-wider text-[10px]">
                 Start Session
@@ -208,14 +208,13 @@ export default function HomeDashboard() {
 
         {/* Weekly Performance */}
         <section className="glass rounded-xl p-3 shadow-sm border border-white">
-          <div className="mb-4">
-            <h3 className="text-sm font-bold text-slate-800 tracking-tight">
-              Weekly Performance
-            </h3>
-            <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">
-              Current Progress
-            </p>
-          </div>
+        <div className="flex items-end justify-between mb-2">
+            <div>
+                <h3 className="text-sm font-bold text-slate-800 tracking-tight">Weekly Performance</h3>
+                <p className="text-[9px] text-slate-500 font-medium uppercase tracking-wide">Current Progress</p>
+            </div>
+            <p className="text-[10px] font-semibold text-slate-500">Week 4</p>
+        </div>
 
           <div className="flex justify-around items-center gap-4 py-2">
             <div className="flex flex-col items-center">
