@@ -1,6 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+
 export default function Program() {
     const [scrolled, setScrolled] = useState(false);
+    const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
+    const createMenuRef = useRef(null);
+    const navigate = useNavigate();
 
     useEffect(() => {
       const onScroll = () => setScrolled(window.scrollY > 4);
@@ -8,6 +13,32 @@ export default function Program() {
       window.addEventListener("scroll", onScroll, { passive: true });
       return () => window.removeEventListener("scroll", onScroll);
     }, []);
+
+    useEffect(() => {
+      if (!isCreateMenuOpen) return undefined;
+
+      const onPointerDown = (event) => {
+        if (!createMenuRef.current?.contains(event.target)) {
+          setIsCreateMenuOpen(false);
+        }
+      };
+
+      const onKeyDown = (event) => {
+        if (event.key === "Escape") {
+          setIsCreateMenuOpen(false);
+        }
+      };
+
+      document.addEventListener("mousedown", onPointerDown);
+      document.addEventListener("touchstart", onPointerDown, { passive: true });
+      document.addEventListener("keydown", onKeyDown);
+
+      return () => {
+        document.removeEventListener("mousedown", onPointerDown);
+        document.removeEventListener("touchstart", onPointerDown);
+        document.removeEventListener("keydown", onKeyDown);
+      };
+    }, [isCreateMenuOpen]);
     return (
         <div className="-mx-6 bg-background-light text-slate-900 antialiased font-display">
         {/* Sticky Header */}
@@ -19,15 +50,53 @@ export default function Program() {
         >
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tight">Program</h1>
-          <button
-            type="button"
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-primary shadow-lg shadow-primary/20"
-            aria-label="Create program"
-          >
-            <span className="material-symbols-outlined text-2xl text-white">
-              add
-            </span>
-          </button>
+          <div className="relative" ref={createMenuRef}>
+            <button
+              type="button"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-primary shadow-lg shadow-primary/20"
+              aria-label="Create program"
+              aria-expanded={isCreateMenuOpen}
+              aria-haspopup="menu"
+              onClick={() => setIsCreateMenuOpen((open) => !open)}
+            >
+              <span className="material-symbols-outlined text-2xl text-white">
+                add
+              </span>
+            </button>
+
+            {isCreateMenuOpen && (
+              <div
+                className="absolute right-0 mt-2 w-44 rounded-2xl border border-white/50 bg-white/85 p-1.5 shadow-[0_16px_32px_rgba(15,23,42,0.16)] backdrop-blur-xl"
+                role="menu"
+                aria-label="Create program options"
+              >
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100/80"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsCreateMenuOpen(false);
+                    navigate("/ai");
+                  }}
+                >
+                  <span className="material-symbols-outlined text-[18px] text-primary">auto_awesome</span>
+                  AI builder
+                </button>
+                <button
+                  type="button"
+                  className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100/80"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsCreateMenuOpen(false);
+                    navigate("/program/manual-new");
+                  }}
+                >
+                  <span className="material-symbols-outlined text-[18px] text-primary">tune</span>
+                  Manual
+                </button>
+              </div>
+            )}
+          </div>
         </div>
         </header>
   
@@ -184,23 +253,21 @@ export default function Program() {
                   </span>
                 </div>
   
-                {/* New cycle group */}
-                <div className="relative flex gap-8">
-                  <span className="absolute -top-7 left-1/2 -translate-x-1/2 text-[8px] font-bold tracking-wider uppercase whitespace-nowrap">
-                    New Cycle
-                  </span>
-  
-                  {[10, 11, 12].map((n) => (
-                    <div key={n} className="relative z-20 flex flex-col items-center">
-                      <div className="w-8 h-8 rounded-full border-2 flex items-center justify-center shadow-sm bg-background-light border-slate-200">
-                        <span className="text-[10px] font-bold">{n}</span>
-                      </div>
-                      <span className="absolute -bottom-6 text-[10px] font-bold text-slate-500">
-                        W{n}
+                {[10, 11, 12].map((n, index) => (
+                  <div key={n} className="relative z-20 flex flex-col items-center">
+                    {index === 1 && (
+                      <span className="absolute -top-7 text-[8px] font-bold tracking-wider uppercase whitespace-nowrap">
+                        New Cycle
                       </span>
+                    )}
+                    <div className="w-8 h-8 rounded-full border-2 flex items-center justify-center shadow-sm bg-background-light border-slate-200">
+                      <span className="text-[10px] font-bold">{n}</span>
                     </div>
-                  ))}
-                </div>
+                    <span className="absolute -bottom-6 text-[10px] font-bold text-slate-500">
+                      W{n}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           </section>

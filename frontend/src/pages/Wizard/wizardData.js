@@ -65,13 +65,13 @@ export const GOALS = [
   ];
   
   export const SENSITIVE_AREAS = [
-    { id: "shoulders", label: "Épaules", icon: "🟠" },
-    { id: "knees", label: "Genoux", icon: "🟡" },
-    { id: "back", label: "Dos", icon: "🔵" },
-    { id: "hips", label: "Hanches", icon: "🟣" },
-    { id: "elbows", label: "Coudes", icon: "🟤" },
-    { id: "wrists", label: "Poignets", icon: "🟢" },
-    { id: "other", label: "Autre", icon: "⚪" },
+    { id: "shoulders", label: "Épaules", icon: "💪" },
+    { id: "knees", label: "Genoux", icon: "🦵" },
+    { id: "back", label: "Dos", icon: "🧍" },
+    { id: "hips", label: "Hanches", icon: "🦴" },
+    { id: "elbows", label: "Coudes", icon: "🫳" },
+    { id: "wrists", label: "Poignets", icon: "✋" },
+    { id: "other", label: "Autre", icon: "📝" },
   ];
   
   export const MUSCLE_PRIORITIES = [

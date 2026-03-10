@@ -3,6 +3,12 @@ import MainLayout from "../layouts/MainLayout";
 
 import HomeDashboard from "../pages/HomeDashboard";
 import Program from "../pages/Program";
+import ManualNewProgram from "../pages/ManualNewProgram";
+import ManualBuilder from "../pages/ManualBuilder";
+import ManualConvert from "../pages/ManualConvert";
+import ManualWorkoutEditor from "../pages/ManualWorkoutEditor";
+import ManualBuilderMulti from "../pages/ManualBuilderMulti";
+
 import Train from "../pages/Train";
 import Progress from "../pages/Progress";
 import AICoach from "../pages/AICoach";
@@ -15,6 +21,11 @@ export default function AppRouter() {
         <Route element={<MainLayout />}>
           <Route path="/" element={<HomeDashboard />} />
           <Route path="/program" element={<Program />} />
+          <Route path="/program/manual-new" element={<ManualNewProgram />} />
+          <Route path="/program/manual-builder" element={<ManualBuilder />} />
+          <Route path="/program/manual-convert" element={<ManualConvert />} />
+          <Route path="/program/manual-builder/workout/:workoutId" element={<ManualWorkoutEditor />} />
+          <Route path="/program/manual-builder-multi" element={<ManualBuilderMulti />} />
           <Route path="/train" element={<Train />} />
           <Route path="/progress" element={<Progress />} />
           <Route path="/ai" element={<AICoach />} />
