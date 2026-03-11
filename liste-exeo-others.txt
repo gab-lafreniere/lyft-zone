@@ -1,0 +1,50 @@
+"cardio": {
+  "priority_1": [
+    "Incline Treadmill Walking",
+    "Stairmaster",
+    "Stationary Bike",
+    "Rowing Machine",
+    "Elliptical Trainer"
+  ],
+  "priority_2": [
+    "Treadmill Running",
+    "Ski Erg",
+    "Jump Rope",
+    "Battle Rope",
+    "Sled Push"
+  ],
+  "priority_3": [
+    "Bike Sprint",
+    "Row Sprint",
+    "Sled Pull"
+  ]
+}
+
+Mobility
+
+Hip Flexor Stretch
+Hamstring Stretch
+Thoracic Rotation
+Shoulder Dislocates
+Ankle Mobility Drill
+Deep Squat Hold
+Band Shoulder Stretch
+
+Warmup drills
+
+Bodyweight Squat
+Arm Circles
+Band Pull Apart
+Glute Bridge Activation
+Scapular Pull Up
+Wall Slides
+Walking Lunges
+
+Plyometrics
+
+Box Jump
+Broad Jump
+Jump Squat
+Depth Jump
+Medicine Ball Slam
+Medicine Ball Chest Throw
