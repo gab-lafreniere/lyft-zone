@@ -1,0 +1,350 @@
+{
+    "chest": {
+      "priority_1": [
+        "Barbell Bench Press",
+        "Incline Barbell Bench Press",
+        "Decline Barbell Bench Press",
+  
+        "Dumbbell Bench Press",
+        "Incline Dumbbell Press",
+        "Decline Dumbbell Press",
+  
+        "Machine Chest Press",
+        "Incline Machine Chest Press",
+  
+        "Smith Machine Bench Press",
+        "Smith Machine Incline Bench Press",
+  
+        "Weighted Dip",
+        "Assisted Dip",
+  
+        "Cable Chest Fly",
+        "Low to High Cable Fly",
+        "High to Low Cable Fly",
+  
+        "Pec Deck Fly",
+  
+        "Single Arm Cable Chest Press",
+  
+        "Push Up",
+        "Weighted Push Up",
+  
+        "Machine Chest Fly"
+      ],
+      "priority_2": [],
+      "priority_3": []
+    },
+  
+    "back": {
+      "priority_1": [
+        "Pull Up",
+        "Weighted Pull Up",
+        "Assisted Pull Up",
+  
+        "Chin Up",
+        "Weighted Chin Up",
+  
+        "Lat Pulldown",
+        "Close Grip Lat Pulldown",
+        "Wide Grip Lat Pulldown",
+        "Single Arm Lat Pulldown",
+  
+        "Barbell Bent Over Row",
+        "Pendlay Row",
+  
+        "Single Arm Dumbbell Row",
+        "Chest Supported Dumbbell Row",
+  
+        "Seated Cable Row",
+        "Single Arm Cable Row",
+  
+        "Machine Seated Row",
+        "Plate Loaded Row Machine",
+        "Chest Supported Row Machine",
+        "High Row Machine",
+  
+        "T Bar Row",
+        "Chest Supported T Bar Row",
+  
+        "Straight Arm Pulldown",
+        "Dumbbell Pullover",
+        "Machine Pullover",
+  
+        "Inverted Row",
+        "Weighted Inverted Row"
+      ],
+      "priority_2": [],
+      "priority_3": []
+    },
+  
+    "shoulders": {
+      "priority_1": [
+        "Barbell Overhead Press",
+        "Seated Dumbbell Shoulder Press",
+        "Standing Dumbbell Shoulder Press",
+        "Machine Shoulder Press",
+        "Smith Machine Shoulder Press",
+  
+        "Dumbbell Lateral Raise",
+        "Cable Lateral Raise",
+        "Single Arm Cable Lateral Raise",
+        "Machine Lateral Raise",
+        "Lean Away Cable Lateral Raise",
+  
+        "Reverse Pec Deck",
+        "Cable Rear Delt Fly",
+        "Dumbbell Rear Delt Fly",
+        "Chest Supported Rear Delt Fly",
+        "Rear Delt Row",
+  
+        "Arnold Press",
+        "Seated Machine Shoulder Press",
+        "Plate Loaded Shoulder Press",
+        "Single Arm Machine Shoulder Press",
+        "Face Pull"
+      ],
+      "priority_2": [],
+      "priority_3": []
+    },
+  
+    "biceps": {
+      "priority_1": [
+        "Barbell Curl",
+        "EZ Bar Curl",
+  
+        "Standing Dumbbell Curl",
+        "Alternating Dumbbell Curl",
+        "Incline Dumbbell Curl",
+        "Concentration Curl",
+  
+        "Hammer Curl",
+        "Cross Body Hammer Curl",
+  
+        "Cable Curl",
+        "Single Arm Cable Curl",
+        "High Cable Curl",
+  
+        "Preacher Curl",
+        "Preacher Curl Machine",
+  
+        "Spider Curl",
+  
+        "Bayesian Cable Curl",
+  
+        "Chin Up"
+      ],
+      "priority_2": [],
+      "priority_3": []
+    },
+  
+    "triceps": {
+      "priority_1": [
+        "Close Grip Bench Press",
+        "Weighted Dip",
+        "Assisted Dip",
+  
+        "Skull Crusher",
+        "EZ Bar Skull Crusher",
+        "Dumbbell Skull Crusher",
+  
+        "Overhead Triceps Extension",
+        "Dumbbell Overhead Triceps Extension",
+        "Cable Overhead Triceps Extension",
+        "Single Arm Cable Overhead Extension",
+  
+        "Cable Triceps Pushdown",
+        "Rope Triceps Pushdown",
+        "Single Arm Cable Pushdown",
+  
+        "Machine Triceps Extension",
+  
+        "Bench Dip",
+  
+        "JM Press"
+      ],
+      "priority_2": [],
+      "priority_3": []
+    },
+  
+    "quadriceps": {
+      "priority_1": [
+        "Back Squat",
+        "Front Squat",
+  
+        "Leg Press",
+        "Single Leg Press",
+  
+        "Hack Squat",
+        "Machine Hack Squat",
+  
+        "Smith Machine Squat",
+  
+        "Bulgarian Split Squat",
+        "Dumbbell Split Squat",
+  
+        "Walking Lunge",
+        "Reverse Lunge",
+  
+        "Step Up",
+  
+        "Leg Extension",
+        "Single Leg Extension",
+  
+        "Sissy Squat",
+  
+        "Belt Squat",
+  
+        "Pendulum Squat",
+  
+        "Cyclist Squat"
+      ],
+      "priority_2": [],
+      "priority_3": []
+    },
+  
+    "hamstrings": {
+      "priority_1": [
+        "Romanian Deadlift",
+        "Dumbbell Romanian Deadlift",
+  
+        "Stiff Leg Deadlift",
+        "Dumbbell Stiff Leg Deadlift",
+  
+        "Good Morning",
+        "Smith Machine Good Morning",
+  
+        "Seated Leg Curl",
+        "Lying Leg Curl",
+        "Standing Single Leg Curl",
+  
+        "Single Leg Romanian Deadlift",
+  
+        "Glute Ham Raise",
+  
+        "Nordic Hamstring Curl",
+  
+        "Cable Pull Through",
+  
+        "Kettlebell Swing",
+  
+        "Stability Ball Leg Curl",
+  
+        "Single Leg Stability Ball Curl"
+      ],
+      "priority_2": [],
+      "priority_3": []
+    },
+  
+    "glutes": {
+      "priority_1": [
+        "Barbell Hip Thrust",
+        "Smith Machine Hip Thrust",
+        "Machine Hip Thrust",
+  
+        "Barbell Glute Bridge",
+        "Smith Machine Glute Bridge",
+  
+        "Cable Pull Through",
+  
+        "Cable Glute Kickback",
+        "Machine Glute Kickback",
+  
+        "Single Leg Hip Thrust",
+        "Single Leg Glute Bridge",
+  
+        "Bulgarian Split Squat",
+        "Reverse Lunge",
+  
+        "Hip Abduction Machine",
+        "Cable Hip Abduction",
+  
+        "Frog Pump",
+  
+        "Step Up"
+      ],
+      "priority_2": [],
+      "priority_3": []
+    },
+  
+    "calves": {
+      "priority_1": [
+        "Standing Calf Raise",
+        "Seated Calf Raise",
+  
+        "Machine Standing Calf Raise",
+        "Machine Seated Calf Raise",
+  
+        "Donkey Calf Raise",
+  
+        "Leg Press Calf Raise",
+  
+        "Smith Machine Calf Raise",
+  
+        "Single Leg Standing Calf Raise",
+  
+        "Single Leg Seated Calf Raise",
+  
+        "Weighted Standing Calf Raise"
+      ],
+      "priority_2": [],
+      "priority_3": []
+    },
+  
+    "abs": {
+      "priority_1": [
+        "Crunch",
+        "Decline Crunch",
+  
+        "Machine Ab Crunch",
+  
+        "Cable Crunch",
+        "Kneeling Cable Crunch",
+  
+        "Hanging Leg Raise",
+        "Hanging Knee Raise",
+  
+        "Captain's Chair Leg Raise",
+  
+        "Reverse Crunch",
+  
+        "Ab Wheel Rollout",
+  
+        "Plank",
+  
+        "Cable Woodchopper",
+  
+        "Russian Twist",
+  
+        "Weighted Sit Up"
+      ],
+      "priority_2": [],
+      "priority_3": []
+    },
+  
+    "other": {
+      "priority_1": [
+        "Barbell Shrug",
+        "Dumbbell Shrug",
+        "Smith Machine Shrug",
+        "Machine Shrug",
+  
+        "Farmer's Carry",
+  
+        "Wrist Curl",
+        "Reverse Wrist Curl",
+        "Cable Wrist Curl",
+  
+        "Plate Pinch Hold",
+  
+        "Hip Adduction Machine",
+        "Cable Hip Adduction",
+  
+        "Hip Abduction Machine",
+        "Cable Hip Abduction",
+  
+        "Back Extension"
+      ],
+      "priority_2": [],
+      "priority_3": []
+    }
+  }
