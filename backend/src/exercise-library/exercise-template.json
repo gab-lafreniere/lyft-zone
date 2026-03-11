@@ -1,0 +1,32 @@
+{
+    "exerciseId": "",
+    "name": "",
+    "aliases": [],
+  
+    "equipmentCategory": "",
+    "equipmentNeeded": [],
+  
+    "movementPattern": "",
+  
+    "bodyParts": [],
+    "muscleFocus": [],
+  
+    "targetMuscles": [],
+    "secondaryMuscles": [],
+  
+    "muscleActivation": {},
+  
+    "mechanicType": "",
+    "unilateralType": "",
+    "difficulty": "",
+    "trainingType": "",
+  
+    "keywords": [],
+    "overview": "",
+    "coachingCues": [],
+    "commonMistakes": [],
+  
+    "isSupersetFriendly": false,
+    "fatigueScore": 1,
+    "status": "draft"
+  }
