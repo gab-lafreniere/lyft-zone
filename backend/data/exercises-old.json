@@ -1,0 +1,98 @@
+[
+  {
+    "name": "Barbell Bench Press",
+    "muscleGroup": "Chest",
+    "equipment": "Barbell",
+    "difficulty": "intermediate",
+    "imageUrl": "https://via.placeholder.com/300x300?text=Bench+Press",
+    "tempo": "2-1-2"
+  },
+  {
+    "name": "Dumbbell Flyes",
+    "muscleGroup": "Chest",
+    "equipment": "Dumbbells",
+    "difficulty": "intermediate",
+    "imageUrl": "https://via.placeholder.com/300x300?text=Dumbbell+Flyes",
+    "tempo": "2-1-2"
+  },
+  {
+    "name": "Barbell Squats",
+    "muscleGroup": "Legs",
+    "equipment": "Barbell",
+    "difficulty": "hard",
+    "imageUrl": "https://via.placeholder.com/300x300?text=Squats",
+    "tempo": "2-0-2"
+  },
+  {
+    "name": "Leg Press",
+    "muscleGroup": "Legs",
+    "equipment": "Machine",
+    "difficulty": "intermediate",
+    "imageUrl": "https://via.placeholder.com/300x300?text=Leg+Press",
+    "tempo": "1-0-2"
+  },
+  {
+    "name": "Deadlifts",
+    "muscleGroup": "Back",
+    "equipment": "Barbell",
+    "difficulty": "hard",
+    "imageUrl": "https://via.placeholder.com/300x300?text=Deadlifts",
+    "tempo": "2-0-1"
+  },
+  {
+    "name": "Lat Pulldown",
+    "muscleGroup": "Back",
+    "equipment": "Machine",
+    "difficulty": "beginner",
+    "imageUrl": "https://via.placeholder.com/300x300?text=Lat+Pulldown",
+    "tempo": "1-0-2"
+  },
+  {
+    "name": "Overhead Press",
+    "muscleGroup": "Shoulders",
+    "equipment": "Barbell",
+    "difficulty": "intermediate",
+    "imageUrl": "https://via.placeholder.com/300x300?text=Overhead+Press",
+    "tempo": "2-0-2"
+  },
+  {
+    "name": "Lateral Raises",
+    "muscleGroup": "Shoulders",
+    "equipment": "Dumbbells",
+    "difficulty": "beginner",
+    "imageUrl": "https://via.placeholder.com/300x300?text=Lateral+Raises",
+    "tempo": "2-1-2"
+  },
+  {
+    "name": "Barbell Curls",
+    "muscleGroup": "Biceps",
+    "equipment": "Barbell",
+    "difficulty": "beginner",
+    "imageUrl": "https://via.placeholder.com/300x300?text=Barbell+Curls",
+    "tempo": "2-0-2"
+  },
+  {
+    "name": "Tricep Dips",
+    "muscleGroup": "Triceps",
+    "equipment": "Bodyweight",
+    "difficulty": "intermediate",
+    "imageUrl": "https://via.placeholder.com/300x300?text=Tricep+Dips",
+    "tempo": "2-0-1"
+  },
+  {
+    "name": "Cable Flyes",
+    "muscleGroup": "Chest",
+    "equipment": "Cable Machine",
+    "difficulty": "beginner",
+    "imageUrl": "https://via.placeholder.com/300x300?text=Cable+Flyes",
+    "tempo": "2-1-2"
+  },
+  {
+    "name": "Leg Curls",
+    "muscleGroup": "Legs",
+    "equipment": "Machine",
+    "difficulty": "beginner",
+    "imageUrl": "https://via.placeholder.com/300x300?text=Leg+Curls",
+    "tempo": "1-0-2"
+  }
+]

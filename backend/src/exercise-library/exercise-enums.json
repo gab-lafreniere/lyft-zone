@@ -24,6 +24,7 @@
       "shoulder_adduction",
       "shoulder_flexion",
       "shoulder_extension",
+      "scapular_elevation",
       "hip_abduction",
       "hip_adduction",
       "hip_flexion",
@@ -34,7 +35,9 @@
       "spinal_flexion",
       "spinal_extension",
       "core_stabilization",
-      "core_rotation"
+      "core_rotation",
+      "wrist_flexion",
+      "wrist_extension"
     ],
   
     "equipmentCategory": [
@@ -116,6 +119,10 @@
       "selectorized_glute_kickback",
       "selectorized_ab_crunch",
       "selectorized_back_extension",
+      "selectorized_lateral_raise",
+      "selectorized_preacher_curl",
+      "selectorized_triceps_extension",
+      "selectorized_standing_leg_curl",
   
       "plate_loaded_chest_press",
       "plate_loaded_incline_press",
@@ -128,6 +135,7 @@
       "plate_loaded_pendulum_squat",
       "plate_loaded_hip_thrust",
       "plate_loaded_calf_raise",
+      "plate_loaded_shrug",
   
       "assisted_pull_up_machine",
       "assisted_dip_machine",
@@ -137,7 +145,6 @@
       "pendulum_squat_machine",
       "belt_squat_machine",
       "v_squat_machine",
-      "sissy_squat_machine",
       "standing_calf_raise_machine",
       "seated_calf_raise_machine",
       "donkey_calf_raise_machine",
@@ -151,6 +158,7 @@
       "ab_wheel",
       "plyo_box",
       "step_platform",
+      "stability_ball",
   
       "bodyweight"
     ],
@@ -185,6 +193,7 @@
       "triceps_long_head",
       "triceps_lateral_head",
       "forearms",
+      "adductors",
       "glute_max",
       "glute_med",
       "upper_abs",

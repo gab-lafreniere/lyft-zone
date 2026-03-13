@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "validate:exercises": "node src/exercise-library/validate-exercises.js"
   },
   "keywords": [
     "express",
