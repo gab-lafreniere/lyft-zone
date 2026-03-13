@@ -1,708 +1,374 @@
 {
-    "chest": {
-      "priority_1": [
-        "Barbell Bench Press",
-        "Incline Barbell Bench Press",
-        "Decline Barbell Bench Press",
-  
-        "Dumbbell Bench Press",
-        "Incline Dumbbell Press",
-        "Decline Dumbbell Press",
-  
-        "Machine Chest Press",
-        "Incline Machine Chest Press",
-  
-        "Smith Machine Bench Press",
-        "Smith Machine Incline Bench Press",
-  
-        "Weighted Dip",
-        "Assisted Dip",
-  
-        "Cable Chest Fly",
-        "Low to High Cable Fly",
-        "High to Low Cable Fly",
-  
-        "Single Arm Cable Chest Press",
-  
-        "Push Up",
-        "Weighted Push Up",
-  
-        "Machine Chest Fly"
-      ],
-      "priority_2": [
-        "Flat Dumbbell Fly",
-        "Incline Dumbbell Fly",
-        "Decline Dumbbell Fly",
-  
-        "Single Arm Machine Chest Press",
-        "Decline Machine Chest Press",
-  
-        "Smith Machine Decline Bench Press",
-  
-        "Chest Dip",
-  
-        "Single Arm Cable Fly",
-        "Incline Cable Fly",
-  
-        "Hex Press",
-  
-        "Deficit Push Up",
-        "Ring Push Up",
-  
-        "Guillotine Bench Press",
-        "Landmine Press"
-      ],
-      "priority_3": [
-        "Floor Press",
-
-        "Single Arm Dumbbell Bench Press",
-  
-        "Decline Machine Chest Fly",
-  
-        "Ring Fly"
-      ]
-    },
-  
-    "back": {
-      "priority_1": [
-        "Pull Up",
-        "Weighted Pull Up",
-        "Assisted Pull Up",
-  
-        "Chin Up",
-        "Weighted Chin Up",
-  
-        "Lat Pulldown",
-        "Machine Pulldown",
-        "Close Grip Lat Pulldown",
-        "Wide Grip Lat Pulldown",
-        "Single Arm Lat Pulldown",
-  
-        "Barbell Bent Over Row",
-        "Pendlay Row",
-  
-        "Single Arm Dumbbell Row",
-        "Chest Supported Dumbbell Row",
-  
-        "Seated Cable Row",
-        "Single Arm Cable Row",
-  
-        "Machine Seated Row",
-        "Chest Supported Row Machine",
-        "High Row Machine",
-  
-        "T Bar Row",
-        "Chest Supported T Bar Row",
-
-        "Dumbbell Pullover",
-        "Machine Pullover",
-
-        "Straight Arm Cable Pulldown",
-  
-        "Inverted Row",
-        "Weighted Inverted Row"
-      ],
-      "priority_2": [
-        "Neutral Grip Pull Up",
-  
-        "Neutral Grip Lat Pulldown",
-        "Reverse Grip Lat Pulldown",
-  
-        "Wide Grip Seated Cable Row",
-        "Close Grip Seated Cable Row",
-  
-        "Single Arm Chest Supported Row",
-
-        "Single Arm Machine High Row",
-  
-        "Landmine Row",
-  
-        "Meadows Row",
-  
-        "Seal Row",
-  
-        "Incline Dumbbell Row",
-        "T-Bar Row Machine",
-  
-        "Iso Lateral Row Machine",
-  
-        "Reverse Grip Barbell Row",
-  
-        "Kroc Row",
-  
-        "Cable Pullover"
-  
-      ],
-      "priority_3": [
-        "Mag Grip Lat Pulldown",
-        "Mag Grip Seated Row",
-  
-        "Gironda Row",
-  
-        "Kneeling Lat Pulldown",
-  
-        "Single Arm Kneeling Lat Pulldown",
-  
-        "Cable High Row",
-  
-        "Chest Supported Cable Row",
-  
-        "Lat Prayer",
-  
-        "Machine Low Row",
-  
-        "Unilateral Lat Pulldown Machine",
-  
-        "Standing Single Arm Cable Row",
-  
-        "Rack Pull",
-
-        "Close Neutral Grip Pulldown",
-        
-        "Single Arm Low Row Machine"
-      ]
-    },
-  
-    "shoulders": {
-      "priority_1": [
-        "Barbell Overhead Press",
-        "Seated Dumbbell Shoulder Press",
-        "Standing Dumbbell Shoulder Press",
-        "Machine Shoulder Press",
-        "Smith Machine Shoulder Press",
-  
-        "Dumbbell Lateral Raise",
-        "Cable Lateral Raise",
-        "Single Arm Cable Lateral Raise",
-        "Machine Lateral Raise",
-        "Lean Away Cable Lateral Raise",
-  
-        "Reverse Pec Deck",
-        "Cable Rear Delt Fly",
-        "Dumbbell Rear Delt Fly",
-        "Chest Supported Rear Delt Fly",
-        "Rear Delt Row",
-  
-        "Arnold Press",
-        "Seated Machine Shoulder Press",
-        "Single Arm Machine Shoulder Press",
-        "Face Pull"
-      ],
-      "priority_2": [
-        "Cable Y Raise",
-        "Dumbbell Y Raise",
-  
-        "Incline Lateral Raise",
-        "Seated Dumbbell Lateral Raise",
-        "Cable Lateral Raise Behind Body",
-        "Egyptian Lateral Raise",
-  
-        "Partial Lateral Raise",
-  
-        "Rear Delt Cable Row",
-        "Single Arm Rear Delt Cable Fly",
-        "Incline Bench Rear Delt Fly",
-  
-        "Cable Front Raise",
-        "Plate Front Raise",
-        "Single Arm Cable Front Raise",
-  
-        "Cable Upright Row",
-        "Dumbbell Upright Row",
-        "Barbell Upright Row",
-  
-        "Single Arm Machine Lateral Raise",
-  
-        "Lean Forward Cable Lateral Raise"
-      ],
-      "priority_3": [
-        "Single Arm Landmine Press",
-
-        "Machine Rear Delt Row",
-  
-        "Incline Cable Lateral Raise",
-  
-        "Lying Cable Lateral Raise",
-  
-        "Standing Dumbbell Front Raise"
-      ]
-    },
-  
-    "biceps": {
-      "priority_1": [
-        "Barbell Curl",
-        "EZ Bar Curl",
-  
-        "Standing Dumbbell Curl",
-        "Alternating Dumbbell Curl",
-        "Incline Dumbbell Curl",
-        "Concentration Curl",
-  
-        "Hammer Curl",
-        "Cross Body Hammer Curl",
-  
-        "Cable Curl",
-        "Single Arm Cable Curl",
-        "High Cable Curl",
-  
-        "Preacher Curl",
-        "Preacher Curl Machine",
-  
-        "Spider Curl",
-  
-        "Bayesian Cable Curl"
-  
-      ],
-      "priority_2": [
-        "Reverse Curl",
-        "EZ Bar Reverse Curl",
-  
-        "Zottman Curl",
-  
-        "Cable Rope Curl",
-  
-        "Low Cable Curl",
-  
-        "Single Arm Low Cable Curl",
-  
-        "Incline Cable Curl",
-  
-        "Cable Preacher Curl",
-  
-        "Single Arm Machine Biceps Curl",
-  
-        "Preacher Hammer Curl",
-  
-        "Single Arm High Cable Curl"
-      ],
-      "priority_3": [
-        "Fat Grip Dumbbell Curl",
-  
-        "Incline Hammer Curl"
-      ]
-    },
-  
-    "triceps": {
-      "priority_1": [
-        "Close Grip Bench Press",
-        "Weighted Dip",
-        "Assisted Dip",
-  
-        "Skull Crusher",
-        "EZ Bar Skull Crusher",
-        "Dumbbell Skull Crusher",
-  
-        "Overhead Triceps Extension",
-        "Dumbbell Overhead Triceps Extension",
-        "Cable Overhead Triceps Extension",
-        "Single Arm Cable Overhead Extension",
-  
-        "Cable Triceps Pushdown",
-        "Rope Triceps Pushdown",
-        "Single Arm Cable Pushdown",
-  
-        "Machine Triceps Extension",
-  
-        "Bench Dip",
-  
-        "JM Press"
-      ],
-      "priority_2": [
-        "Reverse Grip Triceps Pushdown",
-        "Straight Bar Triceps Pushdown",
-  
-        "PJR Pullover",
-  
-        "Single Arm Cable Kickback",
-        "Single Arm Dumbbell Kickback",
-  
-        "Incline Dumbbell Skull Crusher",
-  
-        "Decline Skull Crusher",
-  
-        "Cable Skull Crusher",
-  
-        "Single Arm Dumbbell Overhead Extension",
-  
-        "Machine Dip",
-  
-        "Bench Supported Dip",
-  
-        "Cross Body Cable Triceps Extension",
-  
-        "Single Arm Reverse Grip Pushdown"
-      ],
-      "priority_3": [
-
-        "Standing EZ Bar Overhead Extension",
-  
-        "Cable Standing High Cross Triceps Extension"
-      ]
-    },
-  
-    "quadriceps": {
-      "priority_1": [
-        "Back Squat",
-        "Front Squat",
-  
-        "Leg Press",
-        "Single Leg Press",
-  
-        "Machine Hack Squat",
-  
-        "Smith Machine Squat",
-  
-        "Dumbbell Split Squat",
-  
-        "Walking Lunge",
-        "Reverse Lunge",
-  
-        "Step Up",
-  
-        "Leg Extension",
-        "Single Leg Extension",
-  
-        "Sissy Squat",
-  
-        "Belt Squat",
-  
-        "Pendulum Squat",
-  
-        "Cyclist Squat"
-      ],
-      "priority_2": [
-        "Goblet Squat",
-
-        "Heels Elevated Goblet Squat",
-  
-        "Heels Elevated Barbell Squat",
-  
-        "Front Foot Elevated Split Squat",
-  
-        "Rear Foot Elevated Split Squat",
-  
-        "Deficit Reverse Lunge",
-  
-        "Forward Lunge",
-  
-        "Lateral Lunge",
-
-  
-        "Single Leg Hack Squat",
-  
-        "Iso Lateral Leg Press",
-  
-        "V Squat Machine",
-  
-        "Wall Sit",
-  
-        "Assisted Reverse Nordic Curl",
-  
-        "Landmine Squat",
-  
-        "Single Leg Belt Squat"
-      ],
-      "priority_3": [
-        "Safety Bar Squat",
-
-        "Smith Machine Front Squat",
-  
-        "Barbell Split Squat",
-
-  
-        "Close Stance Leg Press",
-  
-        "Heels Elevated Smith Squat",
-  
-        "Spanish Squat",
-  
-        "Hack Squat Narrow Stance"
-      ]
-    },
-  
-    "hamstrings": {
-      "priority_1": [
-        "Romanian Deadlift",
-        "Dumbbell Romanian Deadlift",
-  
-        "Stiff Leg Deadlift",
-        "Dumbbell Stiff Leg Deadlift",
-  
-        "Good Morning",
-        "Smith Machine Good Morning",
-  
-        "Seated Leg Curl",
-        "Lying Leg Curl",
-        "Standing Single Leg Curl",
-  
-        "Single Leg Romanian Deadlift",
-  
-        "Glute Ham Raise",
-  
-        "Nordic Hamstring Curl",
-  
-        "Kettlebell Swing",
-  
-        "Stability Ball Leg Curl",
-  
-        "Single Leg Stability Ball Curl"
-      ],
-      "priority_2": [
-        "Single Leg Seated Leg Curl",
-        "Single Leg Lying Leg Curl",
-  
-        "Cable Leg Curl",
-        "Standing Cable Leg Curl",
-  
-        "Nordic Curl Assisted",
-        "Glute Ham Raise Assisted",
-  
-        "Barbell Hip Hinge",
-  
-        "Smith Machine Romanian Deadlift",
-        "Single Leg Smith Machine Romanian Deadlift",
-  
-        "Deficit Romanian Deadlift",
-  
-        "Kettlebell Romanian Deadlift",
-  
-        "45 Degree Back Extension",
-        "Single Leg Back Extension",
-        "Banded Leg Curl"
-      ],
-      "priority_3": [
-        "Heel Elevated Romanian Deadlift",
-  
-        "Cable Romanian Deadlift",
-  
-        "Nordic Curl Eccentric",
-  
-        "Kettlebell Swing Single Arm"
-      ]
-    },
-  
-    "glutes": {
-      "priority_1": [
-        "Barbell Hip Thrust",
-        "Smith Machine Hip Thrust",
-        "Machine Hip Thrust",
-  
-        "Barbell Glute Bridge",
-        "Smith Machine Glute Bridge",
-  
-        "Cable Pull Through",
-  
-        "Cable Glute Kickback",
-        "Machine Glute Kickback",
-  
-        "Single Leg Hip Thrust",
-        "Single Leg Glute Bridge",
-  
-        "Bulgarian Split Squat",
-        "Reverse Lunge",
-  
-        "Hip Abduction Machine",
-        "Cable Hip Abduction",
-  
-        "Frog Pump"
-  
-      ],
-      "priority_2": [
-        "B Stance Hip Thrust",
-        "Banded Hip Thrust",
-  
-        "Dumbbell Hip Thrust",
-  
-        "Deficit Reverse Lunge",
-  
-        "Smith Machine Reverse Lunge",
-  
-        "Walking Lunge",
-  
-        "Curtsy Lunge",
-  
-        "Single Leg Cable Kickback",
-  
-        "Bent Knee Cable Kickback",
-  
-        "Glute Focused Back Extension",
-  
-        "Single Leg Glute Bridge Elevated",
-  
-        "Hip Thrust Machine Single Leg",
-  
-        "Standing Hip Abduction Machine",
-  
-        "Banded Hip Abduction",
-  
-        "Lateral Band Walk",
-  
-        "Kas Glute Bridge",
-
-        "Reverse Hyperextension"
-      ],
-      "priority_3": [
-        "Feet Elevated Glute Bridge",
-
-        "Barbell Frog Pump",
-  
-        "Deficit Hip Thrust",
-        
-        "Single Leg Romanian Deadlift Glute Bias",
-  
-        "Step Down",
-  
-        "Front Foot Elevated Reverse Lunge",
-  
-        "Banded Frog Pump",
-  
-        "Hip Abduction Cable Standing",
-  
-        "Smith Machine Reverse Frog Pump"
-      ]
-    },
-  
-    "calves": {
-      "priority_1": [  
-        "Machine Standing Calf Raise",
-        "Machine Seated Calf Raise",
-  
-        "Donkey Calf Raise",
-  
-        "Leg Press Calf Raise",
-  
-        "Smith Machine Calf Raise",
-  
-        "Single Leg Standing Calf Raise",
-  
-        "Single Leg Seated Calf Raise"
-      ],
-      "priority_2": [
-        "Hack Squat Calf Raise",
-
-        "Single Leg Leg Press Calf Raise",
-  
-        "Dumbbell Standing Calf Raise",
-  
-        "Barbell Standing Calf Raise",
-  
-        "Smith Machine Single Leg Calf Raise",
-  
-        "Seated Dumbbell Calf Raise",
-  
-        "Toes In Calf Raise",
-  
-        "Single Leg Donkey Calf Raise"
-      ],
-      "priority_3": [
-        "Hack Squat Single Leg Calf Raise",
-
-        "Donkey Calf Raise Machine"
-      ]
-    },
-  
-    "abs": {
-      "priority_1": [
-        "Crunch",
-        "Decline Crunch",
-  
-        "Machine Ab Crunch",
-  
-        "Cable Crunch",
-        "Kneeling Cable Crunch",
-  
-        "Hanging Leg Raise",
-        "Hanging Knee Raise",
-  
-        "Captain's Chair Leg Raise",
-  
-        "Reverse Crunch",
-  
-        "Ab Wheel Rollout",
-  
-        "Plank",
-  
-        "Cable Woodchopper",
-  
-        "Russian Twist",
-  
-        "Weighted Sit Up"
-      ],
-      "priority_2": [
-        "Toes To Bar",
-
-        "Decline Sit Up",
-        "Weighted Decline Sit Up",
-  
-        "Bench Leg Raise",
-  
-        "Stability Ball Crunch",
-  
-        "Side Plank",
-  
-        "V Up",
-  
-        "Seated Knee Tuck",
-  
-        "Decline Reverse Crunch",
-  
-        "Bicycle Crunch",
-  
-        "Standing Cable Oblique Crunch"
-      ],
-      "priority_3": [
-        "Dragon Flag",
-
-        "L Sit",
-  
-        "Hanging Straight Leg Raise",
-  
-        "Decline Bench Leg Raise"
-      ]
-    },
-  
-    "other": {
-      "priority_1": [
-        "Barbell Shrug",
-        "Dumbbell Shrug",
-        "Smith Machine Shrug",
-        "Machine Shrug",
-  
-        "Farmer's Walk",
-  
-        "Wrist Curl",
-        "Reverse Wrist Curl",
-        "Cable Wrist Curl",
-  
-        "Plate Pinch Hold",
-  
-        "Hip Adduction Machine",
-        "Cable Hip Adduction",
-  
-        "Hip Abduction Machine",
-        "Cable Hip Abduction"
-      ],
-      "priority_2": [
-        "Behind The Back Barbell Shrug",
-        "Cable Shrug",
-        "Trap Bar Shrug",
-  
-        "Plate Curl",
-        "Wrist Roller",
-        "Cable Wrist Extension",
-  
-        "Seated Hip Adduction",
-        "Standing Cable Hip Adduction",
-        "Banded Hip Adduction",
-  
-        "Copenhagen Plank"
-      ],
-      "priority_3": [
-        "Incline Dumbbell Shrug",
-  
-        "Behind The Back Smith Machine Shrug",
-  
-        "Reverse Grip Barbell Curl"
-      ]
-    }
-  }
+  "priority_1": [
+    "Barbell Bench Press",
+    "Incline Barbell Bench Press",
+    "Decline Barbell Bench Press",
+    "Dumbbell Bench Press",
+    "Incline Dumbbell Press",
+    "Decline Dumbbell Press",
+    "Machine Chest Press",
+    "Incline Machine Chest Press",
+    "Smith Machine Bench Press",
+    "Smith Machine Incline Bench Press",
+    "Weighted Dip",
+    "Assisted Dip",
+    "Cable Chest Fly",
+    "Low to High Cable Fly",
+    "High to Low Cable Fly",
+    "Single Arm Cable Chest Press",
+    "Push Up",
+    "Weighted Push Up",
+    "Machine Chest Fly",
+    "Pull Up",
+    "Weighted Pull Up",
+    "Assisted Pull Up",
+    "Chin Up",
+    "Weighted Chin Up",
+    "Lat Pulldown",
+    "Machine Pulldown",
+    "Close Grip Lat Pulldown",
+    "Wide Grip Lat Pulldown",
+    "Single Arm Lat Pulldown",
+    "Barbell Bent Over Row",
+    "Pendlay Row",
+    "Single Arm Dumbbell Row",
+    "Chest Supported Dumbbell Row",
+    "Seated Cable Row",
+    "Single Arm Cable Row",
+    "Machine Seated Row",
+    "Chest Supported Row Machine",
+    "High Row Machine",
+    "T Bar Row",
+    "Chest Supported T Bar Row",
+    "Dumbbell Pullover",
+    "Machine Pullover",
+    "Straight Arm Cable Pulldown",
+    "Inverted Row",
+    "Weighted Inverted Row",
+    "Barbell Overhead Press",
+    "Seated Dumbbell Shoulder Press",
+    "Standing Dumbbell Shoulder Press",
+    "Machine Shoulder Press",
+    "Smith Machine Shoulder Press",
+    "Dumbbell Lateral Raise",
+    "Cable Lateral Raise",
+    "Single Arm Cable Lateral Raise",
+    "Machine Lateral Raise",
+    "Lean Away Cable Lateral Raise",
+    "Reverse Pec Deck",
+    "Cable Rear Delt Fly",
+    "Dumbbell Rear Delt Fly",
+    "Chest Supported Rear Delt Fly",
+    "Rear Delt Row",
+    "Arnold Press",
+    "Single Arm Machine Shoulder Press",
+    "Face Pull",
+    "Barbell Curl",
+    "EZ Bar Curl",
+    "Standing Dumbbell Curl",
+    "Alternating Dumbbell Curl",
+    "Incline Dumbbell Curl",
+    "Concentration Curl",
+    "Hammer Curl",
+    "Cross Body Hammer Curl",
+    "Cable Curl",
+    "Single Arm Cable Curl",
+    "High Cable Curl",
+    "Preacher Curl",
+    "Preacher Curl Machine",
+    "Spider Curl",
+    "Bayesian Cable Curl",
+    "Close Grip Bench Press",
+    "Skull Crusher",
+    "EZ Bar Skull Crusher",
+    "Dumbbell Skull Crusher",
+    "Overhead Triceps Extension",
+    "Dumbbell Overhead Triceps Extension",
+    "Cable Overhead Triceps Extension",
+    "Single Arm Cable Overhead Extension",
+    "Cable Triceps Pushdown",
+    "Rope Triceps Pushdown",
+    "Single Arm Cable Pushdown",
+    "Machine Triceps Extension",
+    "Bench Dip",
+    "JM Press",
+    "Back Squat",
+    "Front Squat",
+    "Leg Press",
+    "Single Leg Press",
+    "Machine Hack Squat",
+    "Smith Machine Squat",
+    "Dumbbell Split Squat",
+    "Walking Lunge",
+    "Reverse Lunge",
+    "Step Up",
+    "Leg Extension",
+    "Single Leg Extension",
+    "Sissy Squat",
+    "Belt Squat",
+    "Pendulum Squat",
+    "Cyclist Squat",
+    "Romanian Deadlift",
+    "Dumbbell Romanian Deadlift",
+    "Stiff Leg Deadlift",
+    "Dumbbell Stiff Leg Deadlift",
+    "Good Morning",
+    "Smith Machine Good Morning",
+    "Seated Leg Curl",
+    "Lying Leg Curl",
+    "Standing Single Leg Curl",
+    "Single Leg Romanian Deadlift",
+    "Glute Ham Raise",
+    "Nordic Hamstring Curl",
+    "Kettlebell Swing",
+    "Stability Ball Leg Curl",
+    "Single Leg Stability Ball Curl",
+    "Barbell Hip Thrust",
+    "Smith Machine Hip Thrust",
+    "Machine Hip Thrust",
+    "Barbell Glute Bridge",
+    "Smith Machine Glute Bridge",
+    "Cable Pull Through",
+    "Cable Glute Kickback",
+    "Machine Glute Kickback",
+    "Single Leg Hip Thrust",
+    "Single Leg Glute Bridge",
+    "Bulgarian Split Squat",
+    "Hip Abduction Machine",
+    "Cable Hip Abduction",
+    "Frog Pump",
+    "Machine Standing Calf Raise",
+    "Machine Seated Calf Raise",
+    "Donkey Calf Raise",
+    "Leg Press Calf Raise",
+    "Smith Machine Calf Raise",
+    "Single Leg Standing Calf Raise",
+    "Single Leg Seated Calf Raise",
+    "Crunch",
+    "Decline Crunch",
+    "Machine Ab Crunch",
+    "Kneeling Cable Crunch",
+    "Hanging Leg Raise",
+    "Hanging Knee Raise",
+    "Captain's Chair Leg Raise",
+    "Reverse Crunch",
+    "Ab Wheel Rollout",
+    "Plank",
+    "Cable Woodchopper",
+    "Russian Twist",
+    "Weighted Sit Up",
+    "Barbell Shrug",
+    "Dumbbell Shrug",
+    "Smith Machine Shrug",
+    "Machine Shrug",
+    "Farmer's Walk",
+    "Wrist Curl",
+    "Reverse Wrist Curl",
+    "Cable Wrist Curl",
+    "Plate Pinch Hold",
+    "Hip Adduction Machine",
+    "Cable Hip Adduction"
+  ],
+  "priority_2": [
+    "Flat Dumbbell Fly",
+    "Incline Dumbbell Fly",
+    "Decline Dumbbell Fly",
+    "Single Arm Machine Chest Press",
+    "Decline Machine Chest Press",
+    "Smith Machine Decline Bench Press",
+    "Chest Dip",
+    "Single Arm Cable Fly",
+    "Incline Cable Fly",
+    "Hex Press",
+    "Deficit Push Up",
+    "Ring Push Up",
+    "Guillotine Bench Press",
+    "Landmine Press",
+    "Neutral Grip Pull Up",
+    "Neutral Grip Lat Pulldown",
+    "Reverse Grip Lat Pulldown",
+    "Wide Grip Seated Cable Row",
+    "Close Grip Seated Cable Row",
+    "Single Arm Chest Supported Row",
+    "Single Arm Machine High Row",
+    "Landmine Row",
+    "Meadows Row",
+    "Seal Row",
+    "Incline Dumbbell Row",
+    "T-Bar Row Machine",
+    "Iso Lateral Row Machine",
+    "Reverse Grip Barbell Row",
+    "Kroc Row",
+    "Cable Pullover",
+    "Cable Y Raise",
+    "Dumbbell Y Raise",
+    "Incline Lateral Raise",
+    "Seated Dumbbell Lateral Raise",
+    "Cable Lateral Raise Behind Body",
+    "Egyptian Lateral Raise",
+    "Partial Lateral Raise",
+    "Rear Delt Cable Row",
+    "Single Arm Rear Delt Cable Fly",
+    "Incline Bench Rear Delt Fly",
+    "Cable Front Raise",
+    "Plate Front Raise",
+    "Single Arm Cable Front Raise",
+    "Cable Upright Row",
+    "Dumbbell Upright Row",
+    "Barbell Upright Row",
+    "Single Arm Machine Lateral Raise",
+    "Lean Forward Cable Lateral Raise",
+    "Reverse Curl",
+    "EZ Bar Reverse Curl",
+    "Zottman Curl",
+    "Cable Rope Curl",
+    "Low Cable Curl",
+    "Single Arm Low Cable Curl",
+    "Incline Cable Curl",
+    "Cable Preacher Curl",
+    "Single Arm Machine Biceps Curl",
+    "Preacher Hammer Curl",
+    "Single Arm High Cable Curl",
+    "Reverse Grip Triceps Pushdown",
+    "Straight Bar Triceps Pushdown",
+    "PJR Pullover",
+    "Single Arm Cable Kickback",
+    "Single Arm Dumbbell Kickback",
+    "Incline Dumbbell Skull Crusher",
+    "Decline Skull Crusher",
+    "Cable Skull Crusher",
+    "Single Arm Dumbbell Overhead Extension",
+    "Machine Dip",
+    "Bench Supported Dip",
+    "Cross Body Cable Triceps Extension",
+    "Single Arm Reverse Grip Pushdown",
+    "Goblet Squat",
+    "Heels Elevated Goblet Squat",
+    "Heels Elevated Barbell Squat",
+    "Front Foot Elevated Split Squat",
+    "Rear Foot Elevated Split Squat",
+    "Deficit Reverse Lunge",
+    "Forward Lunge",
+    "Lateral Lunge",
+    "Single Leg Hack Squat",
+    "Iso Lateral Leg Press",
+    "V Squat Machine",
+    "Wall Sit",
+    "Assisted Reverse Nordic Curl",
+    "Landmine Squat",
+    "Single Leg Belt Squat",
+    "Single Leg Seated Leg Curl",
+    "Single Leg Lying Leg Curl",
+    "Cable Leg Curl",
+    "Standing Cable Leg Curl",
+    "Nordic Curl Assisted",
+    "Glute Ham Raise Assisted",
+    "Barbell Hip Hinge",
+    "Smith Machine Romanian Deadlift",
+    "Single Leg Smith Machine Romanian Deadlift",
+    "Deficit Romanian Deadlift",
+    "Kettlebell Romanian Deadlift",
+    "45 Degree Back Extension",
+    "Single Leg Back Extension",
+    "Banded Leg Curl",
+    "B Stance Hip Thrust",
+    "Banded Hip Thrust",
+    "Dumbbell Hip Thrust",
+    "Smith Machine Reverse Lunge",
+    "Curtsy Lunge",
+    "Single Leg Cable Kickback",
+    "Bent Knee Cable Kickback",
+    "Glute Focused Back Extension",
+    "Single Leg Glute Bridge Elevated",
+    "Hip Thrust Machine Single Leg",
+    "Standing Hip Abduction Machine",
+    "Banded Hip Abduction",
+    "Lateral Band Walk",
+    "Kas Glute Bridge",
+    "Reverse Hyperextension",
+    "Hack Squat Calf Raise",
+    "Single Leg Leg Press Calf Raise",
+    "Dumbbell Standing Calf Raise",
+    "Barbell Standing Calf Raise",
+    "Smith Machine Single Leg Calf Raise",
+    "Seated Dumbbell Calf Raise",
+    "Toes In Calf Raise",
+    "Single Leg Donkey Calf Raise",
+    "Toes To Bar",
+    "Decline Sit Up",
+    "Weighted Decline Sit Up",
+    "Bench Leg Raise",
+    "Stability Ball Crunch",
+    "Side Plank",
+    "V Up",
+    "Seated Knee Tuck",
+    "Decline Reverse Crunch",
+    "Bicycle Crunch",
+    "Standing Cable Oblique Crunch",
+    "Behind The Back Barbell Shrug",
+    "Cable Shrug",
+    "Trap Bar Shrug",
+    "Plate Curl",
+    "Wrist Roller",
+    "Cable Wrist Extension",
+    "Seated Hip Adduction",
+    "Standing Cable Hip Adduction",
+    "Banded Hip Adduction",
+    "Copenhagen Plank"
+  ],
+  "priority_3": [
+    "Floor Press",
+    "Single Arm Dumbbell Bench Press",
+    "Decline Machine Chest Fly",
+    "Ring Fly",
+    "Mag Grip Lat Pulldown",
+    "Mag Grip Seated Row",
+    "Gironda Row",
+    "Kneeling Lat Pulldown",
+    "Single Arm Kneeling Lat Pulldown",
+    "Cable High Row",
+    "Chest Supported Cable Row",
+    "Lat Prayer",
+    "Machine Low Row",
+    "Unilateral Lat Pulldown Machine",
+    "Standing Single Arm Cable Row",
+    "Rack Pull",
+    "Close Neutral Grip Pulldown",
+    "Single Arm Low Row Machine",
+    "Single Arm Landmine Press",
+    "Machine Rear Delt Row",
+    "Incline Cable Lateral Raise",
+    "Lying Cable Lateral Raise",
+    "Standing Dumbbell Front Raise",
+    "Fat Grip Dumbbell Curl",
+    "Incline Hammer Curl",
+    "Standing EZ Bar Overhead Extension",
+    "Cable Standing High Cross Triceps Extension",
+    "Safety Bar Squat",
+    "Smith Machine Front Squat",
+    "Barbell Split Squat",
+    "Close Stance Leg Press",
+    "Heels Elevated Smith Squat",
+    "Spanish Squat",
+    "Hack Squat Narrow Stance",
+    "Heel Elevated Romanian Deadlift",
+    "Cable Romanian Deadlift",
+    "Nordic Curl Eccentric",
+    "Kettlebell Swing Single Arm",
+    "Feet Elevated Glute Bridge",
+    "Barbell Frog Pump",
+    "Deficit Hip Thrust",
+    "Single Leg Romanian Deadlift Glute Bias",
+    "Step Down",
+    "Front Foot Elevated Reverse Lunge",
+    "Banded Frog Pump",
+    "Smith Machine Reverse Frog Pump",
+    "Hack Squat Single Leg Calf Raise",
+    "Dragon Flag",
+    "L Sit",
+    "Hanging Straight Leg Raise",
+    "Decline Bench Leg Raise",
+    "Incline Dumbbell Shrug",
+    "Behind The Back Smith Machine Shrug"
+  ]
+}
