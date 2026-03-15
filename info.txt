@@ -42,7 +42,7 @@ Concept central: Cycle d’entraînement
 - Un cycle dure typiquement 6 à 8 semaines
 - Un cycle contient:
   - un plan de référence (plan initial généré)
-  - zéro ou plusieurs versions modifiées (par l’utilisateur et ou par l’IA)
+  - zéro ou plusieurs versions modifiées du plan (par l’utilisateur et ou par l’IA)
   - des séances planifiées dans un calendrier
   - des métadonnées (date début, date fin, statut actif ou expiré)
 
@@ -71,12 +71,20 @@ B) Mode Coach IA (plan adaptatif)
 - Historique des versions:
   - plan de référence toujours consultable
   - versions modifiées consultables et comparables
+  - chaque version doit conserver une source claire: système, utilisateur ou IA
+  - les changements importants doivent rester traçables dans l’historique du plan
 
 Fin de cycle et régénération
 - En mode Coach IA, un check-in est requis à la fin du cycle pour régénérer un nouveau plan et planifier le prochain cycle
 - Si l’utilisateur ne fait rien:
   - le plan actuel reste utilisable temporairement
   - des rappels sont envoyés (ex: 7 jours avant la fin, à la fin, puis rappels doux)
+
+Important:
+- Le plan théorique et l’exécution réelle d’une séance sont deux objets distincts
+- Le calendrier planifie des séances prévues
+- Le suivi d’entraînement enregistre des séances réellement exécutées
+- L’historique utilisateur ne doit jamais écraser le plan théorique d’origine
 
 ==================================================
 ENTRÉES UTILISATEUR DU WIZARD
@@ -87,7 +95,7 @@ Entrées principales:
 - Objectif principal (force, masse musculaire, cardio, mobilité)
 - Disponibilités (séances par semaine, durée par séance)
 - Environnement et équipements disponibles
-- Contraintes et préférences (exercices à éviter, zones sensibles, blessures)
+- Contraintes et préférences (exercices à éviter, limitations, inconforts, préférences de pratique)
 - Priorités musculaires (optionnel)
 
 Champ additionnel:
@@ -140,10 +148,10 @@ Abdominaux
 ARCHITECTURE GLOBALE
 ==================================================
 Modules principaux:
-- Générateur de plans et de cycles
+- Générateur de cycles, plans et séances
 - Base d’exercices avancée (self-hosted)
 - Planification et périodisation (cycle, calendrier)
-- Suivi des séances en temps réel (mode entraînement)
+- Exécution des séances en temps réel (mode entraînement)
 - Suivi de la progression (historique, graphiques)
 - Analyse de performance (basique Phase 2)
 - Analyse esthétique par IA (Phase 3)
@@ -152,17 +160,41 @@ Modules principaux:
 - Gestion utilisateur et préférences
 
 ==================================================
+VOCABULAIRE PRODUIT CANONIQUE
+==================================================
+- Cycle: période d’entraînement complète, généralement 6 à 8 semaines
+- Plan: structure d’entraînement complète associée à un cycle
+- Workout: séance individuelle dans un plan
+- Block: bloc dans une séance, par exemple single exercise, superset ou giant set
+- Set: série prescrite ou réalisée
+- Librairie d’exercices: référentiel global des exercices disponibles dans l’application
+
+==================================================
 ARCHITECTURE TECHNIQUE
 ==================================================
 - Frontend: React
 - Backend: Node.js + Express
-- Base de données: backend only
+- Base de données: PostgreSQL hébergée sur Neon
+- ORM: Prisma v7
 - Le frontend n’est jamais la source de vérité
 - Toute logique métier vit côté backend
+- Les validations métier critiques doivent être centralisées côté backend
+- Les seeds et imports de données doivent être validés avant toute écriture
 
 Déploiement:
 - Frontend: Vercel
 - Backend: Render
+- Database: Neon
+
+==================================================
+ÉTAT ACTUEL DE LA BASE DE DONNÉES
+==================================================
+- La base d’exercices est maintenant intégrée dans PostgreSQL
+- L’accès à la base passe par Prisma v7
+- La librairie d’exercices a été seedée avec validation stricte
+- exerciseId est la clé canonique côté application pour la librairie
+- Les tableaux et objets complexes de la librairie sont stockés en JSON dans PostgreSQL
+- Le backend reste l’unique source de vérité pour la logique métier
 
 ==================================================
 RÈGLES DE DÉVELOPPEMENT
@@ -185,8 +217,10 @@ PRIORITÉS ACTUELLES
 ==================================================
 Phase 1: Fondations
 - Base d’exercices fiable
+- Intégration de la librairie d’exercices en base PostgreSQL
 - Modèle de séance clair
-- Modèle de programme et de cycle clair
+- Modèle de cycle et de plan clair
+- Modèle de blocs d’exercices clair
 - Calcul du volume par muscle
 - Gestion simple de la surcharge progressive
 - Planning calendrier pour le cycle actif
@@ -208,20 +242,55 @@ Phase 3: IA
 BASE D’EXERCICES
 ==================================================
 Source:
-- Dataset open source ExerciseDB
-- Hébergé et enrichi localement
+- Dataset open source ExerciseDB comme base de départ (mise de côté)
+- Librairie enrichie, corrigée et validée localement
+- Librairie stockée en base PostgreSQL, mais pilotée par des fichiers source versionnés localement
+
+Identifiant canonique:
+- exerciseId est l’identifiant canonique de la librairie
+- exerciseId doit être unique, commencer par exr_ et utiliser snake_case
+- Les identifiants internes de base de données ne sont jamais la référence métier de la librairie
+
+Validation:
+- La librairie d’exercices est validée par un schema métier strict
+- Les valeurs autorisées sont centralisées dans un fichier d’enums
+- Toute importation ou mise à jour de la librairie doit être validée avant écriture en base
+- Le seed est strict: si un exercice est invalide, l’import échoue par défaut
 
 Données par exercice:
-- Groupe musculaire principal et secondaires
-- Type: polyarticulaire ou isolation
-- Profil de tension: étirée, moyenne, raccourcie
-- Charge typique: libre, machine, poids du corps
-- Niveau de fatigue systémique
-- Tempo recommandé
-- Substituts intelligents
+- exerciseId
+- name
+- aliases
+- equipmentCategory
+- equipmentNeeded
+- movementPattern
+- bodyParts
+- muscleFocus
+- targetMuscles
+- secondaryMuscles
+- muscleActivation
+- mechanicType
+- unilateralType
+- difficulty
+- trainingType
+- keywords
+- overview
+- coachingCues
+- commonMistakes
+- isSupersetFriendly
+- fatigueScore
+- status
 
 L’IA n’invente jamais d’exercices.
 Elle ne travaille que sur la base interne.
+
+==================================================
+RÈGLES D’IDENTITÉ DES DONNÉES
+==================================================
+- exerciseId est l’identifiant canonique des exercices dans toute l’application
+- Les clés internes de base de données servent uniquement à la persistance
+- Toute synchronisation, validation, import, seed ou référence produit de la librairie doit utiliser exerciseId
+- Le frontend ne doit jamais supposer qu’un id interne Prisma ou SQL est un identifiant métier stable
 
 ==================================================
 SUIVI DES SÉANCES
@@ -350,3 +419,31 @@ Si un doute existe:
 - Ne pas deviner
 - Poser la question
 - Proposer une solution minimale
+
+==================================================
+PROCHAINE ÉTAPE ARCHITECTURE DB
+==================================================
+Tables coeur à modéliser
+
+Maintenant:
+- users
+- user_profiles
+- training_cycles
+- plans
+- plan_weeks
+- workouts
+- workout_blocks
+- block_exercises
+- exercise_set_templates
+- scheduled_sessions
+
+Très bientôt:
+- workout_logs
+- exercise_logs
+- set_logs
+
+Plus tard:
+- plan_change_events
+- ai_proposals
+- plan_constraints_snapshots
+- progress_snapshots

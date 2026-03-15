@@ -12,15 +12,29 @@ datasource db {
 }
 
 model Exercise {
-  id                String   @id @default(cuid())
-  exerciseId        String   @unique
-  name              String
-  equipmentCategory String?
-  movementPattern   String?
-  mechanicType      String?
-  difficulty        String?
-  trainingType      String?
-  overview          String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  exerciseId         String   @unique
+  name               String
+  aliases            Json?
+  equipmentCategory  String
+  equipmentNeeded    Json
+  movementPattern    String
+  bodyParts          Json
+  muscleFocus        Json
+  targetMuscles      Json
+  secondaryMuscles   Json
+  muscleActivation   Json
+  mechanicType       String
+  unilateralType     String
+  difficulty         String
+  trainingType       String
+  keywords           Json
+  overview           String
+  coachingCues       Json
+  commonMistakes     Json
+  isSupersetFriendly Boolean
+  fatigueScore       Int
+  status             String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }

@@ -6,7 +6,12 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "validate:exercises": "node src/exercise-library/validate-exercises.js"
+    "validate:exercises": "node src/exercise-library/validate-exercises.js",
+    "seed:exercises": "node prisma/seed-exercises.js",
+    "seed:exercises:dry": "node prisma/seed-exercises.js --dry-run"
+  },
+  "prisma": {
+    "seed": "node prisma/seed-exercises.js"
   },
   "keywords": [
     "express",
