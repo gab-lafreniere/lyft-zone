@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useBlocker, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useManualProgram } from "../context/ManualProgramContext";
 import { fetchExercises } from "../services/api";
 
@@ -72,10 +72,6 @@ export default function ManualWorkoutEditor() {
   }, [navigate, programDraft.isMultiWeek, workout]);
 
   const hasIncompleteSuperset = hasIncompleteSupersets(workout?.id ?? null);
-  const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) =>
-      hasIncompleteSuperset && currentLocation.pathname !== nextLocation.pathname
-  );
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -119,22 +115,6 @@ export default function ManualWorkoutEditor() {
       cancelled = true;
     };
   }, [debouncedSearchQuery]);
-
-  useEffect(() => {
-    if (blocker.state !== "blocked") {
-      return;
-    }
-
-    const shouldLeave = window.confirm(
-      "This workout has an incomplete superset. Complete the second exercise selection or remove the superset block before leaving."
-    );
-
-    if (shouldLeave) {
-      blocker.proceed();
-    } else {
-      blocker.reset();
-    }
-  }, [blocker]);
 
   useEffect(() => {
     if (!hasIncompleteSuperset) {
