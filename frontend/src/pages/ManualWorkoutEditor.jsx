@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useBlocker, useNavigate, useParams } from "react-router-dom";
 import { useManualProgram } from "../context/ManualProgramContext";
+import { fetchExercises } from "../services/api";
 
 function toNumberOrEmpty(value) {
   if (value === "") {
@@ -15,18 +16,28 @@ export default function ManualWorkoutEditor() {
   const [showAddBlockSheet, setShowAddBlockSheet] = useState(false);
   const [collapsedBlocks, setCollapsedBlocks] = useState({});
   const [collapsedSupersetExercises, setCollapsedSupersetExercises] = useState({});
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [exerciseResults, setExerciseResults] = useState([]);
+  const [isLoadingExercises, setIsLoadingExercises] = useState(false);
+  const [exerciseError, setExerciseError] = useState("");
+  const [activeSearchTarget, setActiveSearchTarget] = useState(null);
 
   const navigate = useNavigate();
   const { workoutId } = useParams();
+  const searchUiRef = useRef(null);
   const {
     programDraft,
     updateWorkoutName,
     updateBlock,
     updateSupersetExercise,
-    addBlock,
     removeBlock,
     addSet,
     updateSet,
+    appendSingleBlockFromExercise,
+    convertSingleBlockToSuperset,
+    assignSupersetExercise,
+    hasIncompleteSupersets,
   } = useManualProgram();
 
   const workout = useMemo(() => {
@@ -60,6 +71,132 @@ export default function ManualWorkoutEditor() {
     }
   }, [navigate, programDraft.isMultiWeek, workout]);
 
+  const hasIncompleteSuperset = hasIncompleteSupersets(workout?.id ?? null);
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      hasIncompleteSuperset && currentLocation.pathname !== nextLocation.pathname
+  );
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim());
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadExercises() {
+      setIsLoadingExercises(true);
+      setExerciseError("");
+
+      try {
+        const results = await fetchExercises({
+          q: debouncedSearchQuery,
+          limit: 25,
+        });
+
+        if (!cancelled) {
+          setExerciseResults(results);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setExerciseResults([]);
+          setExerciseError(error.message || "Unable to load exercises.");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingExercises(false);
+        }
+      }
+    }
+
+    loadExercises();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedSearchQuery]);
+
+  useEffect(() => {
+    if (blocker.state !== "blocked") {
+      return;
+    }
+
+    const shouldLeave = window.confirm(
+      "This workout has an incomplete superset. Complete the second exercise selection or remove the superset block before leaving."
+    );
+
+    if (shouldLeave) {
+      blocker.proceed();
+    } else {
+      blocker.reset();
+    }
+  }, [blocker]);
+
+  useEffect(() => {
+    if (!hasIncompleteSuperset) {
+      return undefined;
+    }
+
+    const handleBeforeUnload = (event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasIncompleteSuperset]);
+
+  useEffect(() => {
+    if (!workout || !activeSearchTarget) {
+      return;
+    }
+
+    const targetBlockExists = workout.blocks.some(
+      (block) =>
+        block.id === activeSearchTarget.blockId &&
+        block.type === "superset" &&
+        block.exercises[activeSearchTarget.exerciseIndex]
+    );
+
+    if (!targetBlockExists) {
+      setActiveSearchTarget(null);
+    }
+  }, [activeSearchTarget, workout]);
+
+  useEffect(() => {
+    if (!activeSearchTarget) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event) => {
+      if (searchUiRef.current?.contains(event.target)) {
+        return;
+      }
+
+      const targetNode = document.querySelector(
+        `[data-superset-block="${activeSearchTarget.blockId}"]`
+      );
+
+      if (targetNode?.contains(event.target)) {
+        return;
+      }
+
+      setActiveSearchTarget(null);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown, { passive: true });
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+    };
+  }, [activeSearchTarget]);
+
   if (!workout) {
     return null;
   }
@@ -90,6 +227,29 @@ export default function ManualWorkoutEditor() {
 
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleExerciseResultClick = (exercise) => {
+    if (activeSearchTarget) {
+      assignSupersetExercise(
+        workout.id,
+        activeSearchTarget.blockId,
+        activeSearchTarget.exerciseIndex,
+        exercise
+      );
+      setActiveSearchTarget(null);
+      return;
+    }
+
+    appendSingleBlockFromExercise(workout.id, exercise);
+  };
+
+  const activateA2Selection = (blockId, exerciseIndex) => {
+    setActiveSearchTarget({
+      type: "superset-slot",
+      blockId,
+      exerciseIndex,
+    });
   };
 
   return (
@@ -172,7 +332,10 @@ export default function ManualWorkoutEditor() {
           </div>
         </div>
 
-        <div className="mb-6 rounded-xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur-md">
+        <div
+          ref={searchUiRef}
+          className="mb-6 rounded-xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur-md"
+        >
           <div className="relative mb-3">
             <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-xl text-slate-400">
               search
@@ -180,9 +343,26 @@ export default function ManualWorkoutEditor() {
             <input
               type="text"
               placeholder="Search exercises..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full rounded-lg border-none bg-slate-50 py-2 pl-10 pr-4 text-sm transition-all focus:ring-2 focus:ring-primary/30"
             />
           </div>
+
+          {activeSearchTarget && (
+            <div className="mb-3 flex items-center justify-between rounded-lg border border-primary/20 bg-primary/10 px-3 py-2">
+              <p className="text-xs font-semibold text-primary">
+                Selecting exercise for A2
+              </p>
+              <button
+                type="button"
+                onClick={() => setActiveSearchTarget(null)}
+                className="text-xs font-bold uppercase tracking-wider text-primary"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
 
           <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
             <button
@@ -218,24 +398,33 @@ export default function ManualWorkoutEditor() {
 
           <div className="space-y-2">
             <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-              Favorites exercises
+              Exercise library
             </p>
 
-            {[
-              { name: "Hack Squat", meta: "Quads • Machine" },
-              { name: "Leg Press", meta: "Quads • Machine" },
-            ].map((exercise) => (
+            {isLoadingExercises && (
+              <p className="px-2 py-3 text-sm text-slate-500">Loading exercises...</p>
+            )}
+
+            {!isLoadingExercises && exerciseError && (
+              <p className="px-2 py-3 text-sm text-red-500">{exerciseError}</p>
+            )}
+
+            {!isLoadingExercises && !exerciseError && exerciseResults.length === 0 && (
+              <p className="px-2 py-3 text-sm text-slate-500">No exercises found.</p>
+            )}
+
+            {!isLoadingExercises &&
+              !exerciseError &&
+              exerciseResults.map((exercise) => (
               <button
-                key={exercise.name}
+                key={exercise.exerciseId}
                 type="button"
+                onClick={() => handleExerciseResultClick(exercise)}
                 className="group flex w-full items-center justify-between rounded-lg p-2 text-left transition-colors hover:bg-slate-50"
               >
                 <div>
                   <p className="text-sm font-bold text-slate-700">
                     {exercise.name}
-                  </p>
-                  <p className="text-[10px] uppercase text-slate-400">
-                    {exercise.meta}
                   </p>
                 </div>
 
@@ -248,6 +437,7 @@ export default function ManualWorkoutEditor() {
 
           <button
             type="button"
+            disabled
             className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg py-2 text-xs font-bold uppercase tracking-wider text-primary transition-colors hover:bg-primary/5"
           >
             <span className="material-symbols-outlined text-lg">add</span>
@@ -256,16 +446,43 @@ export default function ManualWorkoutEditor() {
         </div>
 
         <div className="space-y-6 pb-28">
+          {workout.blocks.length === 0 && (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-white/70 p-6 text-center shadow-sm">
+              <p className="text-sm font-semibold text-slate-700">
+                No exercise blocks yet
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Use the search bar above to add the first exercise.
+              </p>
+            </div>
+          )}
           {workout.blocks.map((block) => {
             const isCollapsed = !!collapsedBlocks[block.id];
 
             if (block.type === "superset") {
+              const isIncompleteSuperset = block.exercises.some(
+                (exercise) => !String(exercise.exerciseId || "").trim()
+              );
+
               return (
                 <section
                   key={block.id}
-                  className="overflow-hidden rounded-xl border-2 border-primary/20 bg-primary/5 shadow-sm"
+                  data-superset-block={block.id}
+                  className={[
+                    "overflow-hidden rounded-xl border-2 shadow-sm",
+                    isIncompleteSuperset
+                      ? "border-amber-300 bg-amber-50/70"
+                      : "border-primary/20 bg-primary/5",
+                  ].join(" ")}
                 >
-                  <div className="flex items-center justify-between gap-2 border-b border-primary/10 bg-primary/10 p-4">
+                  <div
+                    className={[
+                      "flex items-center justify-between gap-2 border-b p-4",
+                      isIncompleteSuperset
+                        ? "border-amber-200 bg-amber-100/70"
+                        : "border-primary/10 bg-primary/10",
+                    ].join(" ")}
+                  >
                     <div className="flex items-center gap-3">
                       <span className="material-symbols-outlined cursor-grab text-primary/60">
                         drag_indicator
@@ -274,6 +491,11 @@ export default function ManualWorkoutEditor() {
                         <h3 className="font-bold leading-tight text-slate-900">
                           Superset Block
                         </h3>
+                        {isIncompleteSuperset && (
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700">
+                            Incomplete superset
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -313,16 +535,33 @@ export default function ManualWorkoutEditor() {
                                 </div>
 
                                 <div className="flex-1">
-                                  <input
-                                    type="text"
-                                    value={exercise.name}
-                                    onChange={(e) =>
-                                      updateSupersetExercise(workout.id, block.id, exerciseIndex, {
-                                        name: e.target.value,
-                                      })
-                                    }
-                                    className="w-full border-none bg-transparent p-0 text-sm font-bold text-slate-900 focus:ring-0"
-                                  />
+                                  {!exercise.exerciseId && exerciseIndex === 1 ? (
+                                    <button
+                                      type="button"
+                                      data-a2-target={`${block.id}-${exerciseIndex}`}
+                                      onClick={() => activateA2Selection(block.id, exerciseIndex)}
+                                      className={[
+                                        "w-full rounded-lg border border-dashed px-3 py-2 text-left text-sm font-bold transition-colors",
+                                        activeSearchTarget?.blockId === block.id &&
+                                        activeSearchTarget?.exerciseIndex === exerciseIndex
+                                          ? "border-primary bg-primary/10 text-primary"
+                                          : "border-amber-300 bg-amber-50 text-amber-700 hover:border-primary/40 hover:text-primary",
+                                      ].join(" ")}
+                                    >
+                                      Select second exercise
+                                    </button>
+                                  ) : (
+                                    <input
+                                      type="text"
+                                      value={exercise.name}
+                                      onChange={(e) =>
+                                        updateSupersetExercise(workout.id, block.id, exerciseIndex, {
+                                          name: e.target.value,
+                                        })
+                                      }
+                                      className="w-full border-none bg-transparent p-0 text-sm font-bold text-slate-900 focus:ring-0"
+                                    />
+                                  )}
                                 </div>
 
                                 <button
@@ -520,6 +759,15 @@ export default function ManualWorkoutEditor() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
+                      onClick={() => convertSingleBlockToSuperset(workout.id, block.id)}
+                      className="text-slate-400 transition-colors hover:text-primary"
+                      aria-label="Convert to superset"
+                    >
+                      <span className="material-symbols-outlined">layers</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => toggleBlock(block.id)}
                       className="text-slate-400 transition-colors hover:text-primary"
                     >
@@ -668,28 +916,22 @@ export default function ManualWorkoutEditor() {
             <div className="grid grid-cols-2 gap-4">
               <button
                 type="button"
-                onClick={() => {
-                  addBlock(workout.id, "single");
-                  setShowAddBlockSheet(false);
-                }}
-                className="rounded-xl border-2 border-primary bg-primary/5 p-4 text-left"
+                disabled
+                className="rounded-xl border-2 border-slate-100 bg-slate-50 p-4 text-left opacity-50"
               >
                 <span className="material-symbols-outlined mb-2 text-primary">exercise</span>
                 <p className="font-bold">Single</p>
-                <p className="text-xs text-slate-500">Standard exercise set</p>
+                <p className="text-xs text-slate-500">Add from search only</p>
               </button>
 
               <button
                 type="button"
-                onClick={() => {
-                  addBlock(workout.id, "superset");
-                  setShowAddBlockSheet(false);
-                }}
-                className="rounded-xl border-2 border-slate-100 p-4 text-left"
+                disabled
+                className="rounded-xl border-2 border-slate-100 bg-slate-50 p-4 text-left opacity-50"
               >
                 <span className="material-symbols-outlined mb-2 text-slate-400">layers</span>
                 <p className="font-bold">Superset</p>
-                <p className="text-xs text-slate-500">Grouped exercises</p>
+                <p className="text-xs text-slate-500">Convert an existing single block</p>
               </button>
 
               <button

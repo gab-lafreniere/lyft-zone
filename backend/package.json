@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "test:prisma-api-flow": "node scripts/test-prisma-api-flow.js",
     "validate:exercises": "node src/exercise-library/validate-exercises.js",
     "seed:exercises": "node prisma/seed-exercises.js",
     "seed:exercises:dry": "node prisma/seed-exercises.js --dry-run",

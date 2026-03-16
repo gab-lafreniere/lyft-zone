@@ -11,6 +11,7 @@ function createDefaultSingleBlock() {
     id: createId("block"),
     type: "single",
     exercise: "Barbell Back Squat",
+    exerciseId: null,
     tempo: "3010",
     rest: "180s",
     sets: [
@@ -31,6 +32,7 @@ function createDefaultSupersetBlock() {
       {
         label: "A1",
         name: "Leg Extension",
+        exerciseId: null,
         tempo: "3010",
         sets: [
           { reps: 15, rpe: 3 },
@@ -41,6 +43,7 @@ function createDefaultSupersetBlock() {
       {
         label: "A2",
         name: "Seated Leg Curl",
+        exerciseId: null,
         tempo: "3010",
         sets: [
           { reps: 12, rpe: 3 },
@@ -49,6 +52,36 @@ function createDefaultSupersetBlock() {
         notes: "",
       },
     ],
+  };
+}
+
+function createSingleBlockFromExercise(exercise) {
+  return {
+    id: createId("block"),
+    type: "single",
+    exercise: exercise.name,
+    exerciseId: exercise.exerciseId,
+    tempo: "3010",
+    rest: "180s",
+    sets: [
+      { reps: 8, rpe: 2 },
+      { reps: 8, rpe: 2 },
+    ],
+    notes: "",
+  };
+}
+
+function createEmptySupersetExercise(label) {
+  return {
+    label,
+    name: "",
+    exerciseId: null,
+    tempo: "3010",
+    sets: [
+      { reps: 10, rpe: 3 },
+      { reps: 10, rpe: 3 },
+    ],
+    notes: "",
   };
 }
 
@@ -71,7 +104,7 @@ function createInitialDraft() {
     endDate: null,
     isMultiWeek: false,
     selectedWeek: 1,
-    workouts: [createWorkout("Workout 1")],
+    workouts: [createWorkout("Workout 1", false)],
   };
 }
 
@@ -81,7 +114,7 @@ export function ManualProgramProvider({ children }) {
   const createProgramDraft = useCallback((payload = {}) => {
     const sessions = Math.max(1, Math.min(7, payload.sessionsPerWeek ?? 4));
     const workouts = Array.from({ length: sessions }, (_, index) =>
-      createWorkout(`Workout ${index + 1}`)
+      createWorkout(`Workout ${index + 1}`, false)
     );
 
     setProgramDraft({
@@ -118,6 +151,99 @@ export function ManualProgramProvider({ children }) {
       workouts: prev.workouts.map((workout) =>
         workout.id === workoutId ? { ...workout, name } : workout
       ),
+    }));
+  }, []);
+
+  const appendSingleBlockFromExercise = useCallback((workoutId, exercise) => {
+    if (!exercise?.exerciseId || !exercise?.name) {
+      return;
+    }
+
+    setProgramDraft((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((workout) =>
+        workout.id === workoutId
+          ? {
+              ...workout,
+              blocks: [...workout.blocks, createSingleBlockFromExercise(exercise)],
+            }
+          : workout
+      ),
+    }));
+  }, []);
+
+  const convertSingleBlockToSuperset = useCallback((workoutId, blockId) => {
+    setProgramDraft((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((workout) => {
+        if (workout.id !== workoutId) {
+          return workout;
+        }
+
+        return {
+          ...workout,
+          blocks: workout.blocks.map((block) => {
+            if (block.id !== blockId || block.type !== "single") {
+              return block;
+            }
+
+            return {
+              id: block.id,
+              type: "superset",
+              rounds: block.sets.length || 2,
+              rest: block.rest,
+              exercises: [
+                {
+                  label: "A1",
+                  name: block.exercise,
+                  exerciseId: block.exerciseId ?? null,
+                  tempo: block.tempo,
+                  sets: block.sets,
+                  notes: block.notes,
+                },
+                createEmptySupersetExercise("A2"),
+              ],
+            };
+          }),
+        };
+      }),
+    }));
+  }, []);
+
+  const assignSupersetExercise = useCallback((workoutId, blockId, exerciseIndex, exercise) => {
+    if (!exercise?.exerciseId || !exercise?.name) {
+      return;
+    }
+
+    setProgramDraft((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((workout) => {
+        if (workout.id !== workoutId) {
+          return workout;
+        }
+
+        return {
+          ...workout,
+          blocks: workout.blocks.map((block) => {
+            if (block.id !== blockId || block.type !== "superset") {
+              return block;
+            }
+
+            return {
+              ...block,
+              exercises: block.exercises.map((entry, index) =>
+                index === exerciseIndex
+                  ? {
+                      ...entry,
+                      name: exercise.name,
+                      exerciseId: exercise.exerciseId,
+                    }
+                  : entry
+              ),
+            };
+          }),
+        };
+      }),
     }));
   }, []);
 
@@ -326,6 +452,23 @@ export function ManualProgramProvider({ children }) {
     []
   );
 
+  const hasIncompleteSupersets = useCallback(
+    (workoutId = null) => {
+      return programDraft.workouts.some((workout) => {
+        if (workoutId && workout.id !== workoutId) {
+          return false;
+        }
+
+        return workout.blocks.some(
+          (block) =>
+            block.type === "superset" &&
+            block.exercises.some((exercise) => !String(exercise.exerciseId || "").trim())
+        );
+      });
+    },
+    [programDraft.workouts]
+  );
+
   const toggleMultiWeek = useCallback((value) => {
     setProgramDraft((prev) => ({
       ...prev,
@@ -344,6 +487,9 @@ export function ManualProgramProvider({ children }) {
       updateProgramMeta,
       addWorkout,
       updateWorkoutName,
+      appendSingleBlockFromExercise,
+      convertSingleBlockToSuperset,
+      assignSupersetExercise,
       addBlock,
       removeBlock,
       addSet,
@@ -353,6 +499,7 @@ export function ManualProgramProvider({ children }) {
       setSelectedWeek,
       updateBlock,
       updateSupersetExercise,
+      hasIncompleteSupersets,
     }),
     [
       programDraft,
@@ -360,6 +507,9 @@ export function ManualProgramProvider({ children }) {
       updateProgramMeta,
       addWorkout,
       updateWorkoutName,
+      appendSingleBlockFromExercise,
+      convertSingleBlockToSuperset,
+      assignSupersetExercise,
       addBlock,
       removeBlock,
       addSet,
@@ -369,6 +519,7 @@ export function ManualProgramProvider({ children }) {
       setSelectedWeek,
       updateBlock,
       updateSupersetExercise,
+      hasIncompleteSupersets,
     ]
   );
 

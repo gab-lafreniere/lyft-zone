@@ -2,8 +2,14 @@ const BACKEND_URL =
   process.env.REACT_APP_BACKEND_URL ||
   'https://lyft-zone-backend.onrender.com';
 
-  export const fetchExercises = async (limit = 200) => {
-    const response = await fetch(`${BACKEND_URL}/api/exercises?limit=${limit}`);
+export const fetchExercises = async ({ q = '', limit = 25 } = {}) => {
+    const params = new URLSearchParams();
+    params.set('limit', String(limit));
+    if (q) {
+      params.set('q', q);
+    }
+
+    const response = await fetch(`${BACKEND_URL}/api/exercises?${params.toString()}`);
   
     if (!response.ok) {
       throw new Error(`API error ${response.status}`);
@@ -27,7 +33,7 @@ const BACKEND_URL =
     }
   
     return [];
-  };
+};
   
 
 /**

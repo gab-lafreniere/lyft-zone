@@ -5,7 +5,7 @@ Repository: https://github.com/gab-lafreniere/lyft-zone
 ENVIRONNEMENT
 ==================================================
 - Développement local uniquement
-- Frontend et backend lancés via un seul script terminal
+- Frontend et backend peuvent être lancés localement via des scripts npm.
 - Variables d’environnement chargées depuis le dossier lyft-zone (.env)
 - APIs externes uniquement si open source ou self-hosted
 - Aucun service payant obligatoire
@@ -65,7 +65,7 @@ B) Mode Coach IA (plan adaptatif)
 - Le plan est vivant pendant le cycle
 - L’IA peut proposer et appliquer des ajustements (ex: deload, volume, substitutions, préférences, contraintes)
 - L’utilisateur peut aussi modifier manuellement le plan
-  - Chaque changement doit est tracé avec une source: IA ou utilisateur
+  - Chaque changement doit être tracé avec une source: IA ou utilisateur
   - Un changement par l'IA doit être avant tout accepter ou refuser auprès de l'utilisateur
   - Le système recalcule les contraintes (volume, fréquence, fatigue) côté backend
 - Historique des versions:
@@ -187,6 +187,24 @@ Déploiement:
 - Database: Neon
 
 ==================================================
+API PRINCIPALE
+==================================================
+
+Endpoints actuellement disponibles:
+
+POST /api/users
+PUT /api/users/:userId/profile
+
+POST /api/cycles
+POST /api/cycles/:cycleId/plans
+GET /api/cycles/:cycleId/full
+
+POST /api/scheduled-sessions
+GET /api/scheduled-sessions
+
+GET /api/exercises
+
+==================================================
 ÉTAT ACTUEL DE LA BASE DE DONNÉES
 ==================================================
 - La base d’exercices est maintenant intégrée dans PostgreSQL
@@ -223,11 +241,12 @@ Phase 1: Fondations
 - Base d’exercices fiable
 - Intégration de la librairie d’exercices en base PostgreSQL
 - Schéma coeur de programmation en base
-- Endpoints backend minimum pour cycles, plans, workouts et calendrier
-- Connexion frontend avec données réelles
-- Modèle de séance clair
-- Modèle de cycle et de plan clair
-- Modèle de blocs d’exercices clair
+- Endpoints backend minimum pour users, profiles, cycles, plans et calendrier (implémentés)
+- Validation end-to-end du flow backend principal (terminé)
+- Connexion du frontend avec les endpoints backend réels (prochaine étape)
+- Modèle de séance stabilisé
+- Modèle de cycle et de plan stabilisé
+- Modèle de blocs d’exercices stabilisé
 - Calcul du volume par muscle
 - Gestion simple de la surcharge progressive
 - Planning calendrier pour le cycle actif
@@ -430,6 +449,18 @@ Si un doute existe:
 ==================================================
 PROCHAINE ÉTAPE ARCHITECTURE DB
 ==================================================
+Le backend Prisma principal est maintenant validé end-to-end.
+
+Endpoints implémentés:
+- users
+- user_profiles
+- cycles
+- plans
+- scheduled_sessions
+
+Un test backend valide le flow:
+user -> profile -> cycle -> plan -> full cycle -> scheduled sessions
+
 Tables coeur à modéliser
 
 Modélisé:

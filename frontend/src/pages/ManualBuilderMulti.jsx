@@ -16,22 +16,25 @@ export default function ManualBuilderMulti() {
   const workoutCards = programDraft.workouts.map((workout) => {
     const exerciseCount = workout.blocks.reduce((total, block) => {
       if (block.type === "single") {
-        return total + 1;
+        return block.exerciseId ? total + 1 : total;
       }
       if (block.type === "superset") {
-        return total + block.exercises.length;
+        return total + block.exercises.filter((exercise) => exercise.exerciseId).length;
       }
       return total;
     }, 0);
 
     const setCount = workout.blocks.reduce((total, block) => {
       if (block.type === "single") {
-        return total + block.sets.length;
+        return block.exerciseId ? total + block.sets.length : total;
       }
       if (block.type === "superset") {
         return (
           total +
-          block.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0)
+          block.exercises.reduce(
+            (sum, exercise) => sum + (exercise.exerciseId ? exercise.sets.length : 0),
+            0
+          )
         );
       }
       return total;
