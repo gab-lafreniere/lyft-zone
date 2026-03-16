@@ -195,6 +195,10 @@ Déploiement:
 - exerciseId est la clé canonique côté application pour la librairie
 - Les tableaux et objets complexes de la librairie sont stockés en JSON dans PostgreSQL
 - Le backend reste l’unique source de vérité pour la logique métier
+- Le coeur de la structure de programmation a été modélisé dans Prisma
+- Les tables de planification existent maintenant pour users, user_profiles, training_cycles, plans, plan_weeks, workouts, workout_blocks, block_exercises, exercise_set_templates et scheduled_sessions
+- /api/exercises est maintenant servi depuis Prisma / Neon et non plus depuis un store JSON runtime
+- Le JSON local dans backend/data reste une source de seed et de référence, pas une source runtime
 
 ==================================================
 RÈGLES DE DÉVELOPPEMENT
@@ -218,6 +222,9 @@ PRIORITÉS ACTUELLES
 Phase 1: Fondations
 - Base d’exercices fiable
 - Intégration de la librairie d’exercices en base PostgreSQL
+- Schéma coeur de programmation en base
+- Endpoints backend minimum pour cycles, plans, workouts et calendrier
+- Connexion frontend avec données réelles
 - Modèle de séance clair
 - Modèle de cycle et de plan clair
 - Modèle de blocs d’exercices clair
@@ -425,7 +432,7 @@ PROCHAINE ÉTAPE ARCHITECTURE DB
 ==================================================
 Tables coeur à modéliser
 
-Maintenant:
+Modélisé:
 - users
 - user_profiles
 - training_cycles
@@ -437,7 +444,7 @@ Maintenant:
 - exercise_set_templates
 - scheduled_sessions
 
-Très bientôt:
+Prochaine couche:
 - workout_logs
 - exercise_logs
 - set_logs
