@@ -11,9 +11,92 @@ datasource db {
   provider = "postgresql"
 }
 
+enum TrainingMode {
+  FIXED
+  AI_COACH
+}
+
+enum TrainingGoal {
+  STRENGTH
+  HYPERTROPHY
+  POWERBUILDING
+  CARDIO_FOCUS
+  MOBILITY_FOCUS
+}
+
+enum CycleStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum PlanSourceType {
+  SYSTEM
+  USER
+  AI
+}
+
+enum PlanStatus {
+  DRAFT
+  ACTIVE
+  SUPERSEDED
+  ARCHIVED
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum BlockType {
+  SINGLE
+  SUPERSET
+  GIANT_SET
+  CIRCUIT
+}
+
+enum BlockRestStrategy {
+  NONE
+  AFTER_EXERCISE
+  AFTER_ROUND
+}
+
+enum SetType {
+  WARMUP
+  WORKING
+  TOP_SET
+  BACKOFF
+  DROP_SET
+  AMRAP
+}
+
+enum ScheduledSessionStatus {
+  PLANNED
+  COMPLETED
+  SKIPPED
+  RESCHEDULED
+  CANCELED
+}
+
+enum IntensificationMethod {
+  NONE
+  DROP_SET
+  REST_PAUSE
+  MYO_REPS
+  TEMPO_EMPHASIS
+  PAUSE_REPS
+  PARTIALS
+}
+
 model Exercise {
-  id                 String   @id @default(cuid())
-  exerciseId         String   @unique
+  id                 String          @id @default(cuid())
+  exerciseId         String          @unique
   name               String
   aliases            Json?
   equipmentCategory  String
@@ -35,6 +118,207 @@ model Exercise {
   isSupersetFriendly Boolean
   fatigueScore       Int
   status             String
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  blockExercises     BlockExercise[]
+}
+
+model User {
+  id             String          @id @default(cuid())
+  email          String          @unique
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  profile        UserProfile?
+  trainingCycles TrainingCycle[]
+
+  @@map("users")
+}
+
+model UserProfile {
+  id                       String        @id @default(cuid())
+  userId                   String        @unique
+  primaryGoal              TrainingGoal?
+  trainingMode             TrainingMode?
+  experienceNotes          String?
+  availableSessionsPerWeek Int?
+  sessionDurationMinutes   Int?
+  trainingPreferences      Json?
+  equipmentContext         Json?
+  constraints              Json?
+  musclePriorities         Json?
+  onboardingSnapshot       Json?
+  createdAt                DateTime      @default(now())
+  updatedAt                DateTime      @updatedAt
+  user                     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model TrainingCycle {
+  id              String       @id @default(cuid())
+  userId          String
+  name            String
+  startDate       DateTime     @db.Date
+  endDate         DateTime     @db.Date
+  durationWeeks   Int
+  status          CycleStatus
+  mode            TrainingMode
+  goalSnapshot    Json?
+  profileSnapshot Json?
+  notes           String?
+  archivedAt      DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plans           Plan[]
+
+  @@index([userId, status])
+  @@index([userId, startDate])
+  @@map("training_cycles")
+}
+
+model Plan {
+  id                String         @id @default(cuid())
+  trainingCycleId   String
+  parentPlanId      String?
+  name              String
+  versionNumber     Int
+  sourceType        PlanSourceType
+  status            PlanStatus
+  isReference       Boolean        @default(false)
+  changeSummary     Json?
+  generationContext Json?
+  publishedAt       DateTime?
+  supersededAt      DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  trainingCycle     TrainingCycle  @relation(fields: [trainingCycleId], references: [id], onDelete: Cascade)
+  parentPlan        Plan?          @relation("PlanLineage", fields: [parentPlanId], references: [id], onDelete: SetNull)
+  childPlans        Plan[]         @relation("PlanLineage")
+  weeks             PlanWeek[]
+
+  @@unique([trainingCycleId, versionNumber])
+  @@index([trainingCycleId, status])
+  @@index([trainingCycleId, isReference])
+  @@map("plans")
+}
+
+model PlanWeek {
+  id         String    @id @default(cuid())
+  planId     String
+  weekNumber Int
+  orderIndex Int
+  label      String?
+  notes      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  plan       Plan      @relation(fields: [planId], references: [id], onDelete: Cascade)
+  workouts   Workout[]
+
+  @@unique([planId, weekNumber])
+  @@unique([planId, orderIndex])
+  @@map("plan_weeks")
+}
+
+model Workout {
+  id                       String             @id @default(cuid())
+  planWeekId               String
+  name                     String
+  orderIndex               Int
+  scheduledDay             DayOfWeek?
+  estimatedDurationMinutes Int?
+  notes                    String?
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+  planWeek                 PlanWeek           @relation(fields: [planWeekId], references: [id], onDelete: Cascade)
+  blocks                   WorkoutBlock[]
+  scheduledSessions        ScheduledSession[]
+
+  @@unique([planWeekId, orderIndex])
+  @@index([planWeekId, scheduledDay])
+  @@map("workouts")
+}
+
+model WorkoutBlock {
+  id             String             @id @default(cuid())
+  workoutId      String
+  orderIndex     Int
+  blockType      BlockType
+  label          String?
+  roundCount     Int?
+  restStrategy   BlockRestStrategy?
+  restSeconds    Int?
+  notes          String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  workout        Workout            @relation(fields: [workoutId], references: [id], onDelete: Cascade)
+  blockExercises BlockExercise[]
+
+  @@unique([workoutId, orderIndex])
+  @@map("workout_blocks")
+}
+
+model BlockExercise {
+  id                    String                 @id @default(cuid())
+  workoutBlockId        String
+  exerciseId            String
+  orderIndex            Int
+  executionNotes        String?
+  defaultTempo          String?
+  defaultRestSeconds    Int?
+  defaultTargetRir      Decimal?               @db.Decimal(4, 1)
+  defaultTargetRpe      Decimal?               @db.Decimal(4, 1)
+  intensificationMethod IntensificationMethod?
+  notes                 String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  workoutBlock          WorkoutBlock           @relation(fields: [workoutBlockId], references: [id], onDelete: Cascade)
+  exercise              Exercise               @relation(fields: [exerciseId], references: [exerciseId], onDelete: Restrict)
+  setTemplates          ExerciseSetTemplate[]
+
+  @@unique([workoutBlockId, orderIndex])
+  @@index([exerciseId])
+  @@map("block_exercises")
+}
+
+model ExerciseSetTemplate {
+  id              String        @id @default(cuid())
+  blockExerciseId String
+  setIndex        Int
+  setType         SetType       @default(WORKING)
+  targetReps      Int?
+  minReps         Int?
+  maxReps         Int?
+  targetSeconds   Int?
+  targetRir       Decimal?      @db.Decimal(4, 1)
+  targetRpe       Decimal?      @db.Decimal(4, 1)
+  tempo           String?
+  restSeconds     Int?
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  blockExercise   BlockExercise @relation(fields: [blockExerciseId], references: [id], onDelete: Cascade)
+
+  @@unique([blockExerciseId, setIndex])
+  @@map("exercise_set_templates")
+}
+
+model ScheduledSession {
+  id                       String                 @id @default(cuid())
+  workoutId                String
+  status                   ScheduledSessionStatus @default(PLANNED)
+  scheduledStartAt         DateTime
+  scheduledEndAt           DateTime?
+  notes                    String?
+  completedAt              DateTime?
+  rescheduledFromSessionId String?
+  createdAt                DateTime               @default(now())
+  updatedAt                DateTime               @updatedAt
+  workout                  Workout                @relation(fields: [workoutId], references: [id], onDelete: Restrict)
+  rescheduledFrom          ScheduledSession?      @relation("ScheduledSessionReschedule", fields: [rescheduledFromSessionId], references: [id], onDelete: SetNull)
+  rescheduledTo            ScheduledSession[]     @relation("ScheduledSessionReschedule")
+
+  @@index([workoutId, scheduledStartAt])
+  @@index([status, scheduledStartAt])
+  @@map("scheduled_sessions")
 }

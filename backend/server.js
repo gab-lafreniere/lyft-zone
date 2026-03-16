@@ -7,12 +7,8 @@ const express = require('express');
 const cors = require('cors');
 const { testConnection, syncDatabase } = require('./db');
 
-require('./models');
-
 const planRoutes = require('./routes/plans');
-
-const { loadExercisesSeed } = require("./src/exercises/exercisesStore");
-const { createExercisesRouter } = require("./src/exercises/exercisesRoutes");
+const exercisesRouter = require('./routes/exercisesPrisma');
 
 const app = express();
 const PORT = process.env.PORT || 5001; // en local, évite 5000
@@ -55,9 +51,7 @@ app.use(cors(corsOptions));
 app.use(express.json()); // Parse JSON request bodies
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 
-// Seed exercises router
-const store = loadExercisesSeed();
-app.use("/api/exercises", createExercisesRouter(store));
+app.use('/api/exercises', exercisesRouter);
 
 // Other routes
 app.use('/api/plans', planRoutes);
