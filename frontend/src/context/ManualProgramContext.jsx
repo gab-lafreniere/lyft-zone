@@ -329,6 +329,10 @@ export function ManualProgramProvider({ children }) {
             }
 
             if (block.type === "single") {
+              if (block.sets.length <= 1) {
+                return block;
+              }
+
               return {
                 ...block,
                 sets: block.sets.filter((_, index) => index !== setIndex),
@@ -343,7 +347,10 @@ export function ManualProgramProvider({ children }) {
               index === exerciseIndex
                 ? {
                     ...exercise,
-                    sets: exercise.sets.filter((_, idx) => idx !== setIndex),
+                    sets:
+                      exercise.sets.length <= 1
+                        ? exercise.sets
+                        : exercise.sets.filter((_, idx) => idx !== setIndex),
                   }
                 : exercise
             );

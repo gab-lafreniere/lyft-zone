@@ -11,11 +11,92 @@ function toNumberOrEmpty(value) {
   return Number.isNaN(parsed) ? "" : parsed;
 }
 
+function normalizeMatchValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getFieldMatchRank(values, query) {
+  const normalizedValues = Array.isArray(values)
+    ? values.map(normalizeMatchValue).filter(Boolean)
+    : [normalizeMatchValue(values)].filter(Boolean);
+
+  let containsMatch = null;
+
+  for (const value of normalizedValues) {
+    if (!value.includes(query)) {
+      continue;
+    }
+
+    if (value.startsWith(query)) {
+      return 0;
+    }
+
+    if (containsMatch == null) {
+      containsMatch = 1;
+    }
+  }
+
+  return containsMatch;
+}
+
+function rankExercises(exercises, query) {
+  const normalizedQuery = normalizeMatchValue(query);
+
+  if (!normalizedQuery) {
+    return exercises;
+  }
+
+  return exercises
+    .map((exercise, originalIndex) => {
+      const nameRank = getFieldMatchRank(exercise.name, normalizedQuery);
+      const aliasesRank = getFieldMatchRank(exercise.aliases, normalizedQuery);
+      const keywordsRank = getFieldMatchRank(exercise.keywords, normalizedQuery);
+
+      let tier = 3;
+      let startsWithRank = 1;
+
+      if (nameRank != null) {
+        tier = 0;
+        startsWithRank = nameRank;
+      } else if (aliasesRank != null) {
+        tier = 1;
+        startsWithRank = aliasesRank;
+      } else if (keywordsRank != null) {
+        tier = 2;
+        startsWithRank = keywordsRank;
+      }
+
+      return {
+        exercise,
+        originalIndex,
+        tier,
+        startsWithRank,
+        normalizedName: normalizeMatchValue(exercise.name),
+      };
+    })
+    .sort((left, right) => {
+      if (left.tier !== right.tier) {
+        return left.tier - right.tier;
+      }
+
+      if (left.startsWithRank !== right.startsWithRank) {
+        return left.startsWithRank - right.startsWithRank;
+      }
+
+      if (left.normalizedName !== right.normalizedName) {
+        return left.normalizedName.localeCompare(right.normalizedName);
+      }
+
+      return left.originalIndex - right.originalIndex;
+    })
+    .map((entry) => entry.exercise);
+}
+
 export default function ManualWorkoutEditor() {
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [showAddBlockSheet, setShowAddBlockSheet] = useState(false);
-  const [collapsedBlocks, setCollapsedBlocks] = useState({});
-  const [collapsedSupersetExercises, setCollapsedSupersetExercises] = useState({});
+  const [openBlockId, setOpenBlockId] = useState(null);
+  const [openSupersetExerciseByBlock, setOpenSupersetExerciseByBlock] = useState({});
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [exerciseResults, setExerciseResults] = useState([]);
@@ -33,6 +114,7 @@ export default function ManualWorkoutEditor() {
     updateSupersetExercise,
     removeBlock,
     addSet,
+    removeSet,
     updateSet,
     appendSingleBlockFromExercise,
     convertSingleBlockToSuperset,
@@ -72,6 +154,10 @@ export default function ManualWorkoutEditor() {
   }, [navigate, programDraft.isMultiWeek, workout]);
 
   const hasIncompleteSuperset = hasIncompleteSupersets(workout?.id ?? null);
+  const rankedExerciseResults = useMemo(
+    () => rankExercises(exerciseResults, debouncedSearchQuery),
+    [exerciseResults, debouncedSearchQuery]
+  );
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -191,17 +277,13 @@ export default function ManualWorkoutEditor() {
   };
 
   const toggleBlock = (blockId) => {
-    setCollapsedBlocks((prev) => ({
-      ...prev,
-      [blockId]: !prev[blockId],
-    }));
+    setOpenBlockId((prev) => (prev === blockId ? null : blockId));
   };
 
   const toggleSupersetExercise = (blockId, exerciseIndex) => {
-    const key = `${blockId}-${exerciseIndex}`;
-    setCollapsedSupersetExercises((prev) => ({
+    setOpenSupersetExerciseByBlock((prev) => ({
       ...prev,
-      [key]: !prev[key],
+      [blockId]: prev[blockId] === exerciseIndex ? null : exerciseIndex,
     }));
   };
 
@@ -234,27 +316,110 @@ export default function ManualWorkoutEditor() {
 
   return (
     <div className="-mx-6 min-h-full bg-background-light text-slate-900">
-      <header className="sticky top-0 z-40 flex items-center justify-between gap-4 border-b border-primary/10 bg-background-light/80 px-4 py-3 backdrop-blur-md">
-        <div className="flex flex-1 items-center gap-3">
-          <button
-            type="button"
-            onClick={handleBack}
-            className="flex items-center justify-center rounded-full p-2 transition-colors hover:bg-primary/10"
-            aria-label="Back"
-          >
-            <span className="material-symbols-outlined text-slate-700">
-              arrow_back
-            </span>
-          </button>
+      <header className="sticky top-0 z-40 border-b border-primary/10 bg-background-light/85 backdrop-blur-md">
+        <div className="mx-auto max-w-2xl px-4 py-3">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-1 items-center gap-3">
+              <button
+                type="button"
+                onClick={handleBack}
+                className="flex items-center justify-center rounded-full p-2 transition-colors hover:bg-primary/10"
+                aria-label="Back"
+              >
+                <span className="material-symbols-outlined text-slate-700">
+                  arrow_back
+                </span>
+              </button>
 
-          <div className="flex-1">
-            <input
-              type="text"
-              value={workout.name}
-              onChange={(e) => updateWorkoutName(workout.id, e.target.value)}
-              placeholder="Workout Name"
-              className="w-full border-none bg-transparent p-0 text-lg font-bold text-slate-900 focus:ring-0"
-            />
+              <div className="flex-1">
+                <input
+                  type="text"
+                  value={workout.name}
+                  onChange={(e) => updateWorkoutName(workout.id, e.target.value)}
+                  placeholder="Workout Name"
+                  className="w-full border-none bg-transparent p-0 text-lg font-bold text-slate-900 focus:ring-0"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div
+            ref={searchUiRef}
+            className="mt-3 rounded-xl border border-slate-200 bg-white/85 p-3 shadow-sm"
+          >
+            <div className="relative">
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-xl text-slate-400">
+                search
+              </span>
+              <input
+                type="text"
+                placeholder="Search exercises..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full rounded-lg border-none bg-slate-50 py-2.5 pl-10 pr-4 text-base transition-all focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+
+            {activeSearchTarget && (
+              <div className="mt-2 flex items-center justify-between rounded-lg border border-primary/20 bg-primary/10 px-3 py-2">
+                <p className="text-xs font-semibold text-primary">
+                  Selecting exercise for A2
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveSearchTarget(null)}
+                  className="text-[10px] font-bold uppercase tracking-wider text-primary"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            <div className="mt-3 space-y-2">
+              <div className="max-h-[32dvh] overflow-y-auto">
+                {isLoadingExercises && (
+                  <p className="px-2 py-3 text-sm text-slate-500">Loading exercises...</p>
+                )}
+
+                {!isLoadingExercises && exerciseError && (
+                  <p className="px-2 py-3 text-sm text-red-500">{exerciseError}</p>
+                )}
+
+                {!isLoadingExercises && !exerciseError && rankedExerciseResults.length === 0 && (
+                  <p className="px-2 py-3 text-sm text-slate-500">No exercises found.</p>
+                )}
+
+                {!isLoadingExercises &&
+                  !exerciseError &&
+                  rankedExerciseResults.map((exercise) => (
+                    <button
+                      key={exercise.exerciseId}
+                      type="button"
+                      onClick={() => handleExerciseResultClick(exercise)}
+                      className="group flex w-full items-center justify-between rounded-lg p-2 text-left transition-colors hover:bg-slate-50"
+                    >
+                      <div>
+                        <p className="text-sm font-bold text-slate-700">
+                          {exercise.name}
+                        </p>
+                      </div>
+
+                      <span className="material-symbols-outlined text-slate-300 transition-colors group-hover:text-primary">
+                        add_circle
+                      </span>
+                    </button>
+                  ))}
+              </div>
+
+              <button
+                type="button"
+                disabled
+                className="flex w-full items-center justify-center gap-1 rounded-lg py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400"
+              >
+                <span className="material-symbols-outlined text-base">science</span>
+                Create custom exercise beta
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -312,119 +477,6 @@ export default function ManualWorkoutEditor() {
           </div>
         </div>
 
-        <div
-          ref={searchUiRef}
-          className="mb-6 rounded-xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur-md"
-        >
-          <div className="relative mb-3">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-xl text-slate-400">
-              search
-            </span>
-            <input
-              type="text"
-              placeholder="Search exercises..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-lg border-none bg-slate-50 py-2 pl-10 pr-4 text-sm transition-all focus:ring-2 focus:ring-primary/30"
-            />
-          </div>
-
-          {activeSearchTarget && (
-            <div className="mb-3 flex items-center justify-between rounded-lg border border-primary/20 bg-primary/10 px-3 py-2">
-              <p className="text-xs font-semibold text-primary">
-                Selecting exercise for A2
-              </p>
-              <button
-                type="button"
-                onClick={() => setActiveSearchTarget(null)}
-                className="text-xs font-bold uppercase tracking-wider text-primary"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-
-          <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
-            <button
-              type="button"
-              className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase text-primary"
-            >
-              Muscle
-              <span className="material-symbols-outlined text-xs">
-                keyboard_arrow_down
-              </span>
-            </button>
-
-            <button
-              type="button"
-              className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase text-slate-500"
-            >
-              Equipment
-              <span className="material-symbols-outlined text-xs">
-                keyboard_arrow_down
-              </span>
-            </button>
-
-            <button
-              type="button"
-              className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase text-slate-500"
-            >
-              Type
-              <span className="material-symbols-outlined text-xs">
-                keyboard_arrow_down
-              </span>
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-              Exercise library
-            </p>
-
-            {isLoadingExercises && (
-              <p className="px-2 py-3 text-sm text-slate-500">Loading exercises...</p>
-            )}
-
-            {!isLoadingExercises && exerciseError && (
-              <p className="px-2 py-3 text-sm text-red-500">{exerciseError}</p>
-            )}
-
-            {!isLoadingExercises && !exerciseError && exerciseResults.length === 0 && (
-              <p className="px-2 py-3 text-sm text-slate-500">No exercises found.</p>
-            )}
-
-            {!isLoadingExercises &&
-              !exerciseError &&
-              exerciseResults.map((exercise) => (
-              <button
-                key={exercise.exerciseId}
-                type="button"
-                onClick={() => handleExerciseResultClick(exercise)}
-                className="group flex w-full items-center justify-between rounded-lg p-2 text-left transition-colors hover:bg-slate-50"
-              >
-                <div>
-                  <p className="text-sm font-bold text-slate-700">
-                    {exercise.name}
-                  </p>
-                </div>
-
-                <span className="material-symbols-outlined text-slate-300 transition-colors group-hover:text-primary">
-                  add_circle
-                </span>
-              </button>
-            ))}
-          </div>
-
-          <button
-            type="button"
-            disabled
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg py-2 text-xs font-bold uppercase tracking-wider text-primary transition-colors hover:bg-primary/5"
-          >
-            <span className="material-symbols-outlined text-lg">add</span>
-            Create custom exercise
-          </button>
-        </div>
-
         <div className="space-y-6 pb-28">
           {workout.blocks.length === 0 && (
             <div className="rounded-xl border border-dashed border-slate-200 bg-white/70 p-6 text-center shadow-sm">
@@ -437,7 +489,7 @@ export default function ManualWorkoutEditor() {
             </div>
           )}
           {workout.blocks.map((block) => {
-            const isCollapsed = !!collapsedBlocks[block.id];
+            const isCollapsed = openBlockId !== block.id;
 
             if (block.type === "superset") {
               const isIncompleteSuperset = block.exercises.some(
@@ -504,7 +556,9 @@ export default function ManualWorkoutEditor() {
                     <div className="space-y-4 p-4">
                       {block.exercises.map((exercise, exerciseIndex) => {
                         const exerciseKey = `${block.id}-${exerciseIndex}`;
-                        const exerciseCollapsed = !!collapsedSupersetExercises[exerciseKey];
+                        const exerciseCollapsed =
+                          openSupersetExerciseByBlock[block.id] !== exerciseIndex;
+                        const canRemoveSet = exercise.sets.length > 1;
 
                         return (
                           <div key={exerciseKey}>
@@ -581,17 +635,18 @@ export default function ManualWorkoutEditor() {
                                   </div>
                                 </div>
 
-                                <div className="mb-2 grid grid-cols-11 gap-2 px-2">
+                                <div className="mb-2 grid grid-cols-12 gap-2 px-2">
                                   <div className="col-span-2 text-[10px] font-bold uppercase text-slate-400">Set</div>
                                   <div className="col-span-5 text-[10px] font-bold uppercase text-slate-400">Reps</div>
                                   <div className="col-span-4 text-[10px] font-bold uppercase text-slate-400">RPE (optional)</div>
+                                  <div className="col-span-1" />
                                 </div>
 
                                 <div className="space-y-2">
                                   {exercise.sets.map((set, setIndex) => (
                                     <div
                                       key={`${exerciseKey}-set-${setIndex}`}
-                                      className="grid grid-cols-11 items-center gap-2 rounded-lg bg-white p-2"
+                                      className="grid grid-cols-12 items-center gap-2 rounded-lg bg-white p-2"
                                     >
                                       <div className="col-span-2 text-sm font-bold text-slate-500">{setIndex + 1}</div>
                                       <div className="col-span-5">
@@ -625,6 +680,26 @@ export default function ManualWorkoutEditor() {
                                           }
                                           className="w-full rounded border-slate-200 bg-slate-50 p-1.5 text-sm focus:border-primary focus:ring-primary"
                                         />
+                                      </div>
+                                      <div className="col-span-1 flex justify-end">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            removeSet(workout.id, block.id, setIndex, exerciseIndex)
+                                          }
+                                          disabled={!canRemoveSet}
+                                          className={[
+                                            "rounded p-1 transition-colors",
+                                            canRemoveSet
+                                              ? "text-slate-400 hover:text-red-500"
+                                              : "cursor-not-allowed text-slate-200",
+                                          ].join(" ")}
+                                          aria-label="Remove set"
+                                        >
+                                          <span className="material-symbols-outlined text-lg">
+                                            delete
+                                          </span>
+                                        </button>
                                       </div>
                                     </div>
                                   ))}
@@ -799,17 +874,23 @@ export default function ManualWorkoutEditor() {
                     </div>
 
                     <div className="p-4">
-                      <div className="mb-2 grid grid-cols-11 gap-2 px-2">
+                      {(() => {
+                        const canRemoveSingleSet = block.sets.length > 1;
+
+                        return (
+                          <>
+                      <div className="mb-2 grid grid-cols-12 gap-2 px-2">
                         <div className="col-span-2 text-[10px] font-bold uppercase text-slate-400">Set</div>
                         <div className="col-span-5 text-[10px] font-bold uppercase text-slate-400">Reps</div>
                         <div className="col-span-4 text-[10px] font-bold uppercase text-slate-400">RPE (optional)</div>
+                        <div className="col-span-1" />
                       </div>
 
                       <div className="space-y-2">
                         {block.sets.map((set, setIndex) => (
                           <div
                             key={`${block.id}-set-${setIndex}`}
-                            className="grid grid-cols-11 items-center gap-2 rounded-lg bg-slate-50 p-2"
+                            className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-2"
                           >
                             <div className="col-span-2 text-sm font-bold text-slate-500">{setIndex + 1}</div>
                             <div className="col-span-5">
@@ -836,6 +917,24 @@ export default function ManualWorkoutEditor() {
                                 className="w-full rounded border-slate-200 bg-white p-1.5 text-sm focus:border-primary focus:ring-primary"
                               />
                             </div>
+                            <div className="col-span-1 flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => removeSet(workout.id, block.id, setIndex)}
+                                disabled={!canRemoveSingleSet}
+                                className={[
+                                  "rounded p-1 transition-colors",
+                                  canRemoveSingleSet
+                                    ? "text-slate-400 hover:text-red-500"
+                                    : "cursor-not-allowed text-slate-200",
+                                ].join(" ")}
+                                aria-label="Remove set"
+                              >
+                                <span className="material-symbols-outlined text-lg">
+                                  delete
+                                </span>
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -859,6 +958,9 @@ export default function ManualWorkoutEditor() {
                           className="min-h-[60px] w-full resize-none rounded-lg border-none bg-slate-50 p-3 text-sm focus:ring-1 focus:ring-primary"
                         />
                       </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   </>
                 )}
