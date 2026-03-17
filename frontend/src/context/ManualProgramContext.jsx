@@ -13,7 +13,7 @@ function createDefaultSingleBlock() {
     exercise: "Barbell Back Squat",
     exerciseId: null,
     tempo: "3010",
-    rest: "180s",
+    rest: "120s",
     sets: [
       { reps: 8, rpe: 2 },
       { reps: 8, rpe: 2 },
@@ -27,7 +27,7 @@ function createDefaultSupersetBlock() {
     id: createId("block"),
     type: "superset",
     rounds: 4,
-    rest: "90s",
+    rest: "120s",
     exercises: [
       {
         label: "A1",
@@ -62,7 +62,7 @@ function createSingleBlockFromExercise(exercise) {
     exercise: exercise.name,
     exerciseId: exercise.exerciseId,
     tempo: "3010",
-    rest: "180s",
+    rest: "120s",
     sets: [
       { reps: 8, rpe: 2 },
       { reps: 8, rpe: 2 },

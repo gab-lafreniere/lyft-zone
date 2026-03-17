@@ -150,6 +150,16 @@ const FILTER_LABELS = {
 
 const REST_OPTIONS = ["30s", "45s", "60s", "75s", "90s", "120s", "150s", "180s", "240s", "300s"];
 
+function getNextRestValue(currentValue, direction) {
+  const currentIndex = Math.max(0, REST_OPTIONS.indexOf(currentValue));
+  const nextIndex = Math.min(
+    REST_OPTIONS.length - 1,
+    Math.max(0, currentIndex + direction)
+  );
+
+  return REST_OPTIONS[nextIndex];
+}
+
 export default function ManualWorkoutEditor() {
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [showAddBlockSheet, setShowAddBlockSheet] = useState(false);
@@ -159,6 +169,7 @@ export default function ManualWorkoutEditor() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [openFilterMenu, setOpenFilterMenu] = useState(null);
   const [pendingScrollToLastBlock, setPendingScrollToLastBlock] = useState(false);
+  const [tempoDrafts, setTempoDrafts] = useState({});
   const [searchFilters, setSearchFilters] = useState({
     muscle: "",
     equipment: "",
@@ -481,6 +492,54 @@ export default function ManualWorkoutEditor() {
     event.stopPropagation();
     setSearchFilters((prev) => ({ ...prev, [filterKey]: "" }));
     setOpenFilterMenu(null);
+  };
+
+  const getTempoFieldKey = (blockId, exerciseIndex = null) =>
+    exerciseIndex == null ? blockId : `${blockId}-${exerciseIndex}`;
+
+  const beginTempoEditing = (blockId, currentValue, exerciseIndex = null) => {
+    const fieldKey = getTempoFieldKey(blockId, exerciseIndex);
+    setTempoDrafts((prev) => ({
+      ...prev,
+      [fieldKey]: String(currentValue || "").replace(/\D/g, "").slice(0, 4),
+    }));
+  };
+
+  const changeTempoDraft = (blockId, value, exerciseIndex = null) => {
+    const fieldKey = getTempoFieldKey(blockId, exerciseIndex);
+    const nextValue = String(value || "")
+      .replace(/\D/g, "")
+      .split("")
+      .filter((digit) => digit >= "0" && digit <= "5")
+      .join("")
+      .slice(0, 4);
+
+    setTempoDrafts((prev) => ({
+      ...prev,
+      [fieldKey]: nextValue,
+    }));
+  };
+
+  const commitTempoDraft = (workoutId, blockId, currentValue, exerciseIndex = null) => {
+    const fieldKey = getTempoFieldKey(blockId, exerciseIndex);
+    const draftValue = tempoDrafts[fieldKey];
+    const normalizedTempo = normalizeTempoValue(
+      draftValue == null ? currentValue : draftValue
+    );
+
+    if (exerciseIndex == null) {
+      updateBlock(workoutId, blockId, { tempo: normalizedTempo });
+    } else {
+      updateSupersetExercise(workoutId, blockId, exerciseIndex, {
+        tempo: normalizedTempo,
+      });
+    }
+
+    setTempoDrafts((prev) => {
+      const nextDrafts = { ...prev };
+      delete nextDrafts[fieldKey];
+      return nextDrafts;
+    });
   };
 
   return (
@@ -879,15 +938,38 @@ export default function ManualWorkoutEditor() {
                                     <input
                                       type="text"
                                       inputMode="numeric"
-                                      value={formatTempoValue(exercise.tempo)}
-                                      onChange={(e) =>
-                                        updateSupersetExercise(
-                                          workout.id,
+                                      value={
+                                        tempoDrafts[getTempoFieldKey(block.id, exerciseIndex)] ??
+                                        formatTempoValue(exercise.tempo)
+                                      }
+                                      onFocus={() =>
+                                        beginTempoEditing(
                                           block.id,
-                                          exerciseIndex,
-                                          { tempo: normalizeTempoValue(e.target.value) }
+                                          exercise.tempo,
+                                          exerciseIndex
                                         )
                                       }
+                                      onChange={(e) =>
+                                        changeTempoDraft(
+                                          block.id,
+                                          e.target.value,
+                                          exerciseIndex
+                                        )
+                                      }
+                                      onBlur={() =>
+                                        commitTempoDraft(
+                                          workout.id,
+                                          block.id,
+                                          exercise.tempo,
+                                          exerciseIndex
+                                        )
+                                      }
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                          event.preventDefault();
+                                          event.currentTarget.blur();
+                                        }
+                                      }}
                                       className="w-full rounded border-slate-200 bg-white p-1.5 text-sm focus:border-primary focus:ring-primary"
                                     />
                                   </div>
@@ -1038,24 +1120,34 @@ export default function ManualWorkoutEditor() {
                             Rest Interval
                           </label>
 
-                          <div className="flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-white p-2">
-                            {REST_OPTIONS.map((option) => (
-                              <button
-                                key={option}
-                                type="button"
-                                onClick={() =>
-                                  updateBlock(workout.id, block.id, { rest: option })
-                                }
-                                className={[
-                                  "rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors select-none",
-                                  block.rest === option
-                                    ? "bg-primary text-slate-900"
-                                    : "bg-slate-100 text-slate-500",
-                                ].join(" ")}
-                              >
-                                {option}
-                              </button>
-                            ))}
+                          <div className="flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateBlock(workout.id, block.id, {
+                                  rest: getNextRestValue(block.rest, -1),
+                                })
+                              }
+                              className="border-r border-slate-200 px-3 py-2 text-slate-500 transition-colors hover:bg-slate-50 select-none"
+                              aria-label="Decrease rest interval"
+                            >
+                              <span className="material-symbols-outlined text-base">remove</span>
+                            </button>
+                            <span className="flex-1 px-3 text-center text-sm font-bold text-slate-700">
+                              {block.rest}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateBlock(workout.id, block.id, {
+                                  rest: getNextRestValue(block.rest, 1),
+                                })
+                              }
+                              className="border-l border-slate-200 px-3 py-2 text-slate-500 transition-colors hover:bg-slate-50 select-none"
+                              aria-label="Increase rest interval"
+                            >
+                              <span className="material-symbols-outlined text-base">add</span>
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -1121,12 +1213,18 @@ export default function ManualWorkoutEditor() {
                         <input
                           type="text"
                           inputMode="numeric"
-                          value={formatTempoValue(block.tempo)}
-                          onChange={(e) =>
-                            updateBlock(workout.id, block.id, {
-                              tempo: normalizeTempoValue(e.target.value),
-                            })
+                          value={tempoDrafts[getTempoFieldKey(block.id)] ?? formatTempoValue(block.tempo)}
+                          onFocus={() => beginTempoEditing(block.id, block.tempo)}
+                          onChange={(e) => changeTempoDraft(block.id, e.target.value)}
+                          onBlur={() =>
+                            commitTempoDraft(workout.id, block.id, block.tempo)
                           }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              event.currentTarget.blur();
+                            }
+                          }}
                           className="w-full rounded border-slate-200 bg-white p-1.5 text-sm focus:border-primary focus:ring-primary"
                         />
                       </div>
@@ -1135,24 +1233,34 @@ export default function ManualWorkoutEditor() {
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
                           Rest
                         </label>
-                        <div className="flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-white p-2">
-                          {REST_OPTIONS.map((option) => (
-                            <button
-                              key={option}
-                              type="button"
-                              onClick={() =>
-                                updateBlock(workout.id, block.id, { rest: option })
-                              }
-                              className={[
-                                "rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors select-none",
-                                block.rest === option
-                                  ? "bg-primary text-slate-900"
-                                  : "bg-slate-100 text-slate-500",
-                              ].join(" ")}
-                            >
-                              {option}
-                            </button>
-                          ))}
+                        <div className="flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateBlock(workout.id, block.id, {
+                                rest: getNextRestValue(block.rest, -1),
+                              })
+                            }
+                            className="border-r border-slate-200 px-3 py-2 text-slate-500 transition-colors hover:bg-slate-50 select-none"
+                            aria-label="Decrease rest interval"
+                          >
+                            <span className="material-symbols-outlined text-base">remove</span>
+                          </button>
+                          <span className="flex-1 px-3 text-center text-sm font-bold text-slate-700">
+                            {block.rest}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateBlock(workout.id, block.id, {
+                                rest: getNextRestValue(block.rest, 1),
+                              })
+                            }
+                            className="border-l border-slate-200 px-3 py-2 text-slate-500 transition-colors hover:bg-slate-50 select-none"
+                            aria-label="Increase rest interval"
+                          >
+                            <span className="material-symbols-outlined text-base">add</span>
+                          </button>
                         </div>
                       </div>
                     </div>
