@@ -3,12 +3,56 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useManualProgram } from "../context/ManualProgramContext";
 import { fetchExercises } from "../services/api";
 
-function toNumberOrEmpty(value) {
-  if (value === "") {
+function toIntegerOrEmpty(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) {
     return "";
   }
-  const parsed = Number(value);
-  return Number.isNaN(parsed) ? "" : parsed;
+
+  return Number(digits);
+}
+
+function toRirOrEmpty(value) {
+  const parsed = toIntegerOrEmpty(value);
+
+  if (parsed === "") {
+    return "";
+  }
+
+  if (parsed < 0 || parsed > 4) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function normalizeTempoValue(value) {
+  const digits = String(value || "")
+    .replace(/\D/g, "")
+    .split("")
+    .filter((digit) => digit >= "0" && digit <= "5")
+    .join("")
+    .slice(0, 4);
+
+  if (!digits) {
+    return "";
+  }
+
+  if (digits.length === 3) {
+    return `${digits}0`;
+  }
+
+  return digits;
+}
+
+function formatTempoValue(value) {
+  const normalized = normalizeTempoValue(value);
+
+  if (!normalized) {
+    return "";
+  }
+
+  return normalized.split("").join("-");
 }
 
 function normalizeMatchValue(value) {
@@ -92,12 +136,29 @@ function rankExercises(exercises, query) {
     .map((entry) => entry.exercise);
 }
 
+const FILTER_OPTIONS = {
+  muscle: ["Chest", "Back", "Quads"],
+  equipment: ["Barbell", "Dumbbell", "Machine"],
+  type: ["Compound", "Isolation"],
+};
+
+const FILTER_LABELS = {
+  muscle: "Muscle",
+  equipment: "Equipment",
+  type: "Type",
+};
+
+const REST_OPTIONS = ["30s", "45s", "60s", "75s", "90s", "120s", "150s", "180s", "240s", "300s"];
+
 export default function ManualWorkoutEditor() {
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [showAddBlockSheet, setShowAddBlockSheet] = useState(false);
   const [openBlockId, setOpenBlockId] = useState(null);
   const [openSupersetExerciseByBlock, setOpenSupersetExerciseByBlock] = useState({});
+  const [isWorkoutTitleEditing, setIsWorkoutTitleEditing] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [openFilterMenu, setOpenFilterMenu] = useState(null);
+  const [pendingScrollToLastBlock, setPendingScrollToLastBlock] = useState(false);
   const [searchFilters, setSearchFilters] = useState({
     muscle: "",
     equipment: "",
@@ -113,6 +174,7 @@ export default function ManualWorkoutEditor() {
   const navigate = useNavigate();
   const { workoutId } = useParams();
   const searchUiRef = useRef(null);
+  const workoutTitleInputRef = useRef(null);
   const {
     programDraft,
     updateWorkoutName,
@@ -285,6 +347,11 @@ export default function ManualWorkoutEditor() {
       }
 
       setIsSearchOpen(false);
+      setOpenFilterMenu(null);
+      if (searchQuery.trim()) {
+        setSearchQuery("");
+        setDebouncedSearchQuery("");
+      }
     };
 
     document.addEventListener("mousedown", handlePointerDown);
@@ -294,7 +361,34 @@ export default function ManualWorkoutEditor() {
       document.removeEventListener("mousedown", handlePointerDown);
       document.removeEventListener("touchstart", handlePointerDown);
     };
-  }, [shouldShowSearchPanel, activeSearchTarget]);
+  }, [shouldShowSearchPanel, activeSearchTarget, searchQuery]);
+
+  useEffect(() => {
+    if (!isWorkoutTitleEditing) {
+      return;
+    }
+
+    workoutTitleInputRef.current?.focus();
+    workoutTitleInputRef.current?.select();
+  }, [isWorkoutTitleEditing]);
+
+  useEffect(() => {
+    if (!pendingScrollToLastBlock || !workout?.blocks.length) {
+      return;
+    }
+
+    const lastBlock = workout.blocks[workout.blocks.length - 1];
+    setOpenBlockId(lastBlock.id);
+
+    const frameId = window.requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-block-id="${lastBlock.id}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setPendingScrollToLastBlock(false);
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [pendingScrollToLastBlock, workout]);
 
   if (!workout) {
     return null;
@@ -333,10 +427,19 @@ export default function ManualWorkoutEditor() {
         exercise
       );
       setActiveSearchTarget(null);
+      setSearchQuery("");
+      setDebouncedSearchQuery("");
+      setIsSearchOpen(false);
+      setOpenFilterMenu(null);
       return;
     }
 
     appendSingleBlockFromExercise(workout.id, exercise);
+    setSearchQuery("");
+    setDebouncedSearchQuery("");
+    setIsSearchOpen(false);
+    setOpenFilterMenu(null);
+    setPendingScrollToLastBlock(true);
   };
 
   const activateA2Selection = (blockId, exerciseIndex) => {
@@ -345,6 +448,39 @@ export default function ManualWorkoutEditor() {
       blockId,
       exerciseIndex,
     });
+  };
+
+  const handleClearSearch = () => {
+    setSearchQuery("");
+    setDebouncedSearchQuery("");
+  };
+
+  const handleWorkoutTitleKeyDown = (event) => {
+    if (event.key === "Enter" || event.key === "Escape") {
+      event.preventDefault();
+      setIsWorkoutTitleEditing(false);
+    }
+  };
+
+  const handleRirChange = (workoutId, blockId, setIndex, value, exerciseIndex = null) => {
+    const nextValue = toRirOrEmpty(value);
+
+    if (nextValue === null) {
+      return;
+    }
+
+    updateSet(workoutId, blockId, setIndex, { rpe: nextValue }, exerciseIndex);
+  };
+
+  const handleFilterValueSelect = (filterKey, value) => {
+    setSearchFilters((prev) => ({ ...prev, [filterKey]: value }));
+    setOpenFilterMenu(null);
+  };
+
+  const handleFilterClear = (event, filterKey) => {
+    event.stopPropagation();
+    setSearchFilters((prev) => ({ ...prev, [filterKey]: "" }));
+    setOpenFilterMenu(null);
   };
 
   return (
@@ -356,7 +492,7 @@ export default function ManualWorkoutEditor() {
               <button
                 type="button"
                 onClick={handleBack}
-                className="flex items-center justify-center rounded-full p-2 transition-colors hover:bg-primary/10"
+                className="flex items-center justify-center rounded-full p-2 transition-colors hover:bg-primary/10 select-none"
                 aria-label="Back"
               >
                 <span className="material-symbols-outlined text-slate-700">
@@ -365,13 +501,32 @@ export default function ManualWorkoutEditor() {
               </button>
 
               <div className="flex-1">
-                <input
-                  type="text"
-                  value={workout.name}
-                  onChange={(e) => updateWorkoutName(workout.id, e.target.value)}
-                  placeholder="Workout Name"
-                  className="w-full border-none bg-transparent p-0 text-lg font-bold text-slate-900 focus:ring-0"
-                />
+                {isWorkoutTitleEditing ? (
+                  <input
+                    ref={workoutTitleInputRef}
+                    type="text"
+                    value={workout.name}
+                    onChange={(e) => updateWorkoutName(workout.id, e.target.value)}
+                    onBlur={() => setIsWorkoutTitleEditing(false)}
+                    onKeyDown={handleWorkoutTitleKeyDown}
+                    placeholder="Workout Name"
+                    className="w-full border-none bg-transparent p-0 text-lg font-bold text-slate-900 focus:ring-0"
+                  />
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-lg font-bold text-slate-900">
+                      {workout.name}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setIsWorkoutTitleEditing(true)}
+                      className="rounded-full p-1 text-slate-400 transition-colors hover:bg-primary/10 hover:text-primary select-none"
+                      aria-label="Edit workout title"
+                    >
+                      <span className="material-symbols-outlined text-lg">edit</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -390,8 +545,18 @@ export default function ManualWorkoutEditor() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => setIsSearchOpen(true)}
-                className="w-full rounded-lg border-none bg-slate-50 py-2.5 pl-10 pr-4 text-base transition-all focus:ring-2 focus:ring-primary/30"
+                className="w-full rounded-lg border-none bg-slate-50 py-2.5 pl-10 pr-12 text-base transition-all focus:ring-2 focus:ring-primary/30"
               />
+              {searchQuery.trim() && (
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700 select-none"
+                  aria-label="Clear search"
+                >
+                  <span className="material-symbols-outlined text-lg">close</span>
+                </button>
+              )}
             </div>
 
             {shouldShowSearchPanel && (
@@ -411,44 +576,66 @@ export default function ManualWorkoutEditor() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-3 gap-2">
-                  <select
-                    value={searchFilters.muscle}
-                    onChange={(e) =>
-                      setSearchFilters((prev) => ({ ...prev, muscle: e.target.value }))
-                    }
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-medium text-slate-600 focus:border-primary focus:ring-primary"
-                  >
-                    <option value="">Muscle</option>
-                    <option value="Chest">Chest</option>
-                    <option value="Back">Back</option>
-                    <option value="Quads">Quads</option>
-                  </select>
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(FILTER_LABELS).map(([filterKey, label]) => {
+                      const isActive = Boolean(searchFilters[filterKey]);
 
-                  <select
-                    value={searchFilters.equipment}
-                    onChange={(e) =>
-                      setSearchFilters((prev) => ({ ...prev, equipment: e.target.value }))
-                    }
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-medium text-slate-600 focus:border-primary focus:ring-primary"
-                  >
-                    <option value="">Equipment</option>
-                    <option value="Barbell">Barbell</option>
-                    <option value="Dumbbell">Dumbbell</option>
-                    <option value="Machine">Machine</option>
-                  </select>
+                      return (
+                        <button
+                          key={filterKey}
+                          type="button"
+                          onClick={() =>
+                            setOpenFilterMenu((prev) => (prev === filterKey ? null : filterKey))
+                          }
+                          className={[
+                            "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors select-none",
+                            isActive
+                              ? "border-primary/20 bg-primary/10 text-primary"
+                              : "border-slate-200 bg-slate-50 text-slate-500",
+                          ].join(" ")}
+                        >
+                          <span>{searchFilters[filterKey] || label}</span>
+                          {isActive ? (
+                            <span
+                              onClick={(event) => handleFilterClear(event, filterKey)}
+                              className="material-symbols-outlined text-sm"
+                            >
+                              close
+                            </span>
+                          ) : (
+                            <span className="material-symbols-outlined text-sm">
+                              keyboard_arrow_down
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
 
-                  <select
-                    value={searchFilters.type}
-                    onChange={(e) =>
-                      setSearchFilters((prev) => ({ ...prev, type: e.target.value }))
-                    }
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-medium text-slate-600 focus:border-primary focus:ring-primary"
-                  >
-                    <option value="">Type</option>
-                    <option value="Compound">Compound</option>
-                    <option value="Isolation">Isolation</option>
-                  </select>
+                  {openFilterMenu && (
+                    <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                      {FILTER_OPTIONS[openFilterMenu].map((option) => {
+                        const isSelected = searchFilters[openFilterMenu] === option;
+
+                        return (
+                          <button
+                            key={option}
+                            type="button"
+                            onClick={() => handleFilterValueSelect(openFilterMenu, option)}
+                            className={[
+                              "rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors select-none",
+                              isSelected
+                                ? "bg-primary text-slate-900"
+                                : "bg-white text-slate-600",
+                            ].join(" ")}
+                          >
+                            {option}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 <div className="max-h-[32dvh] overflow-y-auto">
@@ -576,6 +763,7 @@ export default function ManualWorkoutEditor() {
                 <section
                   key={block.id}
                   data-superset-block={block.id}
+                  data-block-id={block.id}
                   className={[
                     "overflow-hidden rounded-xl border-2 shadow-sm",
                     isIncompleteSuperset
@@ -591,7 +779,7 @@ export default function ManualWorkoutEditor() {
                         : "border-primary/10 bg-primary/10",
                     ].join(" ")}
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 select-none">
                       <span className="material-symbols-outlined cursor-grab text-primary/60">
                         drag_indicator
                       </span>
@@ -639,7 +827,7 @@ export default function ManualWorkoutEditor() {
                         return (
                           <div key={exerciseKey}>
                             <div className="rounded-t-lg border border-primary/10 border-b-0 bg-white p-3">
-                              <div className="flex items-start gap-3">
+                              <div className="flex items-start gap-3 select-none">
                                 <div className="mt-1 shrink-0 rounded bg-primary px-1.5 py-0.5 text-[10px] font-black text-slate-900">
                                   {exercise.label}
                                 </div>
@@ -661,16 +849,9 @@ export default function ManualWorkoutEditor() {
                                       Select second exercise
                                     </button>
                                   ) : (
-                                    <input
-                                      type="text"
-                                      value={exercise.name}
-                                      onChange={(e) =>
-                                        updateSupersetExercise(workout.id, block.id, exerciseIndex, {
-                                          name: e.target.value,
-                                        })
-                                      }
-                                      className="w-full border-none bg-transparent p-0 text-sm font-bold text-slate-900 focus:ring-0"
-                                    />
+                                    <p className="pt-2 text-sm font-bold text-slate-900">
+                                      {exercise.name}
+                                    </p>
                                   )}
                                 </div>
 
@@ -697,13 +878,14 @@ export default function ManualWorkoutEditor() {
                                     </label>
                                     <input
                                       type="text"
-                                      value={exercise.tempo}
+                                      inputMode="numeric"
+                                      value={formatTempoValue(exercise.tempo)}
                                       onChange={(e) =>
                                         updateSupersetExercise(
                                           workout.id,
                                           block.id,
                                           exerciseIndex,
-                                          { tempo: e.target.value }
+                                          { tempo: normalizeTempoValue(e.target.value) }
                                         )
                                       }
                                       className="w-full rounded border-slate-200 bg-white p-1.5 text-sm focus:border-primary focus:ring-primary"
@@ -714,7 +896,7 @@ export default function ManualWorkoutEditor() {
                                 <div className="mb-2 grid grid-cols-12 gap-2 px-2">
                                   <div className="col-span-2 text-[10px] font-bold uppercase text-slate-400">Set</div>
                                   <div className="col-span-5 text-[10px] font-bold uppercase text-slate-400">Reps</div>
-                                  <div className="col-span-4 text-[10px] font-bold uppercase text-slate-400">RPE (optional)</div>
+                                  <div className="col-span-4 text-[10px] font-bold uppercase text-slate-400">RIR</div>
                                   <div className="col-span-1" />
                                 </div>
 
@@ -728,13 +910,16 @@ export default function ManualWorkoutEditor() {
                                       <div className="col-span-5">
                                         <input
                                           type="number"
+                                          inputMode="numeric"
+                                          min="0"
+                                          step="1"
                                           value={set.reps}
                                           onChange={(e) =>
                                             updateSet(
                                               workout.id,
                                               block.id,
                                               setIndex,
-                                              { reps: toNumberOrEmpty(e.target.value) },
+                                              { reps: toIntegerOrEmpty(e.target.value) },
                                               exerciseIndex
                                             )
                                           }
@@ -744,13 +929,17 @@ export default function ManualWorkoutEditor() {
                                       <div className="col-span-4">
                                         <input
                                           type="number"
+                                          inputMode="numeric"
+                                          min="0"
+                                          max="4"
+                                          step="1"
                                           value={set.rpe}
                                           onChange={(e) =>
-                                            updateSet(
+                                            handleRirChange(
                                               workout.id,
                                               block.id,
                                               setIndex,
-                                              { rpe: toNumberOrEmpty(e.target.value) },
+                                              e.target.value,
                                               exerciseIndex
                                             )
                                           }
@@ -849,15 +1038,24 @@ export default function ManualWorkoutEditor() {
                             Rest Interval
                           </label>
 
-                          <div className="flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
-                            <input
-                              type="text"
-                              value={block.rest}
-                              onChange={(e) =>
-                                updateBlock(workout.id, block.id, { rest: e.target.value })
-                              }
-                              className="w-full border-none bg-transparent py-2 text-center text-sm font-bold focus:ring-0"
-                            />
+                          <div className="flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-white p-2">
+                            {REST_OPTIONS.map((option) => (
+                              <button
+                                key={option}
+                                type="button"
+                                onClick={() =>
+                                  updateBlock(workout.id, block.id, { rest: option })
+                                }
+                                className={[
+                                  "rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors select-none",
+                                  block.rest === option
+                                    ? "bg-primary text-slate-900"
+                                    : "bg-slate-100 text-slate-500",
+                                ].join(" ")}
+                              >
+                                {option}
+                              </button>
+                            ))}
                           </div>
                         </div>
                       </div>
@@ -872,21 +1070,15 @@ export default function ManualWorkoutEditor() {
             return (
               <section
                 key={block.id}
+                data-block-id={block.id}
                 className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
               >
                 <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/50 p-4">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 select-none">
                     <span className="material-symbols-outlined cursor-grab text-slate-400">
                       drag_indicator
                     </span>
-                    <input
-                      type="text"
-                      value={block.exercise}
-                      onChange={(e) =>
-                        updateBlock(workout.id, block.id, { exercise: e.target.value })
-                      }
-                      className="border-none bg-transparent p-0 font-bold text-slate-900 focus:ring-0"
-                    />
+                    <p className="font-bold text-slate-900">{block.exercise}</p>
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -928,9 +1120,12 @@ export default function ManualWorkoutEditor() {
                         </label>
                         <input
                           type="text"
-                          value={block.tempo}
+                          inputMode="numeric"
+                          value={formatTempoValue(block.tempo)}
                           onChange={(e) =>
-                            updateBlock(workout.id, block.id, { tempo: e.target.value })
+                            updateBlock(workout.id, block.id, {
+                              tempo: normalizeTempoValue(e.target.value),
+                            })
                           }
                           className="w-full rounded border-slate-200 bg-white p-1.5 text-sm focus:border-primary focus:ring-primary"
                         />
@@ -940,14 +1135,25 @@ export default function ManualWorkoutEditor() {
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
                           Rest
                         </label>
-                        <input
-                          type="text"
-                          value={block.rest}
-                          onChange={(e) =>
-                            updateBlock(workout.id, block.id, { rest: e.target.value })
-                          }
-                          className="w-full rounded border-slate-200 bg-white p-1.5 text-sm focus:border-primary focus:ring-primary"
-                        />
+                        <div className="flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-white p-2">
+                          {REST_OPTIONS.map((option) => (
+                            <button
+                              key={option}
+                              type="button"
+                              onClick={() =>
+                                updateBlock(workout.id, block.id, { rest: option })
+                              }
+                              className={[
+                                "rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors select-none",
+                                block.rest === option
+                                  ? "bg-primary text-slate-900"
+                                  : "bg-slate-100 text-slate-500",
+                              ].join(" ")}
+                            >
+                              {option}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
 
@@ -955,7 +1161,7 @@ export default function ManualWorkoutEditor() {
                       <div className="mb-2 grid grid-cols-12 gap-2 px-2">
                         <div className="col-span-2 text-[10px] font-bold uppercase text-slate-400">Set</div>
                         <div className="col-span-5 text-[10px] font-bold uppercase text-slate-400">Reps</div>
-                        <div className="col-span-4 text-[10px] font-bold uppercase text-slate-400">RPE (optional)</div>
+                        <div className="col-span-4 text-[10px] font-bold uppercase text-slate-400">RIR</div>
                         <div className="col-span-1" />
                       </div>
 
@@ -969,10 +1175,13 @@ export default function ManualWorkoutEditor() {
                             <div className="col-span-5">
                               <input
                                 type="number"
+                                inputMode="numeric"
+                                min="0"
+                                step="1"
                                 value={set.reps}
                                 onChange={(e) =>
                                   updateSet(workout.id, block.id, setIndex, {
-                                    reps: toNumberOrEmpty(e.target.value),
+                                    reps: toIntegerOrEmpty(e.target.value),
                                   })
                                 }
                                 className="w-full rounded border-slate-200 bg-white p-1.5 text-sm focus:border-primary focus:ring-primary"
@@ -981,11 +1190,18 @@ export default function ManualWorkoutEditor() {
                             <div className="col-span-4">
                               <input
                                 type="number"
+                                inputMode="numeric"
+                                min="0"
+                                max="4"
+                                step="1"
                                 value={set.rpe}
                                 onChange={(e) =>
-                                  updateSet(workout.id, block.id, setIndex, {
-                                    rpe: toNumberOrEmpty(e.target.value),
-                                  })
+                                  handleRirChange(
+                                    workout.id,
+                                    block.id,
+                                    setIndex,
+                                    e.target.value
+                                  )
                                 }
                                 className="w-full rounded border-slate-200 bg-white p-1.5 text-sm focus:border-primary focus:ring-primary"
                               />
