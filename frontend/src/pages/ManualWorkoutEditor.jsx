@@ -97,6 +97,12 @@ export default function ManualWorkoutEditor() {
   const [showAddBlockSheet, setShowAddBlockSheet] = useState(false);
   const [openBlockId, setOpenBlockId] = useState(null);
   const [openSupersetExerciseByBlock, setOpenSupersetExerciseByBlock] = useState({});
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchFilters, setSearchFilters] = useState({
+    muscle: "",
+    equipment: "",
+    type: "",
+  });
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [exerciseResults, setExerciseResults] = useState([]);
@@ -154,6 +160,8 @@ export default function ManualWorkoutEditor() {
   }, [navigate, programDraft.isMultiWeek, workout]);
 
   const hasIncompleteSuperset = hasIncompleteSupersets(workout?.id ?? null);
+  const shouldShowSearchPanel =
+    isSearchOpen || Boolean(debouncedSearchQuery) || Boolean(activeSearchTarget);
   const rankedExerciseResults = useMemo(
     () => rankExercises(exerciseResults, debouncedSearchQuery),
     [exerciseResults, debouncedSearchQuery]
@@ -252,6 +260,9 @@ export default function ManualWorkoutEditor() {
       }
 
       setActiveSearchTarget(null);
+      if (!debouncedSearchQuery) {
+        setIsSearchOpen(false);
+      }
     };
 
     document.addEventListener("mousedown", handlePointerDown);
@@ -261,7 +272,29 @@ export default function ManualWorkoutEditor() {
       document.removeEventListener("mousedown", handlePointerDown);
       document.removeEventListener("touchstart", handlePointerDown);
     };
-  }, [activeSearchTarget]);
+  }, [activeSearchTarget, debouncedSearchQuery]);
+
+  useEffect(() => {
+    if (!shouldShowSearchPanel || activeSearchTarget) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event) => {
+      if (searchUiRef.current?.contains(event.target)) {
+        return;
+      }
+
+      setIsSearchOpen(false);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown, { passive: true });
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+    };
+  }, [shouldShowSearchPanel, activeSearchTarget]);
 
   if (!workout) {
     return null;
@@ -356,70 +389,113 @@ export default function ManualWorkoutEditor() {
                 placeholder="Search exercises..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onFocus={() => setIsSearchOpen(true)}
                 className="w-full rounded-lg border-none bg-slate-50 py-2.5 pl-10 pr-4 text-base transition-all focus:ring-2 focus:ring-primary/30"
               />
             </div>
 
-            {activeSearchTarget && (
-              <div className="mt-2 flex items-center justify-between rounded-lg border border-primary/20 bg-primary/10 px-3 py-2">
-                <p className="text-xs font-semibold text-primary">
-                  Selecting exercise for A2
-                </p>
+            {shouldShowSearchPanel && (
+              <div className="mt-3 space-y-2">
+                {activeSearchTarget && (
+                  <div className="flex items-center justify-between rounded-lg border border-primary/20 bg-primary/10 px-3 py-2">
+                    <p className="text-xs font-semibold text-primary">
+                      Selecting exercise for A2
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setActiveSearchTarget(null)}
+                      className="text-[10px] font-bold uppercase tracking-wider text-primary"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-3 gap-2">
+                  <select
+                    value={searchFilters.muscle}
+                    onChange={(e) =>
+                      setSearchFilters((prev) => ({ ...prev, muscle: e.target.value }))
+                    }
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-medium text-slate-600 focus:border-primary focus:ring-primary"
+                  >
+                    <option value="">Muscle</option>
+                    <option value="Chest">Chest</option>
+                    <option value="Back">Back</option>
+                    <option value="Quads">Quads</option>
+                  </select>
+
+                  <select
+                    value={searchFilters.equipment}
+                    onChange={(e) =>
+                      setSearchFilters((prev) => ({ ...prev, equipment: e.target.value }))
+                    }
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-medium text-slate-600 focus:border-primary focus:ring-primary"
+                  >
+                    <option value="">Equipment</option>
+                    <option value="Barbell">Barbell</option>
+                    <option value="Dumbbell">Dumbbell</option>
+                    <option value="Machine">Machine</option>
+                  </select>
+
+                  <select
+                    value={searchFilters.type}
+                    onChange={(e) =>
+                      setSearchFilters((prev) => ({ ...prev, type: e.target.value }))
+                    }
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-medium text-slate-600 focus:border-primary focus:ring-primary"
+                  >
+                    <option value="">Type</option>
+                    <option value="Compound">Compound</option>
+                    <option value="Isolation">Isolation</option>
+                  </select>
+                </div>
+
+                <div className="max-h-[32dvh] overflow-y-auto">
+                  {isLoadingExercises && (
+                    <p className="px-2 py-3 text-sm text-slate-500">Loading exercises...</p>
+                  )}
+
+                  {!isLoadingExercises && exerciseError && (
+                    <p className="px-2 py-3 text-sm text-red-500">{exerciseError}</p>
+                  )}
+
+                  {!isLoadingExercises && !exerciseError && rankedExerciseResults.length === 0 && (
+                    <p className="px-2 py-3 text-sm text-slate-500">No exercises found.</p>
+                  )}
+
+                  {!isLoadingExercises &&
+                    !exerciseError &&
+                    rankedExerciseResults.map((exercise) => (
+                      <button
+                        key={exercise.exerciseId}
+                        type="button"
+                        onClick={() => handleExerciseResultClick(exercise)}
+                        className="group flex w-full items-center justify-between rounded-lg p-2 text-left transition-colors hover:bg-slate-50"
+                      >
+                        <div>
+                          <p className="text-sm font-bold text-slate-700">
+                            {exercise.name}
+                          </p>
+                        </div>
+
+                        <span className="material-symbols-outlined text-slate-300 transition-colors group-hover:text-primary">
+                          add_circle
+                        </span>
+                      </button>
+                    ))}
+                </div>
+
                 <button
                   type="button"
-                  onClick={() => setActiveSearchTarget(null)}
-                  className="text-[10px] font-bold uppercase tracking-wider text-primary"
+                  disabled
+                  className="flex w-full items-center justify-center gap-1 rounded-lg py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400"
                 >
-                  Cancel
+                  <span className="material-symbols-outlined text-base">science</span>
+                  Create custom exercise beta
                 </button>
               </div>
             )}
-
-            <div className="mt-3 space-y-2">
-              <div className="max-h-[32dvh] overflow-y-auto">
-                {isLoadingExercises && (
-                  <p className="px-2 py-3 text-sm text-slate-500">Loading exercises...</p>
-                )}
-
-                {!isLoadingExercises && exerciseError && (
-                  <p className="px-2 py-3 text-sm text-red-500">{exerciseError}</p>
-                )}
-
-                {!isLoadingExercises && !exerciseError && rankedExerciseResults.length === 0 && (
-                  <p className="px-2 py-3 text-sm text-slate-500">No exercises found.</p>
-                )}
-
-                {!isLoadingExercises &&
-                  !exerciseError &&
-                  rankedExerciseResults.map((exercise) => (
-                    <button
-                      key={exercise.exerciseId}
-                      type="button"
-                      onClick={() => handleExerciseResultClick(exercise)}
-                      className="group flex w-full items-center justify-between rounded-lg p-2 text-left transition-colors hover:bg-slate-50"
-                    >
-                      <div>
-                        <p className="text-sm font-bold text-slate-700">
-                          {exercise.name}
-                        </p>
-                      </div>
-
-                      <span className="material-symbols-outlined text-slate-300 transition-colors group-hover:text-primary">
-                        add_circle
-                      </span>
-                    </button>
-                  ))}
-              </div>
-
-              <button
-                type="button"
-                disabled
-                className="flex w-full items-center justify-center gap-1 rounded-lg py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400"
-              >
-                <span className="material-symbols-outlined text-base">science</span>
-                Create custom exercise beta
-              </button>
-            </div>
           </div>
         </div>
       </header>
@@ -791,6 +867,8 @@ export default function ManualWorkoutEditor() {
               );
             }
 
+            const canRemoveSingleSet = block.sets.length > 1;
+
             return (
               <section
                 key={block.id}
@@ -874,11 +952,6 @@ export default function ManualWorkoutEditor() {
                     </div>
 
                     <div className="p-4">
-                      {(() => {
-                        const canRemoveSingleSet = block.sets.length > 1;
-
-                        return (
-                          <>
                       <div className="mb-2 grid grid-cols-12 gap-2 px-2">
                         <div className="col-span-2 text-[10px] font-bold uppercase text-slate-400">Set</div>
                         <div className="col-span-5 text-[10px] font-bold uppercase text-slate-400">Reps</div>
@@ -958,9 +1031,6 @@ export default function ManualWorkoutEditor() {
                           className="min-h-[60px] w-full resize-none rounded-lg border-none bg-slate-50 p-3 text-sm focus:ring-1 focus:ring-primary"
                         />
                       </div>
-                          </>
-                        );
-                      })()}
                     </div>
                   </>
                 )}
