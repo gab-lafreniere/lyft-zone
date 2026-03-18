@@ -857,10 +857,7 @@ export default function ManualWorkoutEditor() {
 
           <div
             ref={searchUiRef}
-            className={[
-              "mt-3 rounded-xl border border-slate-200 bg-white/85 shadow-sm transition-all",
-              shouldShowSearchPanel ? "p-2.5" : "p-3",
-            ].join(" ")}
+            className="mt-3 rounded-xl border border-slate-200 bg-white/85 p-3 shadow-sm"
           >
             <div className="relative">
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-xl text-slate-400">
@@ -872,10 +869,7 @@ export default function ManualWorkoutEditor() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => setIsSearchOpen(true)}
-                className={[
-                  "w-full rounded-lg border-none bg-slate-50 pl-10 pr-12 text-base transition-all focus:ring-2 focus:ring-primary/30",
-                  shouldShowSearchPanel ? "py-2" : "py-2.5",
-                ].join(" ")}
+                className="w-full rounded-lg border-none bg-slate-50 py-2.5 pl-10 pr-12 text-base transition-all focus:ring-2 focus:ring-primary/30"
               />
               {searchQuery.trim() && (
                 <button
@@ -890,7 +884,7 @@ export default function ManualWorkoutEditor() {
             </div>
 
             {shouldShowSearchPanel && (
-              <div className="mt-2.5 space-y-2">
+              <div className="mt-3 space-y-2">
                 {activeSearchTarget && (
                   <div className="flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
                     <p className="text-xs font-semibold text-amber-700">
@@ -907,8 +901,8 @@ export default function ManualWorkoutEditor() {
                 )}
 
                 <div className="space-y-2">
-                  <div className="filter-rail-fade relative -mx-0.5">
-                    <div className="hide-scrollbar overflow-x-auto px-0.5">
+                  <div className="filter-rail-fade relative overflow-hidden rounded-r-full">
+                    <div className="hide-scrollbar overflow-x-auto">
                       <div className="flex min-w-max flex-nowrap gap-2 pr-8">
                         {visibleFilters.map(({ key: filterKey, label, options }) => {
                           const isActive = searchFilters[filterKey].length > 0;
@@ -992,22 +986,20 @@ export default function ManualWorkoutEditor() {
                   className={[
                     "overflow-y-auto",
                     activeSearchTarget
-                      ? "max-h-[34dvh] sm:max-h-[38dvh]"
-                      : "max-h-[38dvh] sm:max-h-[42dvh]",
+                      ? "max-h-[32dvh]"
+                      : "max-h-[32dvh]",
                   ].join(" ")}
                 >
                   {isLoadingExercises && (
-                    <p className="px-2 py-2.5 text-sm text-slate-500">
-                      Loading exercises...
-                    </p>
+                    <p className="px-2 py-3 text-sm text-slate-500">Loading exercises...</p>
                   )}
 
                   {!isLoadingExercises && exerciseError && (
-                    <p className="px-2 py-2.5 text-sm text-red-500">{exerciseError}</p>
+                    <p className="px-2 py-3 text-sm text-red-500">{exerciseError}</p>
                   )}
 
                   {!isLoadingExercises && !exerciseError && rankedExerciseResults.length === 0 && (
-                    <p className="px-2 py-2.5 text-sm text-slate-500">No exercises found.</p>
+                    <p className="px-2 py-3 text-sm text-slate-500">No exercises found.</p>
                   )}
 
                   {!isLoadingExercises &&
@@ -1017,7 +1009,7 @@ export default function ManualWorkoutEditor() {
                         key={exercise.exerciseId}
                         type="button"
                         onClick={() => handleExerciseResultClick(exercise)}
-                        className="group flex w-full items-center justify-between rounded-lg px-2 py-2 text-left transition-colors hover:bg-slate-50"
+                        className="group flex w-full items-center justify-between rounded-lg p-2 text-left transition-colors hover:bg-slate-50"
                       >
                         <div>
                           <p className="text-sm font-bold text-slate-700">
