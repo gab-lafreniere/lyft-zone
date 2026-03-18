@@ -2,29 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useManualProgram } from "../context/ManualProgramContext";
 import { fetchExercises } from "../services/api";
-
-function toIntegerOrEmpty(value) {
-  const digits = String(value || "").replace(/\D/g, "");
-  if (!digits) {
-    return "";
-  }
-
-  return Number(digits);
-}
-
-function toRirOrEmpty(value) {
-  const parsed = toIntegerOrEmpty(value);
-
-  if (parsed === "") {
-    return "";
-  }
-
-  if (parsed < 0 || parsed > 4) {
-    return null;
-  }
-
-  return parsed;
-}
+import { computeWorkoutMetrics } from "../utils/workoutMetrics";
 
 function normalizeTempoValue(value) {
   const digits = String(value || "")
@@ -149,6 +127,7 @@ const FILTER_LABELS = {
 };
 
 const REST_OPTIONS = ["30s", "45s", "60s", "75s", "90s", "120s", "150s", "180s", "240s", "300s"];
+const RIR_CYCLE = [2, 1, 0, 4, 3];
 
 function getNextRestValue(currentValue, direction) {
   const currentIndex = Math.max(0, REST_OPTIONS.indexOf(currentValue));
@@ -158,6 +137,40 @@ function getNextRestValue(currentValue, direction) {
   );
 
   return REST_OPTIONS[nextIndex];
+}
+
+function getNextRirValue(currentValue) {
+  const currentIndex = RIR_CYCLE.indexOf(Number(currentValue));
+  const safeIndex = currentIndex === -1 ? 0 : currentIndex;
+  return RIR_CYCLE[(safeIndex + 1) % RIR_CYCLE.length];
+}
+
+function getRirButtonClasses(value) {
+  switch (Number(value)) {
+    case 0:
+      return "border-amber-200 bg-amber-100 text-amber-800";
+    case 1:
+      return "border-amber-100 bg-amber-50 text-amber-700";
+    case 3:
+      return "border-sky-100 bg-sky-50 text-sky-700";
+    case 4:
+      return "border-slate-200 bg-slate-200 text-slate-700";
+    case 2:
+    default:
+      return "border-primary/20 bg-primary/10 text-primary";
+  }
+}
+
+function formatMinutes(value) {
+  return `${value}m`;
+}
+
+function getMetricBarWidth(value, maxValue) {
+  if (value <= 0 || maxValue <= 0) {
+    return "0%";
+  }
+
+  return `${Math.max(8, Math.min(100, (value / maxValue) * 100))}%`;
 }
 
 export default function ManualWorkoutEditor() {
@@ -170,6 +183,7 @@ export default function ManualWorkoutEditor() {
   const [openFilterMenu, setOpenFilterMenu] = useState(null);
   const [pendingScrollToLastBlock, setPendingScrollToLastBlock] = useState(false);
   const [tempoDrafts, setTempoDrafts] = useState({});
+  const [repsDrafts, setRepsDrafts] = useState({});
   const [searchFilters, setSearchFilters] = useState({
     muscle: "",
     equipment: "",
@@ -191,6 +205,7 @@ export default function ManualWorkoutEditor() {
     updateWorkoutName,
     updateBlock,
     updateSupersetExercise,
+    updateSupersetSetCount,
     removeBlock,
     addSet,
     removeSet,
@@ -238,6 +253,32 @@ export default function ManualWorkoutEditor() {
   const rankedExerciseResults = useMemo(
     () => rankExercises(exerciseResults, debouncedSearchQuery),
     [exerciseResults, debouncedSearchQuery]
+  );
+  const workoutMetrics = useMemo(() => computeWorkoutMetrics(workout), [workout]);
+  const workoutStatItems = useMemo(
+    () => [
+      {
+        label: "Exercises",
+        value: String(workoutMetrics.exerciseCount),
+        width: getMetricBarWidth(workoutMetrics.exerciseCount, 12),
+      },
+      {
+        label: "Sets",
+        value: String(workoutMetrics.setCount),
+        width: getMetricBarWidth(workoutMetrics.setCount, 32),
+      },
+      {
+        label: "Dur.",
+        value: formatMinutes(workoutMetrics.estimatedDurationMinutes),
+        width: getMetricBarWidth(workoutMetrics.estimatedDurationMinutes, 120),
+      },
+      {
+        label: "TUT",
+        value: formatMinutes(workoutMetrics.totalTUTMinutes),
+        width: getMetricBarWidth(workoutMetrics.totalTUTMinutes, 60),
+      },
+    ],
+    [workoutMetrics]
   );
 
   useEffect(() => {
@@ -473,16 +514,6 @@ export default function ManualWorkoutEditor() {
     }
   };
 
-  const handleRirChange = (workoutId, blockId, setIndex, value, exerciseIndex = null) => {
-    const nextValue = toRirOrEmpty(value);
-
-    if (nextValue === null) {
-      return;
-    }
-
-    updateSet(workoutId, blockId, setIndex, { rpe: nextValue }, exerciseIndex);
-  };
-
   const handleFilterValueSelect = (filterKey, value) => {
     setSearchFilters((prev) => ({ ...prev, [filterKey]: value }));
     setOpenFilterMenu(null);
@@ -496,6 +527,11 @@ export default function ManualWorkoutEditor() {
 
   const getTempoFieldKey = (blockId, exerciseIndex = null) =>
     exerciseIndex == null ? blockId : `${blockId}-${exerciseIndex}`;
+
+  const getRepsFieldKey = (blockId, setIndex, exerciseIndex = null) =>
+    exerciseIndex == null
+      ? `${blockId}-${setIndex}`
+      : `${blockId}-${exerciseIndex}-${setIndex}`;
 
   const beginTempoEditing = (blockId, currentValue, exerciseIndex = null) => {
     const fieldKey = getTempoFieldKey(blockId, exerciseIndex);
@@ -536,6 +572,48 @@ export default function ManualWorkoutEditor() {
     }
 
     setTempoDrafts((prev) => {
+      const nextDrafts = { ...prev };
+      delete nextDrafts[fieldKey];
+      return nextDrafts;
+    });
+  };
+
+  const beginRepsEditing = (blockId, setIndex, currentValue, exerciseIndex = null) => {
+    const fieldKey = getRepsFieldKey(blockId, setIndex, exerciseIndex);
+    setRepsDrafts((prev) => ({
+      ...prev,
+      [fieldKey]:
+        currentValue === "" || currentValue == null ? "" : String(currentValue),
+    }));
+  };
+
+  const changeRepsDraft = (blockId, setIndex, value, exerciseIndex = null) => {
+    const fieldKey = getRepsFieldKey(blockId, setIndex, exerciseIndex);
+    setRepsDrafts((prev) => ({
+      ...prev,
+      [fieldKey]: String(value || "").replace(/\D/g, "").slice(0, 3),
+    }));
+  };
+
+  const commitRepsDraft = (
+    workoutId,
+    blockId,
+    setIndex,
+    currentValue,
+    exerciseIndex = null
+  ) => {
+    const fieldKey = getRepsFieldKey(blockId, setIndex, exerciseIndex);
+    const draftValue = repsDrafts[fieldKey];
+    const normalizedValue =
+      draftValue == null
+        ? currentValue
+        : draftValue === ""
+          ? ""
+          : Math.min(100, Number(draftValue));
+
+    updateSet(workoutId, blockId, setIndex, { reps: normalizedValue }, exerciseIndex);
+
+    setRepsDrafts((prev) => {
       const nextDrafts = { ...prev };
       delete nextDrafts[fieldKey];
       return nextDrafts;
@@ -758,19 +836,14 @@ export default function ManualWorkoutEditor() {
           </div>
 
           <div className="mb-6 grid grid-cols-4 gap-4">
-            {[
-              { label: "Exercises", value: "06", width: "w-2/3" },
-              { label: "Sets", value: "18", width: "w-3/4" },
-              { label: "Dur.", value: "65m", width: "w-1/2" },
-              { label: "TUT", value: "42m", width: "w-1/3" },
-            ].map((item) => (
+            {workoutStatItems.map((item) => (
               <div key={item.label} className="space-y-1">
                 <p className="text-[10px] font-medium uppercase text-slate-500">
                   {item.label}
                 </p>
                 <p className="text-lg font-bold text-primary">{item.value}</p>
                 <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div className={`h-full bg-primary ${item.width}`} />
+                  <div className="h-full bg-primary" style={{ width: item.width }} />
                 </div>
               </div>
             ))}
@@ -781,18 +854,17 @@ export default function ManualWorkoutEditor() {
               Muscular Distribution
             </p>
 
-            {[
-              { label: "Quads", value: "45%", width: "45%" },
-              { label: "Glutes", value: "35%", width: "35%" },
-              { label: "Hamstrings", value: "20%", width: "20%" },
-            ].map((item) => (
-              <div key={item.label} className="space-y-2">
+            {workoutMetrics.muscleDistribution.map((item) => (
+              <div key={item.key} className="space-y-2">
                 <div className="flex items-center justify-between text-[10px] font-bold">
                   <span className="text-slate-600">{item.label}</span>
-                  <span className="text-primary">{item.value}</span>
+                  <span className="text-primary">{item.rawSets} sets</span>
                 </div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div className="h-full bg-primary" style={{ width: item.width }} />
+                  <div
+                    className="h-full bg-primary"
+                    style={{ width: `${item.percentageOfWorkout}%` }}
+                  />
                 </div>
               </div>
             ))}
@@ -881,7 +953,6 @@ export default function ManualWorkoutEditor() {
                         const exerciseKey = `${block.id}-${exerciseIndex}`;
                         const exerciseCollapsed =
                           openSupersetExerciseByBlock[block.id] !== exerciseIndex;
-                        const canRemoveSet = exercise.sets.length > 1;
 
                         return (
                           <div key={exerciseKey}>
@@ -994,72 +1065,78 @@ export default function ManualWorkoutEditor() {
                                           type="number"
                                           inputMode="numeric"
                                           min="0"
+                                          max="100"
                                           step="1"
-                                          value={set.reps}
-                                          onChange={(e) =>
-                                            updateSet(
-                                              workout.id,
+                                          value={
+                                            repsDrafts[
+                                              getRepsFieldKey(
+                                                block.id,
+                                                setIndex,
+                                                exerciseIndex
+                                              )
+                                            ] ?? set.reps
+                                          }
+                                          onFocus={() =>
+                                            beginRepsEditing(
                                               block.id,
                                               setIndex,
-                                              { reps: toIntegerOrEmpty(e.target.value) },
+                                              set.reps,
                                               exerciseIndex
                                             )
                                           }
-                                          className="w-full rounded border-slate-200 bg-slate-50 p-1.5 text-sm focus:border-primary focus:ring-primary"
-                                        />
-                                      </div>
-                                      <div className="col-span-4">
-                                        <input
-                                          type="number"
-                                          inputMode="numeric"
-                                          min="0"
-                                          max="4"
-                                          step="1"
-                                          value={set.rpe}
                                           onChange={(e) =>
-                                            handleRirChange(
-                                              workout.id,
+                                            changeRepsDraft(
                                               block.id,
                                               setIndex,
                                               e.target.value,
                                               exerciseIndex
                                             )
                                           }
+                                          onBlur={() =>
+                                            commitRepsDraft(
+                                              workout.id,
+                                              block.id,
+                                              setIndex,
+                                              set.reps,
+                                              exerciseIndex
+                                            )
+                                          }
+                                          onKeyDown={(event) => {
+                                            if (event.key === "Enter") {
+                                              event.preventDefault();
+                                              event.currentTarget.blur();
+                                            }
+                                          }}
                                           className="w-full rounded border-slate-200 bg-slate-50 p-1.5 text-sm focus:border-primary focus:ring-primary"
                                         />
                                       </div>
-                                      <div className="col-span-1 flex justify-end">
+                                      <div className="col-span-4">
                                         <button
                                           type="button"
                                           onClick={() =>
-                                            removeSet(workout.id, block.id, setIndex, exerciseIndex)
+                                            updateSet(
+                                              workout.id,
+                                              block.id,
+                                              setIndex,
+                                              { rpe: getNextRirValue(set.rpe) },
+                                              exerciseIndex
+                                            )
                                           }
-                                          disabled={!canRemoveSet}
                                           className={[
-                                            "rounded p-1 transition-colors",
-                                            canRemoveSet
-                                              ? "text-slate-400 hover:text-red-500"
-                                              : "cursor-not-allowed text-slate-200",
+                                            "flex h-9 w-9 items-center justify-center rounded-xl border text-sm font-bold transition-all active:scale-95",
+                                            getRirButtonClasses(set.rpe),
                                           ].join(" ")}
-                                          aria-label="Remove set"
+                                          aria-label={`RIR ${set.rpe}. Tap to cycle`}
                                         >
-                                          <span className="material-symbols-outlined text-lg">
-                                            delete
-                                          </span>
+                                          {set.rpe}
                                         </button>
+                                      </div>
+                                      <div className="col-span-1 flex justify-end">
+                                        <span className="block h-6 w-6" aria-hidden="true" />
                                       </div>
                                     </div>
                                   ))}
                                 </div>
-
-                                <button
-                                  type="button"
-                                  onClick={() => addSet(workout.id, block.id, exerciseIndex)}
-                                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-200 py-2 text-sm font-medium text-slate-500 transition-all hover:border-primary/50 hover:text-primary"
-                                >
-                                  <span className="material-symbols-outlined text-sm">add</span>
-                                  Add Set
-                                </button>
 
                                 <div className="mt-4 border-t border-slate-100 pt-4">
                                   <textarea
@@ -1085,28 +1162,32 @@ export default function ManualWorkoutEditor() {
                       <div className="grid grid-cols-2 gap-3 pt-2">
                         <div className="space-y-1">
                           <label className="px-1 text-[10px] font-bold uppercase text-slate-500">
-                            Round Count
+                            Sets
                           </label>
 
                           <div className="flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
                             <button
                               type="button"
                               onClick={() =>
-                                updateBlock(workout.id, block.id, {
-                                  rounds: Math.max(1, (block.rounds || 1) - 1),
-                                })
+                                updateSupersetSetCount(
+                                  workout.id,
+                                  block.id,
+                                  Math.max(1, (block.sets || 1) - 1)
+                                )
                               }
                               className="border-r border-slate-200 px-3 py-2 text-slate-500 hover:bg-slate-50"
                             >
                               -
                             </button>
-                            <span className="flex-1 text-center text-sm font-bold">{block.rounds}</span>
+                            <span className="flex-1 text-center text-sm font-bold">{block.sets}</span>
                             <button
                               type="button"
                               onClick={() =>
-                                updateBlock(workout.id, block.id, {
-                                  rounds: (block.rounds || 0) + 1,
-                                })
+                                updateSupersetSetCount(
+                                  workout.id,
+                                  block.id,
+                                  (block.sets || 0) + 1
+                                )
                               }
                               className="border-l border-slate-200 px-3 py-2 text-slate-500 hover:bg-slate-50"
                             >
@@ -1285,34 +1366,48 @@ export default function ManualWorkoutEditor() {
                                 type="number"
                                 inputMode="numeric"
                                 min="0"
+                                max="100"
                                 step="1"
-                                value={set.reps}
-                                onChange={(e) =>
-                                  updateSet(workout.id, block.id, setIndex, {
-                                    reps: toIntegerOrEmpty(e.target.value),
-                                  })
+                                value={repsDrafts[getRepsFieldKey(block.id, setIndex)] ?? set.reps}
+                                onFocus={() =>
+                                  beginRepsEditing(block.id, setIndex, set.reps)
                                 }
+                                onChange={(e) =>
+                                  changeRepsDraft(block.id, setIndex, e.target.value)
+                                }
+                                onBlur={() =>
+                                  commitRepsDraft(
+                                    workout.id,
+                                    block.id,
+                                    setIndex,
+                                    set.reps
+                                  )
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    event.currentTarget.blur();
+                                  }
+                                }}
                                 className="w-full rounded border-slate-200 bg-white p-1.5 text-sm focus:border-primary focus:ring-primary"
                               />
                             </div>
                             <div className="col-span-4">
-                              <input
-                                type="number"
-                                inputMode="numeric"
-                                min="0"
-                                max="4"
-                                step="1"
-                                value={set.rpe}
-                                onChange={(e) =>
-                                  handleRirChange(
-                                    workout.id,
-                                    block.id,
-                                    setIndex,
-                                    e.target.value
-                                  )
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateSet(workout.id, block.id, setIndex, {
+                                    rpe: getNextRirValue(set.rpe),
+                                  })
                                 }
-                                className="w-full rounded border-slate-200 bg-white p-1.5 text-sm focus:border-primary focus:ring-primary"
-                              />
+                                className={[
+                                  "flex h-9 w-9 items-center justify-center rounded-xl border text-sm font-bold transition-all active:scale-95",
+                                  getRirButtonClasses(set.rpe),
+                                ].join(" ")}
+                                aria-label={`RIR ${set.rpe}. Tap to cycle`}
+                              >
+                                {set.rpe}
+                              </button>
                             </div>
                             <div className="col-span-1 flex justify-end">
                               <button

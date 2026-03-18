@@ -1,45 +1,72 @@
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useManualProgram } from "../context/ManualProgramContext";
+import { aggregateWorkoutMetrics, computeWorkoutMetrics } from "../utils/workoutMetrics";
+
+function formatMinutes(value) {
+  return `${value}m`;
+}
+
+function getMetricBarWidth(value, maxValue) {
+  if (value <= 0 || maxValue <= 0) {
+    return "0%";
+  }
+
+  return `${Math.max(8, Math.min(100, (value / maxValue) * 100))}%`;
+}
 
 export default function ManualBuilder() {
   const navigate = useNavigate();
   const { programDraft, addWorkout, updateWorkoutName } = useManualProgram();
+  const [showMuscleDistribution, setShowMuscleDistribution] = useState(false);
 
   const programName = programDraft.programName || "New Program";
   const sessionsPerWeek = programDraft.sessionsPerWeek || 4;
+  const weeklyMetrics = useMemo(
+    () => aggregateWorkoutMetrics(programDraft.workouts),
+    [programDraft.workouts]
+  );
+  const topStats = useMemo(
+    () => [
+      {
+        label: "Exercises",
+        value: String(weeklyMetrics.totalExerciseCount),
+        width: getMetricBarWidth(
+          weeklyMetrics.totalExerciseCount,
+          Math.max(1, sessionsPerWeek * 8)
+        ),
+      },
+      {
+        label: "Sets",
+        value: String(weeklyMetrics.totalSetCount),
+        width: getMetricBarWidth(weeklyMetrics.totalSetCount, Math.max(1, sessionsPerWeek * 20)),
+      },
+      {
+        label: "AVG. Time",
+        value: formatMinutes(weeklyMetrics.averageDurationMinutes),
+        width: getMetricBarWidth(weeklyMetrics.averageDurationMinutes, 120),
+      },
+      {
+        label: "AVG. TUT",
+        value: formatMinutes(weeklyMetrics.averageTUTMinutes),
+        width: getMetricBarWidth(weeklyMetrics.averageTUTMinutes, 60),
+      },
+    ],
+    [sessionsPerWeek, weeklyMetrics]
+  );
 
-  const workoutCards = programDraft.workouts.map((workout) => {
-    const exerciseCount = workout.blocks.reduce((total, block) => {
-      if (block.type === "single") {
-        return block.exerciseId ? total + 1 : total;
-      }
-      if (block.type === "superset") {
-        return total + block.exercises.filter((exercise) => exercise.exerciseId).length;
-      }
-      return total;
-    }, 0);
+  const workoutCards = useMemo(
+    () =>
+      programDraft.workouts.map((workout) => {
+        const metrics = computeWorkoutMetrics(workout);
 
-    const setCount = workout.blocks.reduce((total, block) => {
-      if (block.type === "single") {
-        return block.exerciseId ? total + block.sets.length : total;
-      }
-      if (block.type === "superset") {
-        return (
-          total +
-          block.exercises.reduce(
-            (sum, exercise) => sum + (exercise.exerciseId ? exercise.sets.length : 0),
-            0
-          )
-        );
-      }
-      return total;
-    }, 0);
-
-    return {
-      ...workout,
-      meta: `${exerciseCount} exercises • ${setCount} sets • ~45 min • 32m TUT`,
-    };
-  });
+        return {
+          ...workout,
+          meta: `${metrics.exerciseCount} exercises • ${metrics.setCount} sets • ~${metrics.estimatedDurationMinutes} min • ${metrics.totalTUTMinutes}m TUT`,
+        };
+      }),
+    [programDraft.workouts]
+  );
 
   return (
     <div className="-mx-6 min-h-full bg-background-light text-slate-900">
@@ -101,12 +128,7 @@ export default function ManualBuilder() {
         {/* Stats */}
         <div className="rounded-xl border border-slate-100 bg-white/50 p-4 shadow-sm backdrop-blur-sm">
           <div className="grid grid-cols-4 gap-2">
-            {[
-              { label: "Exercises", value: "18", width: "w-3/4" },
-              { label: "Sets", value: "54", width: "w-2/3" },
-              { label: "AVG. Time", value: "42m", width: "w-1/2" },
-              { label: "AVG. TUT", value: "32m", width: "w-1/3" },
-            ].map((item) => (
+            {topStats.map((item) => (
               <div key={item.label} className="flex flex-col gap-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   {item.label}
@@ -115,7 +137,7 @@ export default function ManualBuilder() {
                   {item.value}
                 </span>
                 <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div className={`h-full bg-primary ${item.width}`} />
+                  <div className="h-full bg-primary" style={{ width: item.width }} />
                 </div>
               </div>
             ))}
@@ -124,38 +146,43 @@ export default function ManualBuilder() {
 
         {/* Weekly Muscle Distribution */}
         <div className="rounded-xl border border-slate-100 bg-white/50 p-4 shadow-sm backdrop-blur-sm">
-          <h4 className="mb-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-            Weekly Muscle Distribution
-          </h4>
+          <button
+            type="button"
+            onClick={() => setShowMuscleDistribution((prev) => !prev)}
+            className="flex w-full items-center justify-between"
+          >
+            <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+              Weekly Muscle Distribution
+            </h4>
+            <span
+              className={[
+                "material-symbols-outlined text-lg text-slate-400 transition-transform",
+                showMuscleDistribution ? "rotate-180" : "",
+              ].join(" ")}
+            >
+              expand_more
+            </span>
+          </button>
 
-          <div className="grid grid-cols-2 gap-x-6 gap-y-3">
-            {[
-              { label: "Chest", sets: "12 sets", width: "60%" },
-              { label: "Back", sets: "14 sets", width: "70%" },
-              { label: "Shoulders", sets: "10 sets", width: "50%" },
-              { label: "Quads", sets: "12 sets", width: "60%" },
-              { label: "Hamstrings", sets: "8 sets", width: "40%" },
-              { label: "Glutes", sets: "6 sets", width: "30%" },
-              { label: "Biceps", sets: "6 sets", width: "30%" },
-              { label: "Triceps", sets: "6 sets", width: "30%" },
-              { label: "Calves", sets: "4 sets", width: "20%" },
-              { label: "Abs", sets: "4 sets", width: "20%" },
-            ].map((item) => (
-              <div key={item.label} className="space-y-1">
-                <div className="flex items-center justify-between text-[10px] font-bold uppercase">
-                  <span className="text-slate-600">{item.label}</span>
-                  <span className="text-primary">{item.sets}</span>
-                </div>
+          {showMuscleDistribution && (
+            <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
+              {weeklyMetrics.muscleDistribution.map((item) => (
+                <div key={item.key} className="space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-bold uppercase">
+                    <span className="text-slate-600">{item.label}</span>
+                    <span className="text-primary">{item.rawSets} sets</span>
+                  </div>
 
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className="h-full bg-primary"
-                    style={{ width: item.width }}
-                  />
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full bg-primary"
+                      style={{ width: `${item.percentageOfWorkout}%` }}
+                    />
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Workout Schedule Header */}

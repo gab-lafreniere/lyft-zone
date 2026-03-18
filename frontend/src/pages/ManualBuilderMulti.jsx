@@ -29,13 +29,10 @@ export default function ManualBuilderMulti() {
         return block.exerciseId ? total + block.sets.length : total;
       }
       if (block.type === "superset") {
-        return (
-          total +
-          block.exercises.reduce(
-            (sum, exercise) => sum + (exercise.exerciseId ? exercise.sets.length : 0),
-            0
-          )
-        );
+        const populatedLaneCount = block.exercises.filter(
+          (exercise) => exercise.exerciseId
+        ).length;
+        return total + (block.sets || 0) * populatedLaneCount;
       }
       return total;
     }, 0);

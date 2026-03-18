@@ -2,8 +2,79 @@ import { createContext, useCallback, useContext, useMemo, useState } from "react
 
 const ManualProgramContext = createContext(null);
 
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeSetUpdates(updates = {}) {
+  const nextUpdates = { ...updates };
+
+  if (typeof nextUpdates.reps === "number" && !Number.isNaN(nextUpdates.reps)) {
+    nextUpdates.reps = clampNumber(nextUpdates.reps, 0, 100);
+  }
+
+  if (typeof nextUpdates.rpe === "number" && !Number.isNaN(nextUpdates.rpe)) {
+    nextUpdates.rpe = clampNumber(nextUpdates.rpe, 0, 4);
+  }
+
+  return nextUpdates;
+}
+
 function createId(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createSingleSetRow() {
+  return { reps: 8, rpe: 2 };
+}
+
+function createSupersetSetRow() {
+  return { reps: 10, rpe: 2 };
+}
+
+function createSetRows(count, createRow) {
+  return Array.from({ length: Math.max(1, count) }, () => createRow());
+}
+
+function normalizeSupersetExerciseSets(exercise, targetCount) {
+  const safeCount = Math.max(1, targetCount);
+  const existingSets = Array.isArray(exercise?.sets) ? exercise.sets : [];
+
+  if (existingSets.length === safeCount) {
+    return exercise;
+  }
+
+  if (existingSets.length > safeCount) {
+    return {
+      ...exercise,
+      sets: existingSets.slice(0, safeCount),
+    };
+  }
+
+  return {
+    ...exercise,
+    sets: [
+      ...existingSets,
+      ...createSetRows(safeCount - existingSets.length, createSupersetSetRow),
+    ],
+  };
+}
+
+function normalizeSupersetBlock(block) {
+  const populatedCounts = Array.isArray(block.exercises)
+    ? block.exercises
+        .map((exercise) => (Array.isArray(exercise?.sets) ? exercise.sets.length : 0))
+        .filter((count) => count > 0)
+    : [];
+  const targetCount = Math.max(1, block.sets ?? populatedCounts[0] ?? 1);
+
+  return {
+    ...block,
+    sets: targetCount,
+    exercises: (block.exercises || []).map((exercise) =>
+      normalizeSupersetExerciseSets(exercise, targetCount)
+    ),
+  };
 }
 
 function createDefaultSingleBlock() {
@@ -12,31 +83,32 @@ function createDefaultSingleBlock() {
     type: "single",
     exercise: "Barbell Back Squat",
     exerciseId: null,
+    bodyParts: [],
+    muscleFocus: [],
     tempo: "3010",
     rest: "120s",
-    sets: [
-      { reps: 8, rpe: 2 },
-      { reps: 8, rpe: 2 },
-    ],
+    sets: createSetRows(2, createSingleSetRow),
     notes: "",
   };
 }
 
 function createDefaultSupersetBlock() {
-  return {
+  return normalizeSupersetBlock({
     id: createId("block"),
     type: "superset",
-    rounds: 4,
+    sets: 2,
     rest: "120s",
     exercises: [
       {
         label: "A1",
         name: "Leg Extension",
         exerciseId: null,
+        bodyParts: [],
+        muscleFocus: [],
         tempo: "3010",
         sets: [
-          { reps: 15, rpe: 3 },
-          { reps: 12, rpe: 3 },
+          { reps: 15, rpe: 2 },
+          { reps: 12, rpe: 2 },
         ],
         notes: "",
       },
@@ -44,15 +116,17 @@ function createDefaultSupersetBlock() {
         label: "A2",
         name: "Seated Leg Curl",
         exerciseId: null,
+        bodyParts: [],
+        muscleFocus: [],
         tempo: "3010",
         sets: [
-          { reps: 12, rpe: 3 },
-          { reps: 10, rpe: 3 },
+          { reps: 12, rpe: 2 },
+          { reps: 10, rpe: 2 },
         ],
         notes: "",
       },
     ],
-  };
+  });
 }
 
 function createSingleBlockFromExercise(exercise) {
@@ -61,26 +135,24 @@ function createSingleBlockFromExercise(exercise) {
     type: "single",
     exercise: exercise.name,
     exerciseId: exercise.exerciseId,
+    bodyParts: Array.isArray(exercise.bodyParts) ? exercise.bodyParts : [],
+    muscleFocus: Array.isArray(exercise.muscleFocus) ? exercise.muscleFocus : [],
     tempo: "3010",
     rest: "120s",
-    sets: [
-      { reps: 8, rpe: 2 },
-      { reps: 8, rpe: 2 },
-    ],
+    sets: createSetRows(2, createSingleSetRow),
     notes: "",
   };
 }
 
-function createEmptySupersetExercise(label) {
+function createEmptySupersetExercise(label, setCount = 2) {
   return {
     label,
     name: "",
     exerciseId: null,
+    bodyParts: [],
+    muscleFocus: [],
     tempo: "3010",
-    sets: [
-      { reps: 10, rpe: 3 },
-      { reps: 10, rpe: 3 },
-    ],
+    sets: createSetRows(setCount, createSupersetSetRow),
     notes: "",
   };
 }
@@ -110,6 +182,33 @@ function createInitialDraft() {
 
 export function ManualProgramProvider({ children }) {
   const [programDraft, setProgramDraft] = useState(createInitialDraft);
+
+  const updateSupersetSetCount = useCallback((workoutId, blockId, nextCount) => {
+    const safeCount = Math.max(1, nextCount || 1);
+
+    setProgramDraft((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((workout) => {
+        if (workout.id !== workoutId) {
+          return workout;
+        }
+
+        return {
+          ...workout,
+          blocks: workout.blocks.map((block) => {
+            if (block.id !== blockId || block.type !== "superset") {
+              return block;
+            }
+
+            return normalizeSupersetBlock({
+              ...block,
+              sets: safeCount,
+            });
+          }),
+        };
+      }),
+    }));
+  }, []);
 
   const createProgramDraft = useCallback((payload = {}) => {
     const sessions = Math.max(1, Math.min(7, payload.sessionsPerWeek ?? 4));
@@ -190,18 +289,20 @@ export function ManualProgramProvider({ children }) {
             return {
               id: block.id,
               type: "superset",
-              rounds: block.sets.length || 2,
+              sets: Math.max(1, block.sets.length || 1),
               rest: block.rest,
               exercises: [
                 {
                   label: "A1",
                   name: block.exercise,
                   exerciseId: block.exerciseId ?? null,
+                  bodyParts: Array.isArray(block.bodyParts) ? block.bodyParts : [],
+                  muscleFocus: Array.isArray(block.muscleFocus) ? block.muscleFocus : [],
                   tempo: block.tempo,
                   sets: block.sets,
                   notes: block.notes,
                 },
-                createEmptySupersetExercise("A2"),
+                createEmptySupersetExercise("A2", Math.max(1, block.sets.length || 1)),
               ],
             };
           }),
@@ -237,6 +338,10 @@ export function ManualProgramProvider({ children }) {
                       ...entry,
                       name: exercise.name,
                       exerciseId: exercise.exerciseId,
+                      bodyParts: Array.isArray(exercise.bodyParts) ? exercise.bodyParts : [],
+                      muscleFocus: Array.isArray(exercise.muscleFocus)
+                        ? exercise.muscleFocus
+                        : [],
                     }
                   : entry
               ),
@@ -292,21 +397,14 @@ export function ManualProgramProvider({ children }) {
             if (block.type === "single") {
               return {
                 ...block,
-                sets: [...block.sets, { reps: 8, rpe: 2 }],
+                sets: [...block.sets, createSingleSetRow()],
               };
             }
 
-            if (typeof exerciseIndex !== "number" || !block.exercises[exerciseIndex]) {
-              return block;
-            }
-
-            const nextExercises = block.exercises.map((exercise, index) =>
-              index === exerciseIndex
-                ? { ...exercise, sets: [...exercise.sets, { reps: 10, rpe: 3 }] }
-                : exercise
-            );
-
-            return { ...block, exercises: nextExercises };
+            return normalizeSupersetBlock({
+              ...block,
+              sets: (block.sets || 1) + 1,
+            });
           }),
         };
       }),
@@ -339,23 +437,14 @@ export function ManualProgramProvider({ children }) {
               };
             }
 
-            if (typeof exerciseIndex !== "number" || !block.exercises[exerciseIndex]) {
+            if ((block.sets || 1) <= 1) {
               return block;
             }
 
-            const nextExercises = block.exercises.map((exercise, index) =>
-              index === exerciseIndex
-                ? {
-                    ...exercise,
-                    sets:
-                      exercise.sets.length <= 1
-                        ? exercise.sets
-                        : exercise.sets.filter((_, idx) => idx !== setIndex),
-                  }
-                : exercise
-            );
-
-            return { ...block, exercises: nextExercises };
+            return normalizeSupersetBlock({
+              ...block,
+              sets: (block.sets || 1) - 1,
+            });
           }),
         };
       }),
@@ -364,6 +453,8 @@ export function ManualProgramProvider({ children }) {
 
   const updateSet = useCallback(
     (workoutId, blockId, setIndex, updates, exerciseIndex = null) => {
+      const normalizedUpdates = normalizeSetUpdates(updates);
+
       setProgramDraft((prev) => ({
         ...prev,
         workouts: prev.workouts.map((workout) => {
@@ -382,7 +473,7 @@ export function ManualProgramProvider({ children }) {
                 return {
                   ...block,
                   sets: block.sets.map((set, index) =>
-                    index === setIndex ? { ...set, ...updates } : set
+                    index === setIndex ? { ...set, ...normalizedUpdates } : set
                   ),
                 };
               }
@@ -399,12 +490,12 @@ export function ManualProgramProvider({ children }) {
                 return {
                   ...exercise,
                   sets: exercise.sets.map((set, idx) =>
-                    idx === setIndex ? { ...set, ...updates } : set
+                    idx === setIndex ? { ...set, ...normalizedUpdates } : set
                   ),
                 };
               });
 
-              return { ...block, exercises: nextExercises };
+              return normalizeSupersetBlock({ ...block, exercises: nextExercises });
             }),
           };
         }),
@@ -445,12 +536,12 @@ export function ManualProgramProvider({ children }) {
                 return block;
               }
 
-              return {
+              return normalizeSupersetBlock({
                 ...block,
                 exercises: block.exercises.map((exercise, index) =>
                   index === exerciseIndex ? { ...exercise, ...updates } : exercise
                 ),
-              };
+              });
             }),
           };
         }),
@@ -501,6 +592,7 @@ export function ManualProgramProvider({ children }) {
       removeBlock,
       addSet,
       removeSet,
+      updateSupersetSetCount,
       updateSet,
       toggleMultiWeek,
       setSelectedWeek,
@@ -521,6 +613,7 @@ export function ManualProgramProvider({ children }) {
       removeBlock,
       addSet,
       removeSet,
+      updateSupersetSetCount,
       updateSet,
       toggleMultiWeek,
       setSelectedWeek,
