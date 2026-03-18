@@ -702,6 +702,8 @@ export default function ManualWorkoutEditor() {
         [filterKey]: nextValues,
       };
     });
+
+    setOpenFilterMenu(null);
   };
 
   const handleFilterClear = (event, filterKey) => {
@@ -855,7 +857,10 @@ export default function ManualWorkoutEditor() {
 
           <div
             ref={searchUiRef}
-            className="mt-3 rounded-xl border border-slate-200 bg-white/85 p-3 shadow-sm"
+            className={[
+              "mt-3 rounded-xl border border-slate-200 bg-white/85 shadow-sm transition-all",
+              shouldShowSearchPanel ? "p-2.5" : "p-3",
+            ].join(" ")}
           >
             <div className="relative">
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-xl text-slate-400">
@@ -867,7 +872,10 @@ export default function ManualWorkoutEditor() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => setIsSearchOpen(true)}
-                className="w-full rounded-lg border-none bg-slate-50 py-2.5 pl-10 pr-12 text-base transition-all focus:ring-2 focus:ring-primary/30"
+                className={[
+                  "w-full rounded-lg border-none bg-slate-50 pl-10 pr-12 text-base transition-all focus:ring-2 focus:ring-primary/30",
+                  shouldShowSearchPanel ? "py-2" : "py-2.5",
+                ].join(" ")}
               />
               {searchQuery.trim() && (
                 <button
@@ -882,7 +890,7 @@ export default function ManualWorkoutEditor() {
             </div>
 
             {shouldShowSearchPanel && (
-              <div className="mt-3 space-y-2">
+              <div className="mt-2.5 space-y-2">
                 {activeSearchTarget && (
                   <div className="flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
                     <p className="text-xs font-semibold text-amber-700">
@@ -899,44 +907,54 @@ export default function ManualWorkoutEditor() {
                 )}
 
                 <div className="space-y-2">
-                  <div className="flex flex-wrap gap-2">
-                    {visibleFilters.map(({ key: filterKey, label, options }) => {
-                      const isActive = searchFilters[filterKey].length > 0;
+                  <div className="filter-rail-fade relative -mx-0.5">
+                    <div className="hide-scrollbar overflow-x-auto px-0.5">
+                      <div className="flex min-w-max flex-nowrap gap-2 pr-8">
+                        {visibleFilters.map(({ key: filterKey, label, options }) => {
+                          const isActive = searchFilters[filterKey].length > 0;
 
-                      return (
-                        <button
-                          key={filterKey}
-                          type="button"
-                          onClick={() =>
-                            setOpenFilterMenu((prev) => (prev === filterKey ? null : filterKey))
-                          }
-                          className={[
-                            "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors select-none",
-                            isActive
-                              ? "border-primary/20 bg-primary/10 text-primary"
-                              : "border-slate-200 bg-slate-50 text-slate-500",
-                          ].join(" ")}
-                        >
-                          <span>
-                            {getFilterPillLabel(label, searchFilters[filterKey], options)}
-                          </span>
-                          {isActive ? (
-                            <span
-                              onClick={(event) => handleFilterClear(event, filterKey)}
-                              className="material-symbols-outlined text-sm"
-                              role="button"
-                              aria-label={`Clear ${label} filter`}
+                          return (
+                            <button
+                              key={filterKey}
+                              type="button"
+                              onClick={() =>
+                                setOpenFilterMenu((prev) =>
+                                  prev === filterKey ? null : filterKey
+                                )
+                              }
+                              className={[
+                                "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors select-none",
+                                isActive
+                                  ? "border-primary/20 bg-primary/10 text-primary"
+                                  : "border-slate-200 bg-slate-50 text-slate-500",
+                              ].join(" ")}
                             >
-                              close
-                            </span>
-                          ) : (
-                            <span className="material-symbols-outlined text-sm">
-                              keyboard_arrow_down
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
+                              <span>
+                                {getFilterPillLabel(
+                                  label,
+                                  searchFilters[filterKey],
+                                  options
+                                )}
+                              </span>
+                              {isActive ? (
+                                <span
+                                  onClick={(event) => handleFilterClear(event, filterKey)}
+                                  className="material-symbols-outlined text-sm"
+                                  role="button"
+                                  aria-label={`Clear ${label} filter`}
+                                >
+                                  close
+                                </span>
+                              ) : (
+                                <span className="material-symbols-outlined text-sm">
+                                  keyboard_arrow_down
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
 
                   {openFilterMenu && (
@@ -970,17 +988,26 @@ export default function ManualWorkoutEditor() {
                   )}
                 </div>
 
-                <div className="max-h-[32dvh] overflow-y-auto">
+                <div
+                  className={[
+                    "overflow-y-auto",
+                    activeSearchTarget
+                      ? "max-h-[34dvh] sm:max-h-[38dvh]"
+                      : "max-h-[38dvh] sm:max-h-[42dvh]",
+                  ].join(" ")}
+                >
                   {isLoadingExercises && (
-                    <p className="px-2 py-3 text-sm text-slate-500">Loading exercises...</p>
+                    <p className="px-2 py-2.5 text-sm text-slate-500">
+                      Loading exercises...
+                    </p>
                   )}
 
                   {!isLoadingExercises && exerciseError && (
-                    <p className="px-2 py-3 text-sm text-red-500">{exerciseError}</p>
+                    <p className="px-2 py-2.5 text-sm text-red-500">{exerciseError}</p>
                   )}
 
                   {!isLoadingExercises && !exerciseError && rankedExerciseResults.length === 0 && (
-                    <p className="px-2 py-3 text-sm text-slate-500">No exercises found.</p>
+                    <p className="px-2 py-2.5 text-sm text-slate-500">No exercises found.</p>
                   )}
 
                   {!isLoadingExercises &&
@@ -990,7 +1017,7 @@ export default function ManualWorkoutEditor() {
                         key={exercise.exerciseId}
                         type="button"
                         onClick={() => handleExerciseResultClick(exercise)}
-                        className="group flex w-full items-center justify-between rounded-lg p-2 text-left transition-colors hover:bg-slate-50"
+                        className="group flex w-full items-center justify-between rounded-lg px-2 py-2 text-left transition-colors hover:bg-slate-50"
                       >
                         <div>
                           <p className="text-sm font-bold text-slate-700">
@@ -1008,10 +1035,13 @@ export default function ManualWorkoutEditor() {
                 <button
                   type="button"
                   disabled
-                  className="flex w-full items-center justify-center gap-1 rounded-lg py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400"
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500"
                 >
                   <span className="material-symbols-outlined text-base">science</span>
-                  Create custom exercise beta
+                  <span>Ask for a custom exercise</span>
+                  <span className="rounded-md bg-slate-200 px-1.5 py-0.5 text-[9px] tracking-[0.14em] text-slate-600">
+                    BETA
+                  </span>
                 </button>
               </div>
             )}

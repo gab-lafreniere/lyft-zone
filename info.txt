@@ -144,6 +144,10 @@ Abdominaux
 - Grand droit
 - Obliques
 
+Note:
+- Les intitulés produit peuvent être affichés en français (pas de version francaise à ce jour, ce sera en fin complet de projet)
+- Les valeurs canoniques de la DB et des filtres restent en anglais normalisé
+
 ==================================================
 ARCHITECTURE GLOBALE
 ==================================================
@@ -203,6 +207,29 @@ POST /api/scheduled-sessions
 GET /api/scheduled-sessions
 
 GET /api/exercises
+- Supporte actuellement:
+  - q
+  - limit
+  - bodyParts
+  - muscleFocus
+  - equipmentCategory
+  - trainingType
+  - difficulty
+- Les filtres multi-valeurs utilisent des valeurs CSV
+- Le backend applique le filtrage structuré réel
+- Le frontend garde un ranking local après la réponse backend
+- La recherche reste bornée:
+  - limit 50 en recherche texte normale
+  - limit 150 en filtre structuré sans texte
+- Cette recherche reste bornée, donc non exhaustive
+
+==================================================
+LIMITES CONNUES ACTUELLES
+==================================================
+- ManualBuilderMulti.jsx reste partiellement placeholder pour la vraie logique multiweek
+- Les week tabs et weekly volume bars du multiweek ne doivent pas encore être traités comme une source métier finale
+- La recherche d’exercices est filtrée réellement côté backend mais reste bornée par un limit, donc non exhaustive
+- muscleFocus est déjà persisté côté draft mais son exploitation détaillée dans les analytics UI reste une prochaine étape
 
 ==================================================
 ÉTAT ACTUEL DE LA BASE DE DONNÉES
@@ -243,7 +270,8 @@ Phase 1: Fondations
 - Schéma coeur de programmation en base
 - Endpoints backend minimum pour users, profiles, cycles, plans et calendrier (implémentés)
 - Validation end-to-end du flow backend principal (terminé)
-- Connexion du frontend avec les endpoints backend réels (prochaine étape)
+- Connexion du frontend avec les endpoints backend réels pour la librairie d’exercices (déjà en place pour le manual builder et le workout editor, à poursuivre pour les autres surfaces)- Structured filtering de /api/exercises en place pour la recherche d’exercices
+- Analytics frontend dynamiques en place pour le workout editor et le template week builder
 - Modèle de séance stabilisé
 - Modèle de cycle et de plan stabilisé
 - Modèle de blocs d’exercices stabilisé
@@ -263,6 +291,151 @@ Phase 3: IA
 - Ajustements intelligents dans le cycle
 - Check-in et régénération de cycle
 - Historique des versions (IA et utilisateur)
+
+==================================================
+ÉTAT ACTUEL FRONTEND MANUAL BUILDER
+==================================================
+Le frontend manual builder a déjà une base fonctionnelle locale connectée à /api/exercises.
+
+Pages principales actuellement en place:
+- ManualBuilder.jsx
+- ManualWorkoutEditor.jsx
+- ManualBuilderMulti.jsx (encore partiellement placeholder pour la logique multiweek réelle)
+
+Ce qui est déjà fonctionnel:
+- Création et édition manuelle de workouts
+- Ajout d’exercices via recherche connectée à /api/exercises
+- Recherche textuelle avec ranking frontend
+- Filtres structurés réels pour la recherche d’exercices, appliqués côté backend via /api/exercises, avec ranking frontend après fetch:
+  - Muscle via bodyParts
+  - Focus via muscleFocus avec dépendance aux muscles sélectionnés
+  - Equipment via equipmentCategory avec mappings canoniques
+  - Type via trainingType
+  - Difficulty via difficulty
+- Support des supersets avec sélection ciblée du slot A2
+- Notification visuelle et warning pour superset incomplet
+- Conversion d’un single block en superset
+- Normalisation des supersets:
+  - le parent possède la valeur canonique de sets
+  - A1 et A2 ont toujours le même nombre de rows
+  - le nombre de sets d’un superset est contrôlé uniquement au niveau du parent
+- Inputs UX de prescription:
+  - RIR cyclique compact
+  - reps bornées
+  - tempo en saisie numérique normalisée
+  - rest via stepper compact
+- Analytics dynamiques dans le workout editor
+- Analytics dynamiques dans ManualBuilder.jsx
+- La recherche d’exercices reste bornée:
+  - texte présent => limit 50
+  - texte vide + filtre structuré => limit 150
+  - texte vide + aucun filtre => limit 50
+- Le filtrage est réel côté backend mais reste non exhaustif à cause du limit
+
+- UX actuelle des filtres de recherche:
+  - filtres multi-sélection
+  - Focus visible seulement si au moins un Muscle est sélectionné
+  - Focus dépend des muscles sélectionnés
+  - label d’un filtre:
+    - 0 sélection => label simple
+    - 1 sélection => valeur affichée
+    - 2+ sélections => Label (N)
+
+==================================================
+RÈGLES CANONIQUES DU MANUAL BUILDER
+==================================================
+Single block:
+- Un single block possède:
+  - exercise (nom canonique affiché, non éditable librement)
+  - exerciseId
+  - bodyParts
+  - muscleFocus
+  - tempo
+  - rest
+  - sets
+  - notes
+
+Superset block:
+- Un superset block possède:
+  - type = superset
+  - sets au niveau parent comme valeur canonique
+  - rest au niveau parent
+  - deux lanes d’exercices A1 et A2
+- A1 et A2 gardent leurs propres valeurs de:
+  - name (nom canonique affiché, non éditable librement)
+  - exerciseId
+  - bodyParts
+  - muscleFocus
+  - tempo
+  - notes
+  - sets rows
+- Les arrays de sets de A1 et A2 doivent toujours être synchronisés avec la valeur parent sets
+- Le workload réel d’un superset se calcule comme:
+  - parent sets x nombre de lanes renseignés
+
+Règles UX actuelles:
+- Les noms d’exercices ne sont pas éditables librement
+- Le titre du workout s’édite via un mode édition dédié
+- RIR est affiché comme un contrôle compact cyclique
+- Tempo est saisi numériquement puis normalisé
+- Rest est contrôlé via stepper
+
+==================================================
+ANALYTICS FRONTEND ACTUELLES
+==================================================
+Des analytics frontend partagées existent déjà pour le draft manual builder.
+
+Utilitaire partagé:
+- frontend/src/utils/workoutMetrics.js
+
+Métriques calculées actuellement:
+- exerciseCount
+- setCount
+- estimatedDurationMinutes
+- totalTUTMinutes
+- totalTUTSeconds
+- muscleDistribution
+
+Règles de calcul actuelles:
+- Single block:
+  - exerciseCount = 1 si exerciseId existe
+  - setCount = nombre de sets du block
+- Superset:
+  - exerciseCount = nombre de lanes renseignés
+  - setCount = parent sets x nombre de lanes renseignés
+- TUT:
+  - calculé via reps x tempo
+  - tempo 3 chiffres traité comme 4 chiffres avec 0 final
+- Duration:
+  - inclut TUT
+  - inclut repos
+  - inclut +90 sec par block
+  - pour un superset, pas de repos entre A1 et A2, seulement après le round
+
+Formule actuelle simplifiée de durée estimée:
+- total_workout_time =
+  somme(
+    TUT
+    + repos x (sets - 1) x 1.15
+    + 90 sec par block
+  )
+- Pour les supersets:
+  - pas de repos entre A1 et A2
+  - repos seulement après le round du superset
+
+Distribution musculaire actuelle:
+- basée sur bodyParts
+- raw sets dupliqués sur chaque bodyPart concerné
+- barres visuelles basées sur une normalizedShare
+- muscleFocus est déjà persisté dans le draft pour la prochaine étape, mais pas encore utilisé dans les analytics affichées
+
+Règle actuelle de distribution musculaire:
+- rawSets:
+  chaque set planifié est attribué à chaque bodyPart listé par l’exercice
+- normalizedShare:
+  chaque set vaut 1 au total, réparti équitablement entre les bodyParts de l’exercice
+- percentageOfWorkout:
+  normalizedShare / total réel de sets du workout ou de la semaine
 
 ==================================================
 BASE D’EXERCICES

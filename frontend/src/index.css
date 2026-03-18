@@ -35,3 +35,15 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+.filter-rail-fade::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 2.75rem;
+  pointer-events: none;
+  background: linear-gradient(to right, rgba(255, 255, 255, 0), #ffffff 72%);
+  border-radius: 9999px;
+}
