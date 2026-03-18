@@ -11,8 +11,49 @@ function toArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function parseCsvParam(value) {
+  return String(value || '')
+    .split(',')
+    .map(norm)
+    .filter(Boolean);
+}
+
 function includesValue(values, expected) {
   return toArray(values).some((value) => norm(value) === expected);
+}
+
+function includesAnyValue(values, expectedValues) {
+  if (!expectedValues.length) {
+    return true;
+  }
+
+  return expectedValues.some((expectedValue) => includesValue(values, expectedValue));
+}
+
+function matchesEquipmentCategory(value, expectedValues) {
+  if (!expectedValues.length) {
+    return true;
+  }
+
+  const normalizedValue = norm(value);
+
+  return expectedValues.some((expectedValue) => {
+    switch (expectedValue) {
+      case 'machine':
+        return (
+          normalizedValue === 'selectorized_machine' ||
+          normalizedValue === 'plate_loaded_machine'
+        );
+      case 'assisted':
+        return normalizedValue === 'assisted_machine';
+      case 'smith machine':
+        return normalizedValue === 'smith_machine';
+      case 'bodyweight':
+        return normalizedValue === 'bodyweight';
+      default:
+        return normalizedValue === expectedValue;
+    }
+  });
 }
 
 function buildSearchText(exercise) {
@@ -102,36 +143,43 @@ router.get('/:id', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const q = norm(req.query.q);
-    const bodyPart = norm(req.query.bodyPart);
-    const equipment = norm(req.query.equipment);
-    const type = norm(req.query.type);
-    const muscle = norm(req.query.muscle);
-    const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10), 1), 50);
+    const bodyParts = parseCsvParam(req.query.bodyParts);
+    const muscleFocus = parseCsvParam(req.query.muscleFocus);
+    const equipmentCategory = parseCsvParam(req.query.equipmentCategory);
+    const trainingType = parseCsvParam(req.query.trainingType);
+    const difficulty = parseCsvParam(req.query.difficulty);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10), 1), 150);
     const cursor = Math.max(parseInt(req.query.cursor || '0', 10), 0);
 
     let results = await listExercises();
 
-    if (bodyPart) {
-      results = results.filter((exercise) => includesValue(exercise.bodyParts, bodyPart));
-    }
-
-    if (equipment) {
-      results = results.filter(
-        (exercise) =>
-          includesValue(exercise.equipmentNeeded, equipment) ||
-          norm(exercise.equipmentCategory) === equipment
+    if (bodyParts.length) {
+      results = results.filter((exercise) =>
+        includesAnyValue(exercise.bodyParts, bodyParts)
       );
     }
 
-    if (type) {
-      results = results.filter((exercise) => norm(exercise.trainingType) === type);
+    if (muscleFocus.length) {
+      results = results.filter(
+        (exercise) => includesAnyValue(exercise.muscleFocus, muscleFocus)
+      );
     }
 
-    if (muscle) {
-      results = results.filter(
-        (exercise) =>
-          includesValue(exercise.targetMuscles, muscle) ||
-          includesValue(exercise.secondaryMuscles, muscle)
+    if (equipmentCategory.length) {
+      results = results.filter((exercise) =>
+        matchesEquipmentCategory(exercise.equipmentCategory, equipmentCategory)
+      );
+    }
+
+    if (trainingType.length) {
+      results = results.filter((exercise) =>
+        trainingType.includes(norm(exercise.trainingType))
+      );
+    }
+
+    if (difficulty.length) {
+      results = results.filter((exercise) =>
+        difficulty.includes(norm(exercise.difficulty))
       );
     }
 

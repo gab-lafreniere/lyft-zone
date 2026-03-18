@@ -2,11 +2,34 @@ const BACKEND_URL =
   process.env.REACT_APP_BACKEND_URL ||
   'https://lyft-zone-backend.onrender.com';
 
-export const fetchExercises = async ({ q = '', limit = 25 } = {}) => {
+export const fetchExercises = async ({
+  q = '',
+  limit = 25,
+  bodyParts = [],
+  muscleFocus = [],
+  equipmentCategory = [],
+  trainingType = [],
+  difficulty = [],
+} = {}) => {
     const params = new URLSearchParams();
     params.set('limit', String(limit));
     if (q) {
       params.set('q', q);
+    }
+    if (bodyParts.length) {
+      params.set('bodyParts', bodyParts.join(','));
+    }
+    if (muscleFocus.length) {
+      params.set('muscleFocus', muscleFocus.join(','));
+    }
+    if (equipmentCategory.length) {
+      params.set('equipmentCategory', equipmentCategory.join(','));
+    }
+    if (trainingType.length) {
+      params.set('trainingType', trainingType.join(','));
+    }
+    if (difficulty.length) {
+      params.set('difficulty', difficulty.join(','));
     }
 
     const response = await fetch(`${BACKEND_URL}/api/exercises?${params.toString()}`);

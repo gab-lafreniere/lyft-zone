@@ -114,17 +114,103 @@ function rankExercises(exercises, query) {
     .map((entry) => entry.exercise);
 }
 
-const FILTER_OPTIONS = {
-  muscle: ["Chest", "Back", "Quads"],
-  equipment: ["Barbell", "Dumbbell", "Machine"],
-  type: ["Compound", "Isolation"],
+const DEFAULT_SEARCH_LIMIT = 50;
+const FILTER_ONLY_SEARCH_LIMIT = 150;
+
+const MUSCLE_OPTIONS = [
+  { value: "chest", label: "chest" },
+  { value: "back", label: "back" },
+  { value: "shoulders", label: "shoulders" },
+  { value: "biceps", label: "biceps" },
+  { value: "triceps", label: "triceps" },
+  { value: "quadriceps", label: "quadriceps" },
+  { value: "hamstrings", label: "hamstrings" },
+  { value: "glutes", label: "glutes" },
+  { value: "calves", label: "calves" },
+  { value: "abs", label: "abs" },
+];
+
+const FOCUS_OPTIONS_BY_MUSCLE = {
+  chest: [
+    { value: "upper_chest", label: "upper chest" },
+    { value: "mid_chest", label: "mid chest" },
+    { value: "lower_chest", label: "lower chest" },
+  ],
+  back: [
+    { value: "lats", label: "lats" },
+    { value: "upper_back", label: "upper back" },
+    { value: "mid_back", label: "mid back" },
+    { value: "lower_back", label: "lower back" },
+  ],
+  shoulders: [
+    { value: "front_delts", label: "front delts" },
+    { value: "side_delts", label: "side delts" },
+    { value: "rear_delts", label: "rear delts" },
+  ],
+  biceps: [
+    { value: "biceps_long_head", label: "biceps long head" },
+    { value: "biceps_short_head", label: "biceps short head" },
+    { value: "brachialis", label: "brachialis" },
+  ],
+  triceps: [
+    { value: "triceps_long_head", label: "triceps long head" },
+    { value: "triceps_lateral_head", label: "triceps lateral head" },
+    { value: "forearms", label: "forearms" },
+  ],
+  quadriceps: [],
+  hamstrings: [],
+  glutes: [
+    { value: "glute_max", label: "glutes max" },
+    { value: "glute_med", label: "glutes med" },
+  ],
+  calves: [],
+  abs: [
+    { value: "upper_abs", label: "upper abs" },
+    { value: "lower_abs", label: "lower abs" },
+    { value: "obliques", label: "obliques" },
+  ],
 };
 
-const FILTER_LABELS = {
-  muscle: "Muscle",
-  equipment: "Equipment",
-  type: "Type",
-};
+const EQUIPMENT_OPTIONS = [
+  { value: "barbell", label: "barbell" },
+  { value: "dumbbell", label: "dumbbell" },
+  { value: "cable", label: "cable" },
+  { value: "smith machine", label: "smith machine" },
+  { value: "bodyweight", label: "bodyweight" },
+  { value: "band", label: "band" },
+  { value: "kettlebell", label: "kettlebell" },
+  { value: "machine", label: "machine" },
+  { value: "assisted", label: "assisted" },
+];
+
+const TYPE_OPTIONS = [
+  { value: "strength", label: "strength" },
+  { value: "warmup", label: "warmup" },
+  { value: "mobility", label: "mobility" },
+  { value: "cardio", label: "cardio" },
+  { value: "plyometric", label: "plyometric" },
+];
+
+const DIFFICULTY_OPTIONS = [
+  { value: "beginner", label: "beginner" },
+  { value: "intermediate", label: "intermediate" },
+  { value: "advanced", label: "advanced" },
+];
+
+function getFilterPillLabel(label, selectedValues, options) {
+  if (!selectedValues.length) {
+    return label;
+  }
+
+  if (selectedValues.length === 1) {
+    return (
+      options.find((option) => option.value === selectedValues[0])?.label ||
+      selectedValues[0]
+    );
+  }
+
+  return `${label} (${selectedValues.length})`;
+}
 
 const REST_OPTIONS = ["30s", "45s", "60s", "75s", "90s", "120s", "150s", "180s", "240s", "300s"];
 const RIR_CYCLE = [2, 1, 0, 4, 3];
@@ -185,9 +271,11 @@ export default function ManualWorkoutEditor() {
   const [tempoDrafts, setTempoDrafts] = useState({});
   const [repsDrafts, setRepsDrafts] = useState({});
   const [searchFilters, setSearchFilters] = useState({
-    muscle: "",
-    equipment: "",
-    type: "",
+    muscle: [],
+    focus: [],
+    equipment: [],
+    type: [],
+    difficulty: [],
   });
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
@@ -250,11 +338,71 @@ export default function ManualWorkoutEditor() {
   const hasIncompleteSuperset = hasIncompleteSupersets(workout?.id ?? null);
   const shouldShowSearchPanel =
     isSearchOpen || Boolean(debouncedSearchQuery) || Boolean(activeSearchTarget);
+  const hasStructuredFilters = useMemo(
+    () =>
+      searchFilters.muscle.length > 0 ||
+      searchFilters.focus.length > 0 ||
+      searchFilters.equipment.length > 0 ||
+      searchFilters.type.length > 0 ||
+      searchFilters.difficulty.length > 0,
+    [searchFilters]
+  );
+  const availableFocusOptions = useMemo(() => {
+    const optionsByValue = new Map();
+
+    searchFilters.muscle.forEach((muscleValue) => {
+      (FOCUS_OPTIONS_BY_MUSCLE[muscleValue] || []).forEach((option) => {
+        optionsByValue.set(option.value, option);
+      });
+    });
+
+    return Array.from(optionsByValue.values());
+  }, [searchFilters.muscle]);
+  const visibleFilters = useMemo(() => {
+    const filters = [{ key: "muscle", label: "Muscle", options: MUSCLE_OPTIONS }];
+
+    if (availableFocusOptions.length > 0) {
+      filters.push({ key: "focus", label: "Focus", options: availableFocusOptions });
+    }
+
+    filters.push(
+      { key: "equipment", label: "Equipment", options: EQUIPMENT_OPTIONS },
+      { key: "type", label: "Type", options: TYPE_OPTIONS },
+      { key: "difficulty", label: "Difficulty", options: DIFFICULTY_OPTIONS }
+    );
+
+    return filters;
+  }, [availableFocusOptions]);
+  const searchLimit = useMemo(() => {
+    if (debouncedSearchQuery) {
+      return DEFAULT_SEARCH_LIMIT;
+    }
+
+    if (hasStructuredFilters) {
+      return FILTER_ONLY_SEARCH_LIMIT;
+    }
+
+    return DEFAULT_SEARCH_LIMIT;
+  }, [debouncedSearchQuery, hasStructuredFilters]);
+  const structuredQueryFilters = useMemo(
+    () => ({
+      bodyParts: searchFilters.muscle,
+      muscleFocus: searchFilters.focus,
+      equipmentCategory: searchFilters.equipment,
+      trainingType: searchFilters.type,
+      difficulty: searchFilters.difficulty,
+    }),
+    [searchFilters]
+  );
   const rankedExerciseResults = useMemo(
     () => rankExercises(exerciseResults, debouncedSearchQuery),
     [exerciseResults, debouncedSearchQuery]
   );
   const workoutMetrics = useMemo(() => computeWorkoutMetrics(workout), [workout]);
+  const visibleMuscleDistribution = useMemo(
+    () => workoutMetrics.muscleDistribution.filter((item) => item.rawSets > 0),
+    [workoutMetrics.muscleDistribution]
+  );
   const workoutStatItems = useMemo(
     () => [
       {
@@ -297,9 +445,11 @@ export default function ManualWorkoutEditor() {
       setExerciseError("");
 
       try {
+        // Bounded retrieval for this pass; structured filtering is real but results are still not exhaustive.
         const results = await fetchExercises({
           q: debouncedSearchQuery,
-          limit: 25,
+          limit: searchLimit,
+          ...structuredQueryFilters,
         });
 
         if (!cancelled) {
@@ -322,7 +472,33 @@ export default function ManualWorkoutEditor() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedSearchQuery]);
+  }, [debouncedSearchQuery, searchLimit, structuredQueryFilters]);
+
+  useEffect(() => {
+    const allowedFocusValues = new Set(availableFocusOptions.map((option) => option.value));
+
+    setSearchFilters((prev) => {
+      const nextFocus = prev.focus.filter((value) => allowedFocusValues.has(value));
+
+      if (
+        nextFocus.length === prev.focus.length &&
+        nextFocus.every((value, index) => value === prev.focus[index])
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        focus: nextFocus,
+      };
+    });
+  }, [availableFocusOptions]);
+
+  useEffect(() => {
+    if (!visibleFilters.some((filter) => filter.key === openFilterMenu)) {
+      setOpenFilterMenu(null);
+    }
+  }, [openFilterMenu, visibleFilters]);
 
   useEffect(() => {
     if (!hasIncompleteSuperset) {
@@ -514,14 +690,23 @@ export default function ManualWorkoutEditor() {
     }
   };
 
-  const handleFilterValueSelect = (filterKey, value) => {
-    setSearchFilters((prev) => ({ ...prev, [filterKey]: value }));
-    setOpenFilterMenu(null);
+  const handleFilterValueToggle = (filterKey, value) => {
+    setSearchFilters((prev) => {
+      const currentValues = prev[filterKey] || [];
+      const nextValues = currentValues.includes(value)
+        ? currentValues.filter((entry) => entry !== value)
+        : [...currentValues, value];
+
+      return {
+        ...prev,
+        [filterKey]: nextValues,
+      };
+    });
   };
 
   const handleFilterClear = (event, filterKey) => {
     event.stopPropagation();
-    setSearchFilters((prev) => ({ ...prev, [filterKey]: "" }));
+    setSearchFilters((prev) => ({ ...prev, [filterKey]: [] }));
     setOpenFilterMenu(null);
   };
 
@@ -699,14 +884,14 @@ export default function ManualWorkoutEditor() {
             {shouldShowSearchPanel && (
               <div className="mt-3 space-y-2">
                 {activeSearchTarget && (
-                  <div className="flex items-center justify-between rounded-lg border border-primary/20 bg-primary/10 px-3 py-2">
-                    <p className="text-xs font-semibold text-primary">
+                  <div className="flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+                    <p className="text-xs font-semibold text-amber-700">
                       Selecting exercise for A2
                     </p>
                     <button
                       type="button"
                       onClick={() => setActiveSearchTarget(null)}
-                      className="text-[10px] font-bold uppercase tracking-wider text-primary"
+                      className="text-[10px] font-bold uppercase tracking-wider text-amber-700"
                     >
                       Cancel
                     </button>
@@ -715,8 +900,8 @@ export default function ManualWorkoutEditor() {
 
                 <div className="space-y-2">
                   <div className="flex flex-wrap gap-2">
-                    {Object.entries(FILTER_LABELS).map(([filterKey, label]) => {
-                      const isActive = Boolean(searchFilters[filterKey]);
+                    {visibleFilters.map(({ key: filterKey, label, options }) => {
+                      const isActive = searchFilters[filterKey].length > 0;
 
                       return (
                         <button
@@ -732,11 +917,15 @@ export default function ManualWorkoutEditor() {
                               : "border-slate-200 bg-slate-50 text-slate-500",
                           ].join(" ")}
                         >
-                          <span>{searchFilters[filterKey] || label}</span>
+                          <span>
+                            {getFilterPillLabel(label, searchFilters[filterKey], options)}
+                          </span>
                           {isActive ? (
                             <span
                               onClick={(event) => handleFilterClear(event, filterKey)}
                               className="material-symbols-outlined text-sm"
+                              role="button"
+                              aria-label={`Clear ${label} filter`}
                             >
                               close
                             </span>
@@ -752,25 +941,31 @@ export default function ManualWorkoutEditor() {
 
                   {openFilterMenu && (
                     <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
-                      {FILTER_OPTIONS[openFilterMenu].map((option) => {
-                        const isSelected = searchFilters[openFilterMenu] === option;
+                      {visibleFilters
+                        .find((filter) => filter.key === openFilterMenu)
+                        ?.options.map((option) => {
+                          const isSelected = searchFilters[openFilterMenu].includes(
+                            option.value
+                          );
 
-                        return (
-                          <button
-                            key={option}
-                            type="button"
-                            onClick={() => handleFilterValueSelect(openFilterMenu, option)}
-                            className={[
-                              "rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors select-none",
-                              isSelected
-                                ? "bg-primary text-slate-900"
-                                : "bg-white text-slate-600",
-                            ].join(" ")}
-                          >
-                            {option}
-                          </button>
-                        );
-                      })}
+                          return (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() =>
+                                handleFilterValueToggle(openFilterMenu, option.value)
+                              }
+                              className={[
+                                "rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors select-none",
+                                isSelected
+                                  ? "bg-primary text-slate-900"
+                                  : "bg-white text-slate-600",
+                              ].join(" ")}
+                            >
+                              {option.label}
+                            </button>
+                          );
+                        })}
                     </div>
                   )}
                 </div>
@@ -849,26 +1044,28 @@ export default function ManualWorkoutEditor() {
             ))}
           </div>
 
-          <div className="space-y-3">
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Muscular Distribution
-            </p>
+          {visibleMuscleDistribution.length > 0 && (
+            <div className="space-y-3">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Muscular Distribution
+              </p>
 
-            {workoutMetrics.muscleDistribution.map((item) => (
-              <div key={item.key} className="space-y-2">
-                <div className="flex items-center justify-between text-[10px] font-bold">
-                  <span className="text-slate-600">{item.label}</span>
-                  <span className="text-primary">{item.rawSets} sets</span>
+              {visibleMuscleDistribution.map((item) => (
+                <div key={item.key} className="space-y-2">
+                  <div className="flex items-center justify-between text-[10px] font-bold">
+                    <span className="text-slate-600">{item.label}</span>
+                    <span className="text-primary">{item.rawSets} sets</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full bg-primary"
+                      style={{ width: `${item.percentageOfWorkout}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className="h-full bg-primary"
-                    style={{ width: `${item.percentageOfWorkout}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="space-y-6 pb-28">
