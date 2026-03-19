@@ -7,6 +7,12 @@ export default function ManualNewProgram() {
   const { createProgramDraft } = useManualProgram();
   const [programName, setProgramName] = useState("");
   const [sessionsPerWeek, setSessionsPerWeek] = useState(4);
+  const [nameError, setNameError] = useState("");
+  const [hasInteractedWithName, setHasInteractedWithName] = useState(false);
+
+  const trimmedProgramName = programName.trim();
+  const isProgramNameEmpty = trimmedProgramName.length === 0;
+  const canCreateProgram = !isProgramNameEmpty;
 
   const decrementSessions = () => {
     setSessionsPerWeek((prev) => Math.max(1, prev - 1));
@@ -16,9 +22,40 @@ export default function ManualNewProgram() {
     setSessionsPerWeek((prev) => Math.min(7, prev + 1));
   };
 
+  const validateProgramName = () => {
+    if (trimmedProgramName.length === 0) {
+      return "Program name is required";
+    }
+
+    return "";
+  };
+
+  const handleProgramNameChange = (event) => {
+    const nextValue = event.target.value;
+    setProgramName(nextValue);
+
+    if (nameError && nextValue.trim().length > 0) {
+      setNameError("");
+    }
+  };
+
+  const handleProgramNameBlur = () => {
+    setHasInteractedWithName(true);
+    setNameError(validateProgramName());
+  };
+
   const handleCreate = () => {
+    setHasInteractedWithName(true);
+
+    const nextNameError = validateProgramName();
+    setNameError(nextNameError);
+
+    if (nextNameError || !canCreateProgram) {
+      return;
+    }
+
     createProgramDraft({
-      programName: programName.trim() || "New Program",
+      programName: trimmedProgramName,
       sessionsPerWeek,
     });
     navigate("/program/manual-builder");
@@ -54,10 +91,20 @@ export default function ManualNewProgram() {
           <input
             type="text"
             value={programName}
-            onChange={(e) => setProgramName(e.target.value)}
+            onChange={handleProgramNameChange}
+            onBlur={handleProgramNameBlur}
             placeholder="Upper Lower Strength - October 2025"
-            className="h-14 w-full rounded-xl border border-slate-200 bg-white px-4 font-medium outline-none transition-all placeholder:text-sm placeholder:text-slate-400 focus:border-transparent focus:ring-2 focus:ring-primary"
+            className={[
+              "h-14 w-full rounded-xl border bg-white px-4 font-medium outline-none transition-all placeholder:text-sm placeholder:text-slate-400 focus:border-transparent focus:ring-2",
+              nameError
+                ? "border-red-300 focus:ring-red-200"
+                : "border-slate-200 focus:ring-primary",
+            ].join(" ")}
           />
+
+          {hasInteractedWithName && nameError && (
+            <p className="px-1 text-sm font-medium text-red-500">{nameError}</p>
+          )}
         </section>
 
         <section className="space-y-4">
@@ -140,7 +187,13 @@ export default function ManualNewProgram() {
         <button
           type="button"
           onClick={handleCreate}
-          className="w-full rounded-xl bg-primary py-4 font-bold text-white shadow-lg shadow-primary/20 transition-all active:scale-[0.98]"
+          disabled={!canCreateProgram}
+          className={[
+            "w-full rounded-xl py-4 font-bold transition-all",
+            canCreateProgram
+              ? "bg-primary text-white shadow-lg shadow-primary/20 active:scale-[0.98]"
+              : "cursor-not-allowed bg-slate-300 text-white/60 shadow-none",
+          ].join(" ")}
         >
           Create Weekly Template
         </button>

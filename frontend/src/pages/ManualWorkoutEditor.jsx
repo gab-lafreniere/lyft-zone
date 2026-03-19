@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useManualProgram } from "../context/ManualProgramContext";
+import {
+  MAX_BLOCK_SET_COUNT,
+  useManualProgram,
+} from "../context/ManualProgramContext";
 import { fetchExercises } from "../services/api";
 import { computeWorkoutMetrics } from "../utils/workoutMetrics";
 
@@ -1408,7 +1411,13 @@ export default function ManualWorkoutEditor() {
                                   (block.sets || 0) + 1
                                 )
                               }
-                              className="border-l border-slate-200 px-3 py-2 text-slate-500 hover:bg-slate-50"
+                              disabled={(block.sets || 0) >= MAX_BLOCK_SET_COUNT}
+                              className={[
+                                "border-l border-slate-200 px-3 py-2",
+                                (block.sets || 0) >= MAX_BLOCK_SET_COUNT
+                                  ? "cursor-not-allowed text-slate-300"
+                                  : "text-slate-500 hover:bg-slate-50",
+                              ].join(" ")}
                             >
                               +
                             </button>
@@ -1458,6 +1467,7 @@ export default function ManualWorkoutEditor() {
             }
 
             const canRemoveSingleSet = block.sets.length > 1;
+            const canAddSingleSet = block.sets.length < MAX_BLOCK_SET_COUNT;
 
             return (
               <section
@@ -1650,14 +1660,16 @@ export default function ManualWorkoutEditor() {
                         ))}
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => addSet(workout.id, block.id)}
-                        className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-200 py-2 text-sm font-medium text-slate-500 transition-all hover:border-primary/50 hover:text-primary"
-                      >
-                        <span className="material-symbols-outlined text-sm">add</span>
-                        Add Set
-                      </button>
+                      {canAddSingleSet && (
+                        <button
+                          type="button"
+                          onClick={() => addSet(workout.id, block.id)}
+                          className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-200 py-2 text-sm font-medium text-slate-500 transition-all hover:border-primary/50 hover:text-primary"
+                        >
+                          <span className="material-symbols-outlined text-sm">add</span>
+                          Add Set
+                        </button>
+                      )}
 
                       <div className="mt-4 border-t border-slate-100 pt-4">
                         <textarea

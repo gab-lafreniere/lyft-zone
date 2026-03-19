@@ -1,7 +1,10 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useManualProgram } from "../context/ManualProgramContext";
-import { aggregateWorkoutMetrics, computeWorkoutMetrics } from "../utils/workoutMetrics";
+import {
+  aggregateWorkoutMetrics,
+  computeWorkoutMetrics,
+} from "../utils/workoutMetrics";
 
 function formatMinutes(value) {
   return `${value}m`;
@@ -15,13 +18,68 @@ function getMetricBarWidth(value, maxValue) {
   return `${Math.max(8, Math.min(100, (value / maxValue) * 100))}%`;
 }
 
+function canMoveSelectedWorkouts(workouts, selectedIds, direction) {
+  const selectedIdSet = new Set(selectedIds);
+
+  if (!selectedIdSet.size) {
+    return false;
+  }
+
+  if (direction === "up") {
+    return workouts.some(
+      (workout, index) =>
+        selectedIdSet.has(workout.id) &&
+        index > 0 &&
+        !selectedIdSet.has(workouts[index - 1].id)
+    );
+  }
+
+  return workouts.some(
+    (workout, index) =>
+      selectedIdSet.has(workout.id) &&
+      index < workouts.length - 1 &&
+      !selectedIdSet.has(workouts[index + 1].id)
+  );
+}
+
 export default function ManualBuilder() {
   const navigate = useNavigate();
-  const { programDraft, addWorkout, updateWorkoutName } = useManualProgram();
+  const {
+    programDraft,
+    addWorkout,
+    updateWorkoutName,
+    moveWorkouts,
+    duplicateWorkouts,
+    removeWorkouts,
+  } = useManualProgram();
   const [showMuscleDistribution, setShowMuscleDistribution] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [selectedWorkoutIds, setSelectedWorkoutIds] = useState([]);
 
   const programName = programDraft.programName || "New Program";
   const sessionsPerWeek = programDraft.sessionsPerWeek || 4;
+  const createdWorkoutCount = programDraft.workouts.length;
+  const isWeeklyTemplateComplete = createdWorkoutCount === sessionsPerWeek;
+  const canCreateWorkout = createdWorkoutCount < sessionsPerWeek;
+  const selectedWorkoutIdSet = useMemo(
+    () => new Set(selectedWorkoutIds),
+    [selectedWorkoutIds]
+  );
+  const canMoveUp = useMemo(
+    () => canMoveSelectedWorkouts(programDraft.workouts, selectedWorkoutIds, "up"),
+    [programDraft.workouts, selectedWorkoutIds]
+  );
+  const canMoveDown = useMemo(
+    () => canMoveSelectedWorkouts(programDraft.workouts, selectedWorkoutIds, "down"),
+    [programDraft.workouts, selectedWorkoutIds]
+  );
+  const canDuplicate =
+    selectedWorkoutIds.length > 0 &&
+    createdWorkoutCount + selectedWorkoutIds.length <= sessionsPerWeek;
+  const canDelete =
+    selectedWorkoutIds.length > 0 &&
+    selectedWorkoutIds.length < createdWorkoutCount;
+
   const weeklyMetrics = useMemo(
     () => aggregateWorkoutMetrics(programDraft.workouts),
     [programDraft.workouts]
@@ -39,7 +97,10 @@ export default function ManualBuilder() {
       {
         label: "Sets",
         value: String(weeklyMetrics.totalSetCount),
-        width: getMetricBarWidth(weeklyMetrics.totalSetCount, Math.max(1, sessionsPerWeek * 20)),
+        width: getMetricBarWidth(
+          weeklyMetrics.totalSetCount,
+          Math.max(1, sessionsPerWeek * 20)
+        ),
       },
       {
         label: "AVG. Time",
@@ -68,36 +129,87 @@ export default function ManualBuilder() {
     [programDraft.workouts]
   );
 
+  const toggleEditMode = () => {
+    setIsEditMode((prev) => {
+      if (prev) {
+        setSelectedWorkoutIds([]);
+      }
+
+      return !prev;
+    });
+  };
+
+  const toggleWorkoutSelection = (workoutId) => {
+    setSelectedWorkoutIds((prev) =>
+      prev.includes(workoutId)
+        ? prev.filter((id) => id !== workoutId)
+        : [...prev, workoutId]
+    );
+  };
+
+  const handleMove = (direction) => {
+    if ((direction === "up" && !canMoveUp) || (direction === "down" && !canMoveDown)) {
+      return;
+    }
+
+    moveWorkouts(selectedWorkoutIds, direction);
+  };
+
+  const handleDuplicate = () => {
+    if (!canDuplicate) {
+      return;
+    }
+
+    duplicateWorkouts(selectedWorkoutIds);
+  };
+
+  const handleDelete = () => {
+    if (!canDelete) {
+      return;
+    }
+
+    removeWorkouts(selectedWorkoutIds);
+    setSelectedWorkoutIds([]);
+  };
+
+  const actionButtonClass = (enabled, tone = "neutral") =>
+    [
+      "inline-flex h-9 w-9 items-center justify-center rounded-full transition-all select-none",
+      enabled
+        ? tone === "danger"
+          ? "text-red-500 hover:bg-red-50 hover:text-red-600 active:scale-95 active:bg-red-100"
+          : "text-slate-500 hover:bg-slate-100 hover:text-slate-700 active:scale-95 active:bg-slate-200/70"
+        : "cursor-not-allowed opacity-40",
+    ].join(" ");
+
   return (
     <div className="-mx-6 min-h-full bg-background-light text-slate-900">
-      {/* Header */}
       <header className="sticky top-0 z-40 w-full border-b border-slate-200 bg-white/70 backdrop-blur-md">
         <div className="relative mx-auto flex h-20 max-w-md items-center justify-center px-4">
-            <div className="flex flex-col items-center justify-center px-4 text-center">
+          <div className="flex flex-col items-center justify-center px-4 text-center">
             <h1 className="mx-auto text-sm font-bold leading-tight sm:text-base">
-                {programName}
+              {programName}
             </h1>
             <span className="mt-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-tighter text-slate-500">
-                Draft
+              Draft
             </span>
-            </div>
+          </div>
 
-            <div className="absolute right-4 flex items-center gap-3">
+          <div className="absolute right-4 flex items-center gap-3">
             <button
-                type="button"
-                className="rounded-full p-1.5 transition-colors hover:bg-slate-100"
-                aria-label="Settings"
+              type="button"
+              className="rounded-full p-1.5 transition-colors hover:bg-slate-100"
+              aria-label="Settings"
             >
-                <span className="material-symbols-outlined text-xl font-light">
+              <span className="material-symbols-outlined text-xl font-light">
                 settings
-                </span>
+              </span>
             </button>
-            </div>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-md space-y-4 px-4 pt-4">
-        {/* Top Summary Card */}
         <div className="relative flex flex-col gap-3 overflow-hidden rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
           <div className="absolute -right-16 -top-16 h-32 w-32 rounded-full bg-primary/5" />
 
@@ -112,20 +224,17 @@ export default function ManualBuilder() {
 
           <div className="mt-1 flex gap-2">
             {Array.from({ length: sessionsPerWeek }).map((_, index) => (
-              <div key={index} className="h-1.5 flex-1 rounded-full bg-primary" />
+              <div
+                key={index}
+                className={[
+                  "h-1.5 flex-1 rounded-full",
+                  index < createdWorkoutCount ? "bg-primary" : "bg-slate-200",
+                ].join(" ")}
+              />
             ))}
-            {Array.from({ length: Math.max(0, 4 - sessionsPerWeek) }).map(
-              (_, index) => (
-                <div
-                  key={`empty-${index}`}
-                  className="h-1.5 flex-1 rounded-full bg-slate-200"
-                />
-              )
-            )}
           </div>
         </div>
 
-        {/* Stats */}
         <div className="rounded-xl border border-slate-100 bg-white/50 p-4 shadow-sm backdrop-blur-sm">
           <div className="grid grid-cols-4 gap-2">
             {topStats.map((item) => (
@@ -144,7 +253,6 @@ export default function ManualBuilder() {
           </div>
         </div>
 
-        {/* Weekly Muscle Distribution */}
         <div className="rounded-xl border border-slate-100 bg-white/50 p-4 shadow-sm backdrop-blur-sm">
           <button
             type="button"
@@ -185,73 +293,190 @@ export default function ManualBuilder() {
           )}
         </div>
 
-        {/* Workout Schedule Header */}
-        <div className="flex items-center justify-between pt-2">
-          <h3 className="px-1 text-xs font-bold uppercase tracking-wider text-slate-700">
+        <div className="flex min-h-[44px] items-center justify-between gap-3 pt-2">
+          <h3 className="min-w-0 truncate px-1 text-xs font-bold uppercase tracking-wider text-slate-700">
             Workout Schedule
           </h3>
-          <span className="text-xs font-medium text-primary">Reorder</span>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {isEditMode && selectedWorkoutIds.length > 0 && (
+              <>
+                <div className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => handleMove("up")}
+                    disabled={!canMoveUp}
+                    className={actionButtonClass(canMoveUp)}
+                    aria-label="Move selected workouts up"
+                  >
+                    <span className="material-symbols-outlined text-[20px] leading-none">
+                      expand_less
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleMove("down")}
+                    disabled={!canMoveDown}
+                    className={actionButtonClass(canMoveDown)}
+                    aria-label="Move selected workouts down"
+                  >
+                    <span className="material-symbols-outlined text-[20px] leading-none">
+                      expand_more
+                    </span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleDuplicate}
+                  disabled={!canDuplicate}
+                  className={[actionButtonClass(canDuplicate), "ml-1"].join(" ")}
+                  aria-label="Duplicate selected workouts"
+                >
+                  <span className="material-symbols-outlined text-[20px] leading-none">
+                    content_copy
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={!canDelete}
+                  className={[actionButtonClass(canDelete, "danger"), "ml-1.5"].join(" ")}
+                  aria-label="Delete selected workouts"
+                >
+                  <span className="material-symbols-outlined text-[20px] leading-none">
+                    delete
+                  </span>
+                </button>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={toggleEditMode}
+              className={[
+                "rounded-full px-3 py-1 text-xs font-semibold transition-colors",
+                isEditMode
+                  ? "bg-primary/10 text-primary"
+                  : "text-primary hover:bg-primary/10",
+              ].join(" ")}
+            >
+              Edit
+            </button>
+          </div>
         </div>
 
-        {/* Workout Cards */}
         <div className="space-y-3">
-        {workoutCards.map((workout) => (
-            <button
+          {workoutCards.map((workout, index) => {
+            const isSelected = selectedWorkoutIdSet.has(workout.id);
+
+            return (
+              <button
                 key={workout.id}
                 type="button"
-                onClick={() => navigate(`/program/manual-builder/workout/${workout.id}`)}
-                className="group flex w-full items-center gap-3 rounded-xl border border-slate-100 bg-white p-3 text-left shadow-sm"
-            >
-                <div className="cursor-grab text-slate-300">
-                <span className="material-symbols-outlined">drag_indicator</span>
+                onClick={() =>
+                  isEditMode
+                    ? toggleWorkoutSelection(workout.id)
+                    : navigate(`/program/manual-builder/workout/${workout.id}`)
+                }
+                className={[
+                  "group flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition-colors",
+                  isSelected
+                    ? "border-primary/40 bg-primary/5"
+                    : "border-slate-100",
+                ].join(" ")}
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center">
+                  {isEditMode ? (
+                    <span
+                      className={[
+                        "flex h-5 w-5 items-center justify-center rounded border transition-colors",
+                        isSelected
+                          ? "border-primary bg-primary text-slate-900"
+                          : "border-slate-300 bg-white",
+                      ].join(" ")}
+                      aria-hidden="true"
+                    >
+                      {isSelected && (
+                        <span className="material-symbols-outlined text-sm">check</span>
+                      )}
+                    </span>
+                  ) : (
+                    <span className="text-sm font-bold text-slate-400">
+                      {index + 1}
+                    </span>
+                  )}
                 </div>
 
                 <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                    <input
-                    type="text"
-                    value={workout.name}
-                    onChange={(e) => updateWorkoutName(workout.id, e.target.value)}
-                    className="w-full border-none bg-transparent p-0 text-base font-semibold focus:ring-0"
-                    />
-                </div>
-                <p className="text-[11px] leading-relaxed text-slate-500 opacity-80">
+                  {isEditMode ? (
+                    <div className="flex items-center gap-2">
+                      <span className="block truncate text-base font-semibold text-slate-800">
+                        {workout.name}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={workout.name}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={(event) =>
+                          updateWorkoutName(workout.id, event.target.value)
+                        }
+                        className="w-full border-none bg-transparent p-0 text-base font-semibold focus:ring-0"
+                      />
+                    </div>
+                  )}
+                  <p className="text-[11px] leading-relaxed text-slate-500 opacity-80">
                     {workout.meta}
-                </p>
+                  </p>
                 </div>
 
-                <span className="material-symbols-outlined text-slate-400">
-                chevron_right
-                </span>
-            </button>
-        ))}
+                {!isEditMode && (
+                  <span className="material-symbols-outlined text-slate-400">
+                    chevron_right
+                  </span>
+                )}
+              </button>
+            );
+          })}
 
-          <button
-            type="button"
-            onClick={() => addWorkout()}
-            className="w-full cursor-pointer rounded-xl border-2 border-dashed border-slate-200 bg-white/50 p-6 transition-colors hover:border-primary/50"
-          >
-            <div className="flex flex-col items-center justify-center gap-2">
-              <span className="material-symbols-outlined text-slate-300 transition-colors hover:text-primary">
-                add_circle
-              </span>
-              <span className="text-sm font-semibold text-slate-400 transition-colors hover:text-primary">
-                Create Workout {workoutCards.length + 1}
-              </span>
-            </div>
-          </button>
+          {canCreateWorkout && (
+            <button
+              type="button"
+              onClick={() => addWorkout()}
+              className="w-full cursor-pointer rounded-xl border-2 border-dashed border-slate-200 bg-white/50 p-6 transition-colors hover:border-primary/50"
+            >
+              <div className="flex flex-col items-center justify-center gap-2">
+                <span className="material-symbols-outlined text-slate-300 transition-colors hover:text-primary">
+                  add_circle
+                </span>
+                <span className="text-sm font-semibold text-slate-400 transition-colors hover:text-primary">
+                  Create Workout {createdWorkoutCount + 1}
+                </span>
+              </div>
+            </button>
+          )}
         </div>
 
-        {/* Bottom Actions */}
         <div className="flex flex-col items-center pb-12 pt-8">
           <button
             type="button"
-            onClick={() => navigate("/program/manual-convert")}
-            className="flex w-full max-w-xs items-center justify-center gap-2 rounded-xl border-2 border-slate-200 bg-slate-50 py-3 font-semibold text-slate-400 transition-all"
+            disabled={!isWeeklyTemplateComplete}
+            onClick={() => {
+              if (isWeeklyTemplateComplete) {
+                navigate("/program/manual-convert");
+              }
+            }}
+            className={[
+              "flex w-full max-w-xs items-center justify-center gap-2 rounded-xl border-2 py-3 font-semibold transition-all",
+              isWeeklyTemplateComplete
+                ? "border-primary/30 bg-white text-primary hover:border-primary/50"
+                : "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400",
+            ].join(" ")}
           >
-            <span className="material-symbols-outlined text-slate-400">
-              calendar_today
-            </span>
+            <span className="material-symbols-outlined">calendar_today</span>
             Convert to multi week program
           </button>
 
@@ -264,12 +489,17 @@ export default function ManualBuilder() {
         <div className="h-28" />
       </main>
 
-      {/* Bottom CTA */}
       <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-100 bg-white/80 p-4 backdrop-blur-md">
         <div className="mx-auto max-w-md">
           <button
             type="button"
-            className="flex w-full items-center justify-center rounded-xl bg-slate-300 py-4 font-bold text-white/60 cursor-not-allowed"
+            disabled={!isWeeklyTemplateComplete}
+            className={[
+              "flex w-full items-center justify-center rounded-xl py-4 font-bold transition-colors",
+              isWeeklyTemplateComplete
+                ? "bg-primary text-slate-900"
+                : "cursor-not-allowed bg-slate-300 text-white/60",
+            ].join(" ")}
           >
             <span>Publish Program</span>
           </button>

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 
 const ManualProgramContext = createContext(null);
+export const MAX_BLOCK_SET_COUNT = 10;
 
 function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -167,6 +168,53 @@ function createWorkout(name, withTemplateBlocks = true) {
   };
 }
 
+function cloneWorkoutForDuplicate(workout) {
+  return {
+    ...workout,
+    id: createId("workout"),
+    blocks: (workout.blocks || []).map((block) => ({
+      ...block,
+      id: createId("block"),
+      exercises:
+        block.type === "superset"
+          ? (block.exercises || []).map((exercise) => ({
+              ...exercise,
+              sets: Array.isArray(exercise.sets)
+                ? exercise.sets.map((set) => ({ ...set }))
+                : [],
+            }))
+          : block.exercises,
+      sets: Array.isArray(block.sets)
+        ? block.sets.map((set) => ({ ...set }))
+        : block.sets,
+    })),
+  };
+}
+
+function canMoveSelectedWorkouts(workouts, selectedIds, direction) {
+  const selectedIdSet = new Set(selectedIds);
+
+  if (!selectedIdSet.size) {
+    return false;
+  }
+
+  if (direction === "up") {
+    return workouts.some(
+      (workout, index) =>
+        selectedIdSet.has(workout.id) &&
+        index > 0 &&
+        !selectedIdSet.has(workouts[index - 1].id)
+    );
+  }
+
+  return workouts.some(
+    (workout, index) =>
+      selectedIdSet.has(workout.id) &&
+      index < workouts.length - 1 &&
+      !selectedIdSet.has(workouts[index + 1].id)
+  );
+}
+
 function createInitialDraft() {
   return {
     programName: "",
@@ -184,7 +232,7 @@ export function ManualProgramProvider({ children }) {
   const [programDraft, setProgramDraft] = useState(createInitialDraft);
 
   const updateSupersetSetCount = useCallback((workoutId, blockId, nextCount) => {
-    const safeCount = Math.max(1, nextCount || 1);
+    const safeCount = clampNumber(nextCount || 1, 1, MAX_BLOCK_SET_COUNT);
 
     setProgramDraft((prev) => ({
       ...prev,
@@ -211,13 +259,19 @@ export function ManualProgramProvider({ children }) {
   }, []);
 
   const createProgramDraft = useCallback((payload = {}) => {
+    const nextProgramName = String(payload.programName || "").trim();
+
+    if (!nextProgramName) {
+      return;
+    }
+
     const sessions = Math.max(1, Math.min(7, payload.sessionsPerWeek ?? 4));
     const workouts = Array.from({ length: sessions }, (_, index) =>
       createWorkout(`Workout ${index + 1}`, false)
     );
 
     setProgramDraft({
-      programName: payload.programName || "New Program",
+      programName: nextProgramName,
       sessionsPerWeek: sessions,
       programLength: payload.programLength ?? 8,
       startDate: payload.startDate ?? null,
@@ -234,11 +288,14 @@ export function ManualProgramProvider({ children }) {
 
   const addWorkout = useCallback((name) => {
     setProgramDraft((prev) => {
+      if (prev.workouts.length >= prev.sessionsPerWeek) {
+        return prev;
+      }
+
       const nextIndex = prev.workouts.length + 1;
       const workoutName = name || `Workout ${nextIndex}`;
       return {
         ...prev,
-        sessionsPerWeek: Math.min(7, prev.workouts.length + 1),
         workouts: [...prev.workouts, createWorkout(workoutName, false)],
       };
     });
@@ -395,10 +452,18 @@ export function ManualProgramProvider({ children }) {
             }
 
             if (block.type === "single") {
+              if (block.sets.length >= MAX_BLOCK_SET_COUNT) {
+                return block;
+              }
+
               return {
                 ...block,
                 sets: [...block.sets, createSingleSetRow()],
               };
+            }
+
+            if ((block.sets || 1) >= MAX_BLOCK_SET_COUNT) {
+              return block;
             }
 
             return normalizeSupersetBlock({
@@ -504,6 +569,118 @@ export function ManualProgramProvider({ children }) {
     []
   );
 
+  const moveWorkouts = useCallback((workoutIds, direction) => {
+    const selectedIds = Array.isArray(workoutIds)
+      ? workoutIds.filter(Boolean)
+      : [];
+
+    if (!selectedIds.length || !["up", "down"].includes(direction)) {
+      return;
+    }
+
+    setProgramDraft((prev) => {
+      if (!canMoveSelectedWorkouts(prev.workouts, selectedIds, direction)) {
+        return prev;
+      }
+
+      const selectedIdSet = new Set(selectedIds);
+      const nextWorkouts = [...prev.workouts];
+
+      if (direction === "up") {
+        for (let index = 1; index < nextWorkouts.length; index += 1) {
+          if (
+            selectedIdSet.has(nextWorkouts[index].id) &&
+            !selectedIdSet.has(nextWorkouts[index - 1].id)
+          ) {
+            [nextWorkouts[index - 1], nextWorkouts[index]] = [
+              nextWorkouts[index],
+              nextWorkouts[index - 1],
+            ];
+          }
+        }
+      } else {
+        for (let index = nextWorkouts.length - 2; index >= 0; index -= 1) {
+          if (
+            selectedIdSet.has(nextWorkouts[index].id) &&
+            !selectedIdSet.has(nextWorkouts[index + 1].id)
+          ) {
+            [nextWorkouts[index], nextWorkouts[index + 1]] = [
+              nextWorkouts[index + 1],
+              nextWorkouts[index],
+            ];
+          }
+        }
+      }
+
+      return {
+        ...prev,
+        workouts: nextWorkouts,
+      };
+    });
+  }, []);
+
+  const duplicateWorkouts = useCallback((workoutIds) => {
+    const selectedIds = Array.isArray(workoutIds)
+      ? workoutIds.filter(Boolean)
+      : [];
+
+    if (!selectedIds.length) {
+      return;
+    }
+
+    setProgramDraft((prev) => {
+      if (prev.workouts.length + selectedIds.length > prev.sessionsPerWeek) {
+        return prev;
+      }
+
+      const selectedIdSet = new Set(selectedIds);
+      const nextWorkouts = [];
+
+      prev.workouts.forEach((workout) => {
+        nextWorkouts.push(workout);
+
+        if (selectedIdSet.has(workout.id)) {
+          nextWorkouts.push(cloneWorkoutForDuplicate(workout));
+        }
+      });
+
+      return {
+        ...prev,
+        workouts: nextWorkouts,
+      };
+    });
+  }, []);
+
+  const removeWorkouts = useCallback((workoutIds) => {
+    const selectedIds = Array.isArray(workoutIds)
+      ? workoutIds.filter(Boolean)
+      : [];
+
+    if (!selectedIds.length) {
+      return;
+    }
+
+    setProgramDraft((prev) => {
+      if (selectedIds.length >= prev.workouts.length) {
+        return prev;
+      }
+
+      const selectedIdSet = new Set(selectedIds);
+      const nextWorkouts = prev.workouts.filter(
+        (workout) => !selectedIdSet.has(workout.id)
+      );
+
+      if (!nextWorkouts.length) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        workouts: nextWorkouts,
+      };
+    });
+  }, []);
+
   const updateBlock = useCallback((workoutId, blockId, updates) => {
     setProgramDraft((prev) => ({
       ...prev,
@@ -592,6 +769,9 @@ export function ManualProgramProvider({ children }) {
       removeBlock,
       addSet,
       removeSet,
+      moveWorkouts,
+      duplicateWorkouts,
+      removeWorkouts,
       updateSupersetSetCount,
       updateSet,
       toggleMultiWeek,
@@ -613,6 +793,9 @@ export function ManualProgramProvider({ children }) {
       removeBlock,
       addSet,
       removeSet,
+      moveWorkouts,
+      duplicateWorkouts,
+      removeWorkouts,
       updateSupersetSetCount,
       updateSet,
       toggleMultiWeek,
