@@ -187,7 +187,7 @@ ALTER TABLE "weekly_plan_workout_blocks" ADD CONSTRAINT "weekly_plan_workout_blo
 ALTER TABLE "weekly_plan_block_exercises" ADD CONSTRAINT "weekly_plan_block_exercises_weeklyPlanWorkoutBlockId_fkey" FOREIGN KEY ("weeklyPlanWorkoutBlockId") REFERENCES "weekly_plan_workout_blocks"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "weekly_plan_block_exercises" ADD CONSTRAINT "weekly_plan_block_exercises_exerciseId_fkey" FOREIGN KEY ("exerciseId") REFERENCES "exercises"("exerciseId") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "weekly_plan_block_exercises" ADD CONSTRAINT "weekly_plan_block_exercises_exerciseId_fkey" FOREIGN KEY ("exerciseId") REFERENCES "exercise"("exerciseId") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "weekly_plan_exercise_set_templates" ADD CONSTRAINT "weekly_plan_exercise_set_templates_weeklyPlanBlockExerciseId_fkey" FOREIGN KEY ("weeklyPlanBlockExerciseId") REFERENCES "weekly_plan_block_exercises"("id") ON DELETE CASCADE ON UPDATE CASCADE;
