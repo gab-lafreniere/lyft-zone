@@ -12,6 +12,7 @@ const exercisesRouter = require('./routes/exercisesPrisma');
 const usersRouter = require('./routes/users');
 const cyclesRouter = require('./routes/cycles');
 const scheduledSessionsRouter = require('./routes/scheduledSessions');
+const weeklyPlansRouter = require('./routes/weeklyPlans');
 
 const app = express();
 const PORT = process.env.PORT || 5001; // en local, évite 5000
@@ -58,6 +59,7 @@ app.use('/api/exercises', exercisesRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/cycles', cyclesRouter);
 app.use('/api/scheduled-sessions', scheduledSessionsRouter);
+app.use('/api/weekly-plans', weeklyPlansRouter);
 
 // Other routes
 app.use('/api/plans', planRoutes);

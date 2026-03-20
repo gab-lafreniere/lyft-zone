@@ -1,6 +1,12 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useManualProgram } from "../context/ManualProgramContext";
+import { resolveBackTarget } from "../features/weeklyPlans/navigation";
+import {
+  getWeeklyPlanDetailsPath,
+  getWeeklyPlansPath,
+} from "../features/weeklyPlans/routes";
+import { publishWeeklyPlanDraft } from "../services/api";
 import {
   aggregateWorkoutMetrics,
   computeWorkoutMetrics,
@@ -52,11 +58,14 @@ function validatePlanName(value) {
 
 export default function ManualBuilder() {
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     programDraft,
+    draftMetadata,
     addWorkout,
     moveWorkouts,
     duplicateWorkouts,
+    persistDraftNow,
     removeWorkouts,
     updateProgramMeta,
     updateSessionsPerWeek,
@@ -72,6 +81,7 @@ export default function ManualBuilder() {
   const [settingsSessionsPerWeek, setSettingsSessionsPerWeek] = useState(4);
   const [settingsSessionsError, setSettingsSessionsError] = useState("");
   const [showDeleteProgramConfirm, setShowDeleteProgramConfirm] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
 
   const programName = programDraft.programName;
   const sessionsPerWeek = programDraft.sessionsPerWeek || 4;
@@ -202,6 +212,23 @@ export default function ManualBuilder() {
   );
 
   const settingsCanSave = settingsProgramNameDraft.trim().length > 0;
+  const backTarget = resolveBackTarget(location, "/program");
+
+  const saveStatusLabel = useMemo(() => {
+    if (draftMetadata.saveState === "saving") {
+      return "Saving...";
+    }
+
+    if (draftMetadata.saveState === "error") {
+      return "Save failed";
+    }
+
+    if (draftMetadata.lastSavedAt) {
+      return "Saved";
+    }
+
+    return "Draft";
+  }, [draftMetadata.lastSavedAt, draftMetadata.saveState]);
 
   const toggleEditMode = () => {
     setIsEditMode((prev) => {
@@ -317,6 +344,37 @@ export default function ManualBuilder() {
     navigate("/program");
   };
 
+  const handleBack = () => {
+    navigate(backTarget);
+  };
+
+  const handlePublish = async () => {
+    if (
+      !isWeeklyTemplateReady ||
+      !draftMetadata.weeklyPlanParentId ||
+      isPublishing
+    ) {
+      return;
+    }
+
+    setIsPublishing(true);
+
+    try {
+      await persistDraftNow();
+      await publishWeeklyPlanDraft(draftMetadata.weeklyPlanParentId);
+      navigate(getWeeklyPlanDetailsPath(draftMetadata.weeklyPlanParentId), {
+        replace: true,
+        state: {
+          from: location.state?.returnTo || getWeeklyPlansPath(),
+        },
+      });
+    } catch (error) {
+      // Keep the builder open so the user can retry publishing.
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
   const actionButtonClass = (enabled, tone = "neutral") =>
     [
       "inline-flex h-9 w-9 items-center justify-center rounded-full transition-all select-none",
@@ -331,13 +389,29 @@ export default function ManualBuilder() {
     <div className="-mx-6 min-h-full bg-background-light text-slate-900">
       <header className="sticky top-0 z-40 w-full border-b border-slate-200 bg-white/70 backdrop-blur-md">
         <div className="relative mx-auto flex h-20 max-w-md items-center justify-center px-4">
+          <button
+            type="button"
+            onClick={handleBack}
+            className="absolute left-4 flex size-10 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+            aria-label="Back"
+          >
+            <span className="material-symbols-outlined text-xl font-light">
+              arrow_back
+            </span>
+          </button>
+
           <div className="flex flex-col items-center justify-center px-4 text-center">
             <h1 className="mx-auto text-sm font-bold leading-tight sm:text-base">
               {programName}
             </h1>
-            <span className="mt-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-tighter text-slate-500">
-              Draft
-            </span>
+            <div className="mt-1 flex items-center gap-2">
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-tighter text-slate-500">
+                Draft
+              </span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                {saveStatusLabel}
+              </span>
+            </div>
           </div>
 
           <div className="absolute right-4 flex items-center gap-3">
@@ -528,7 +602,11 @@ export default function ManualBuilder() {
                 onClick={() =>
                   isEditMode
                     ? toggleWorkoutSelection(workout.id)
-                    : navigate(`/program/manual-builder/workout/${workout.id}`)
+                    : navigate(`/program/manual-builder/workout/${workout.id}`, {
+                        state: {
+                          from: `${location.pathname}${location.search || ""}`,
+                        },
+                      })
                 }
                 className={[
                   "group flex w-full items-start gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition-colors",
@@ -628,7 +706,11 @@ export default function ManualBuilder() {
             disabled={!isWeeklyTemplateReady}
             onClick={() => {
               if (isWeeklyTemplateReady) {
-                navigate("/program/manual-convert");
+                navigate("/program/manual-convert", {
+                  state: {
+                    from: `${location.pathname}${location.search || ""}`,
+                  },
+                });
               }
             }}
             className={[
@@ -655,15 +737,20 @@ export default function ManualBuilder() {
         <div className="mx-auto max-w-md">
           <button
             type="button"
-            disabled={!isWeeklyTemplateReady}
+            disabled={
+              !isWeeklyTemplateReady ||
+              !draftMetadata.weeklyPlanParentId ||
+              isPublishing
+            }
+            onClick={handlePublish}
             className={[
               "flex w-full items-center justify-center rounded-xl py-4 font-bold transition-colors",
-              isWeeklyTemplateReady
+              isWeeklyTemplateReady && draftMetadata.weeklyPlanParentId && !isPublishing
                 ? "bg-primary text-slate-900"
                 : "cursor-not-allowed bg-slate-300 text-white/60",
             ].join(" ")}
           >
-            <span>Publish Program</span>
+            <span>{isPublishing ? "Publishing..." : "Publish Program"}</span>
           </button>
         </div>
       </div>
@@ -788,7 +875,11 @@ export default function ManualBuilder() {
               </div>
 
               <section className="rounded-2xl border border-red-100 bg-red-50/60 p-4">
-                {!showDeleteProgramConfirm ? (
+                {draftMetadata.loadedFromBackend ? (
+                  <p className="text-sm text-red-600">
+                    Delete is not available in this milestone for persisted weekly plans.
+                  </p>
+                ) : !showDeleteProgramConfirm ? (
                   <button
                     type="button"
                     onClick={() => setShowDeleteProgramConfirm(true)}

@@ -1,55 +1,57 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { formatRelativeCreatedLabel } from "../features/weeklyPlans/formatters";
+import { buildOrigin, resolveBackTarget } from "../features/weeklyPlans/navigation";
+import { getWeeklyPlanDetailsPath } from "../features/weeklyPlans/routes";
+import { mapWeeklyPlanListItemToUi } from "../features/weeklyPlans/mappers";
+import {
+  bookmarkWeeklyPlan,
+  getWeeklyPlans,
+  unbookmarkWeeklyPlan,
+} from "../services/api";
 
 export default function AllPrograms() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [activeFilter, setActiveFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
+  const [programs, setPrograms] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const createMenuRef = useRef(null);
 
-  const programs = [
-    {
-      id: "v-taper-foundation",
-      name: "V-Taper Foundation",
-      status: "draft",
-      source: "manual",
-      frequencyPerWeek: 4,
-      totalWeeklySets: 48,
-      createdLabel: "Created 2 days ago",
-      isBookmarked: true,
-    },
-    {
-      id: "upper-lower-hypertrophy",
-      name: "Upper Lower Hypertrophy",
-      status: "published",
-      source: "ai",
-      frequencyPerWeek: 5,
-      totalWeeklySets: 52,
-      createdLabel: "Created 6 days ago",
-      isBookmarked: false,
-    },
-    {
-      id: "power-building-phase-2",
-      name: "Power-Building Phase II",
-      status: "published",
-      source: "ai",
-      frequencyPerWeek: 5,
-      totalWeeklySets: 64,
-      createdLabel: "Created 3 weeks ago",
-      isBookmarked: true,
-    },
-    {
-      id: "strength-accumulation",
-      name: "Strength Accumulation",
-      status: "draft",
-      source: "manual",
-      frequencyPerWeek: 3,
-      totalWeeklySets: 32,
-      createdLabel: "Created 2 months ago",
-      isBookmarked: false,
-    },
-  ];
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadWeeklyPlans() {
+      setIsLoading(true);
+
+      try {
+        const response = await getWeeklyPlans();
+        const items = (response.items || []).map((item) =>
+          mapWeeklyPlanListItemToUi(item, formatRelativeCreatedLabel(item.createdAt))
+        );
+
+        if (isMounted) {
+          setPrograms(items);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setPrograms([]);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    loadWeeklyPlans();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isCreateMenuOpen) return undefined;
@@ -78,7 +80,7 @@ export default function AllPrograms() {
   }, [isCreateMenuOpen]);
 
   const filteredPrograms = useMemo(() => {
-    return programs.filter((program) => {
+    const matchingPrograms = programs.filter((program) => {
       const matchesFilter =
         activeFilter === "all" ? true : program.status === activeFilter;
 
@@ -88,7 +90,42 @@ export default function AllPrograms() {
 
       return matchesFilter && matchesSearch;
     });
-  }, [activeFilter, searchQuery]);
+
+    const hasBookmarks = matchingPrograms.some((program) => program.isBookmarked);
+
+    return [...matchingPrograms].sort((left, right) => {
+      if (hasBookmarks && left.isBookmarked !== right.isBookmarked) {
+        return left.isBookmarked ? -1 : 1;
+      }
+
+      return new Date(right.createdAt) - new Date(left.createdAt);
+    });
+  }, [activeFilter, programs, searchQuery]);
+
+  const handleBookmarkToggle = async (event, program) => {
+    event.stopPropagation();
+
+    const nextBookmarkState = !program.isBookmarked;
+    setPrograms((prev) =>
+      prev.map((item) =>
+        item.id === program.id ? { ...item, isBookmarked: nextBookmarkState } : item
+      )
+    );
+
+    try {
+      if (nextBookmarkState) {
+        await bookmarkWeeklyPlan(program.weeklyPlanParentId);
+      } else {
+        await unbookmarkWeeklyPlan(program.weeklyPlanParentId);
+      }
+    } catch (error) {
+      setPrograms((prev) =>
+        prev.map((item) =>
+          item.id === program.id ? { ...item, isBookmarked: program.isBookmarked } : item
+        )
+      );
+    }
+  };
 
   return (
     <div className="-mx-6 min-h-full bg-background-light text-slate-900">
@@ -96,7 +133,7 @@ export default function AllPrograms() {
         <div className="flex h-16 items-center justify-between px-4">
           <button
             type="button"
-            onClick={() => navigate("/program")}
+            onClick={() => navigate(resolveBackTarget(location, "/program"))}
             className="flex size-10 items-center justify-center rounded-full transition-colors hover:bg-slate-100"
             aria-label="Back"
           >
@@ -133,7 +170,11 @@ export default function AllPrograms() {
                   role="menuitem"
                   onClick={() => {
                     setIsCreateMenuOpen(false);
-                    navigate("/ai");
+                    navigate("/ai", {
+                      state: {
+                        from: buildOrigin(location),
+                      },
+                    });
                   }}
                 >
                   <span className="material-symbols-outlined text-[18px] text-primary">
@@ -148,7 +189,12 @@ export default function AllPrograms() {
                   role="menuitem"
                   onClick={() => {
                     setIsCreateMenuOpen(false);
-                    navigate("/program/manual-new");
+                    navigate("/program/manual-new", {
+                      state: {
+                        from: buildOrigin(location),
+                        returnTo: resolveBackTarget(location, "/program"),
+                      },
+                    });
                   }}
                 >
                   <span className="material-symbols-outlined text-[18px] text-primary">
@@ -203,11 +249,43 @@ export default function AllPrograms() {
         </div>
 
         <section className="space-y-4">
+          {!isLoading && filteredPrograms.length === 0 && (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-8 text-center shadow-sm">
+              <h3 className="text-lg font-bold tracking-tight text-slate-900">
+                No programs yet
+              </h3>
+              <p className="mt-2 text-sm text-slate-500">
+                Create your first weekly template to populate your library.
+              </p>
+              <button
+                type="button"
+                onClick={() =>
+                  navigate("/program/manual-new", {
+                    state: {
+                      from: buildOrigin(location),
+                      returnTo: resolveBackTarget(location, "/program"),
+                    },
+                  })
+                }
+                className="mt-5 w-full rounded-xl bg-primary py-3 text-sm font-bold text-white shadow-lg shadow-primary/20"
+              >
+                Create your first program
+              </button>
+            </div>
+          )}
+
           {filteredPrograms.map((program) => (
             <button
               key={program.id}
               type="button"
-              onClick={() => navigate(`/program/all/${program.id}`)}
+              onClick={() =>
+                navigate(getWeeklyPlanDetailsPath(program.weeklyPlanParentId), {
+                  state: {
+                    from: buildOrigin(location),
+                    returnTo: resolveBackTarget(location, "/program"),
+                  },
+                })
+              }
               className="group relative flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:shadow-md"
             >
               <div className="space-y-1">
@@ -241,14 +319,18 @@ export default function AllPrograms() {
                 </div>
               </div>
 
-              <div
+              <button
+                type="button"
+                onClick={(event) => handleBookmarkToggle(event, program)}
                 className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors group-hover:text-primary"
-                aria-hidden="true"
-                >
+                aria-label={
+                  program.isBookmarked ? "Remove bookmark" : "Add bookmark"
+                }
+              >
                 <span className="material-symbols-outlined">
                     {program.isBookmarked ? "bookmark" : "bookmark_border"}
                 </span>
-              </div>
+              </button>
             </button>
           ))}
         </section>

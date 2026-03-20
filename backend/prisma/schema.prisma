@@ -44,6 +44,18 @@ enum PlanStatus {
   ARCHIVED
 }
 
+enum WeeklyPlanSourceType {
+  MANUAL
+  AI
+}
+
+enum WeeklyPlanVersionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+  ARCHIVED
+}
+
 enum DayOfWeek {
   MONDAY
   TUESDAY
@@ -121,6 +133,7 @@ model Exercise {
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   blockExercises     BlockExercise[]
+  weeklyPlanBlockExercises WeeklyPlanBlockExercise[]
 }
 
 model User {
@@ -130,6 +143,8 @@ model User {
   updatedAt      DateTime        @updatedAt
   profile        UserProfile?
   trainingCycles TrainingCycle[]
+  weeklyPlanParents   WeeklyPlanParent[]
+  weeklyPlanBookmarks WeeklyPlanBookmark[]
 
   @@map("users")
 }
@@ -157,6 +172,7 @@ model UserProfile {
 model TrainingCycle {
   id              String       @id @default(cuid())
   userId          String
+  sourceWeeklyPlanParentId String?
   name            String
   startDate       DateTime     @db.Date
   endDate         DateTime     @db.Date
@@ -170,11 +186,154 @@ model TrainingCycle {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceWeeklyPlanParent WeeklyPlanParent? @relation(fields: [sourceWeeklyPlanParentId], references: [id], onDelete: SetNull)
   plans           Plan[]
 
   @@index([userId, status])
   @@index([userId, startDate])
+  @@index([sourceWeeklyPlanParentId])
   @@map("training_cycles")
+}
+
+model WeeklyPlanParent {
+  id                     String                @id @default(cuid())
+  userId                 String
+  sourceType             WeeklyPlanSourceType
+  latestDraftVersionId   String?               @unique
+  latestPublishedVersionId String?             @unique
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+  user                   User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  versions               WeeklyPlanVersion[]
+  latestDraftVersion     WeeklyPlanVersion?    @relation("LatestDraftVersion", fields: [latestDraftVersionId], references: [id], onDelete: SetNull)
+  latestPublishedVersion WeeklyPlanVersion?    @relation("LatestPublishedVersion", fields: [latestPublishedVersionId], references: [id], onDelete: SetNull)
+  bookmarks              WeeklyPlanBookmark[]
+  derivedTrainingCycles  TrainingCycle[]
+
+  @@index([userId, createdAt])
+  @@map("weekly_plan_parents")
+}
+
+model WeeklyPlanVersion {
+  id                String                   @id @default(cuid())
+  weeklyPlanParentId String
+  originVersionId   String?
+  versionNumber     Int
+  name              String
+  sessionsPerWeek   Int
+  status            WeeklyPlanVersionStatus
+  changeSummary     Json?
+  generationContext Json?
+  publishedAt       DateTime?
+  supersededAt      DateTime?
+  archivedAt        DateTime?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  weeklyPlanParent  WeeklyPlanParent         @relation(fields: [weeklyPlanParentId], references: [id], onDelete: Cascade)
+  originVersion     WeeklyPlanVersion?       @relation("WeeklyPlanVersionLineage", fields: [originVersionId], references: [id], onDelete: SetNull)
+  childVersions     WeeklyPlanVersion[]      @relation("WeeklyPlanVersionLineage")
+  workouts          WeeklyPlanWorkout[]
+  latestDraftForParent     WeeklyPlanParent? @relation("LatestDraftVersion")
+  latestPublishedForParent WeeklyPlanParent? @relation("LatestPublishedVersion")
+
+  @@unique([weeklyPlanParentId, versionNumber])
+  @@index([weeklyPlanParentId, status])
+  @@map("weekly_plan_versions")
+}
+
+model WeeklyPlanWorkout {
+  id                       String                   @id @default(cuid())
+  weeklyPlanVersionId      String
+  name                     String
+  orderIndex               Int
+  estimatedDurationMinutes Int?
+  notes                    String?
+  createdAt                DateTime                 @default(now())
+  updatedAt                DateTime                 @updatedAt
+  weeklyPlanVersion        WeeklyPlanVersion        @relation(fields: [weeklyPlanVersionId], references: [id], onDelete: Cascade)
+  blocks                   WeeklyPlanWorkoutBlock[]
+
+  @@unique([weeklyPlanVersionId, orderIndex])
+  @@map("weekly_plan_workouts")
+}
+
+model WeeklyPlanWorkoutBlock {
+  id                  String                   @id @default(cuid())
+  weeklyPlanWorkoutId String
+  orderIndex          Int
+  blockType           BlockType
+  label               String?
+  roundCount          Int?
+  restStrategy        BlockRestStrategy?
+  restSeconds         Int?
+  notes               String?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  weeklyPlanWorkout   WeeklyPlanWorkout        @relation(fields: [weeklyPlanWorkoutId], references: [id], onDelete: Cascade)
+  exercises           WeeklyPlanBlockExercise[]
+
+  @@unique([weeklyPlanWorkoutId, orderIndex])
+  @@map("weekly_plan_workout_blocks")
+}
+
+model WeeklyPlanBlockExercise {
+  id                       String                        @id @default(cuid())
+  weeklyPlanWorkoutBlockId String
+  exerciseId               String?
+  exerciseName             String
+  bodyParts                Json?
+  muscleFocus              Json?
+  orderIndex               Int
+  executionNotes           String?
+  defaultTempo             String?
+  defaultRestSeconds       Int?
+  defaultTargetRir         Decimal?                      @db.Decimal(4, 1)
+  defaultTargetRpe         Decimal?                      @db.Decimal(4, 1)
+  intensificationMethod    IntensificationMethod?
+  notes                    String?
+  createdAt                DateTime                      @default(now())
+  updatedAt                DateTime                      @updatedAt
+  weeklyPlanWorkoutBlock   WeeklyPlanWorkoutBlock        @relation(fields: [weeklyPlanWorkoutBlockId], references: [id], onDelete: Cascade)
+  exercise                 Exercise?                     @relation(fields: [exerciseId], references: [exerciseId], onDelete: SetNull)
+  setTemplates             WeeklyPlanExerciseSetTemplate[]
+
+  @@unique([weeklyPlanWorkoutBlockId, orderIndex])
+  @@index([exerciseId])
+  @@map("weekly_plan_block_exercises")
+}
+
+model WeeklyPlanExerciseSetTemplate {
+  id                       String                   @id @default(cuid())
+  weeklyPlanBlockExerciseId String
+  setIndex                 Int
+  setType                  SetType                 @default(WORKING)
+  targetReps               Int?
+  minReps                  Int?
+  maxReps                  Int?
+  targetSeconds            Int?
+  targetRir                Decimal?                @db.Decimal(4, 1)
+  targetRpe                Decimal?                @db.Decimal(4, 1)
+  tempo                    String?
+  restSeconds              Int?
+  notes                    String?
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+  weeklyPlanBlockExercise  WeeklyPlanBlockExercise @relation(fields: [weeklyPlanBlockExerciseId], references: [id], onDelete: Cascade)
+
+  @@unique([weeklyPlanBlockExerciseId, setIndex])
+  @@map("weekly_plan_exercise_set_templates")
+}
+
+model WeeklyPlanBookmark {
+  userId             String
+  weeklyPlanParentId String
+  createdAt          DateTime         @default(now())
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weeklyPlanParent   WeeklyPlanParent @relation(fields: [weeklyPlanParentId], references: [id], onDelete: Cascade)
+
+  @@id([userId, weeklyPlanParentId])
+  @@index([userId, createdAt])
+  @@map("weekly_plan_bookmarks")
 }
 
 model Plan {

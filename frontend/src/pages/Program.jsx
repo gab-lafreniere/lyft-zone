@@ -1,11 +1,21 @@
-import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { formatRelativeCreatedLabel } from "../features/weeklyPlans/formatters";
+import { buildOrigin } from "../features/weeklyPlans/navigation";
+import { mapWeeklyPlanListItemToUi } from "../features/weeklyPlans/mappers";
+import {
+  getWeeklyPlanDetailsPath,
+  getWeeklyPlansPath,
+} from "../features/weeklyPlans/routes";
+import { getWeeklyPlans } from "../services/api";
 
 export default function Program() {
     const [scrolled, setScrolled] = useState(false);
     const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
+    const [weeklyPlans, setWeeklyPlans] = useState([]);
     const createMenuRef = useRef(null);
     const navigate = useNavigate();
+    const location = useLocation();
 
     useEffect(() => {
       const onScroll = () => setScrolled(window.scrollY > 4);
@@ -39,6 +49,39 @@ export default function Program() {
         document.removeEventListener("keydown", onKeyDown);
       };
     }, [isCreateMenuOpen]);
+
+    useEffect(() => {
+      let isMounted = true;
+
+      async function loadWeeklyPlans() {
+        try {
+          const response = await getWeeklyPlans();
+
+          if (!isMounted) {
+            return;
+          }
+
+          setWeeklyPlans(
+            (response.items || []).map((item) =>
+              mapWeeklyPlanListItemToUi(item, formatRelativeCreatedLabel(item.createdAt))
+            )
+          );
+        } catch (error) {
+          if (isMounted) {
+            setWeeklyPlans([]);
+          }
+        }
+      }
+
+      loadWeeklyPlans();
+
+      return () => {
+        isMounted = false;
+      };
+    }, []);
+
+    const featuredWeeklyPlan = useMemo(() => weeklyPlans[0] || null, [weeklyPlans]);
+    const visibleWeeklyPlans = useMemo(() => weeklyPlans.slice(0, 2), [weeklyPlans]);
     return (
         <div className="-mx-6 bg-background-light text-slate-900 antialiased font-display">
         {/* Sticky Header */}
@@ -76,7 +119,11 @@ export default function Program() {
                   role="menuitem"
                   onClick={() => {
                     setIsCreateMenuOpen(false);
-                    navigate("/ai");
+                    navigate("/ai", {
+                      state: {
+                        from: buildOrigin(location),
+                      },
+                    });
                   }}
                 >
                   <span className="material-symbols-outlined text-[18px] text-primary">auto_awesome</span>
@@ -88,7 +135,12 @@ export default function Program() {
                   role="menuitem"
                   onClick={() => {
                     setIsCreateMenuOpen(false);
-                    navigate("/program/manual-new");
+                    navigate("/program/manual-new", {
+                      state: {
+                        from: buildOrigin(location),
+                        returnTo: "/program",
+                      },
+                    });
                   }}
                 >
                   <span className="material-symbols-outlined text-[18px] text-primary">tune</span>
@@ -110,19 +162,27 @@ export default function Program() {
                     Active Program
                   </span>
                   <h2 className="text-xl font-bold mt-1">
-                    Upper / Lower Hypertrophy
+                    {featuredWeeklyPlan?.name || "No weekly plan yet"}
                   </h2>
                 </div>
   
                 <span className="px-2.5 py-1 rounded-full bg-primary/10 text-primary text-[11px] font-bold uppercase tracking-wider">
-                  manual
+                  {featuredWeeklyPlan?.source || "manual"}
                 </span>
               </div>
   
               <div className="space-y-4">
                 <div className="flex items-center justify-between text-sm text-slate-500">
-                  <span>Week 4 of 8</span>
-                  <span>Jan 3 - Feb 28</span>
+                  <span>
+                    {featuredWeeklyPlan
+                      ? `${featuredWeeklyPlan.frequencyPerWeek} workouts / week`
+                      : "Create a weekly template"}
+                  </span>
+                  <span>
+                    {featuredWeeklyPlan
+                      ? `${featuredWeeklyPlan.totalWeeklySets} total sets`
+                      : ""}
+                  </span>
                 </div>
   
                 <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
@@ -131,10 +191,26 @@ export default function Program() {
   
                 <button
                   type="button"
-                  onClick={() => navigate("/program/all/upper-lower-hypertrophy")}
+                  onClick={() =>
+                    featuredWeeklyPlan
+                      ? navigate(
+                          getWeeklyPlanDetailsPath(featuredWeeklyPlan.weeklyPlanParentId),
+                          {
+                            state: {
+                              from: buildOrigin(location),
+                            },
+                          }
+                        )
+                      : navigate("/program/manual-new", {
+                          state: {
+                            from: buildOrigin(location),
+                            returnTo: "/program",
+                          },
+                        })
+                  }
                   className="w-full mt-4 py-3 rounded-xl text-sm font-bold border shadow-sm hover:shadow-md transition-shadow bg-primary text-white border-primary/20 shadow-md shadow-primary/20"
                 >
-                  View Details
+                  {featuredWeeklyPlan ? "View Details" : "Create Weekly Template"}
                 </button>
               </div>
             </div>
@@ -314,7 +390,7 @@ export default function Program() {
               <h3 className="text-lg font-bold">All Programs</h3>
               <button
                 type="button"
-                onClick={() => navigate("/program/all")}
+                onClick={() => navigate(getWeeklyPlansPath())}
                 className="text-sm font-medium text-primary"
               >
                 See All
@@ -322,30 +398,26 @@ export default function Program() {
             </div>
   
             <div className="space-y-3 px-2">
-            {[
-                {
-                  id: "v-taper-foundation",
-                  title: "V-Taper Foundation",
-                  subtitle: "4 workouts / 48 total sets • Draft",
-                  isBookmarked: true,
-                },
-                {
-                  id: "upper-lower-hypertrophy",
-                  title: "Upper Lower Hypertrophy",
-                  subtitle: "5 workouts / 52 total sets • Published",
-                  isBookmarked: false,
-                },
-              ].map((p) => (
+            {visibleWeeklyPlans.map((p) => (
                 <button
                   key={p.id}
                   type="button"
-                  onClick={() => navigate(`/program/all/${p.id}`)}
+                  onClick={() =>
+                    navigate(getWeeklyPlanDetailsPath(p.weeklyPlanParentId), {
+                      state: {
+                        from: buildOrigin(location),
+                      },
+                    })
+                  }
                   className="group relative w-full overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 text-left shadow-sm transition-all hover:shadow-md"
                 >
                   <div className="flex justify-between items-center">
                     <div>
-                      <h4 className="text-sm font-bold">{p.title}</h4>
-                      <p className="mt-1 text-xs text-slate-500">{p.subtitle}</p>
+                      <h4 className="text-sm font-bold">{p.name}</h4>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {p.frequencyPerWeek} workouts / {p.totalWeeklySets} total sets •{" "}
+                        {p.status}
+                      </p>
                     </div>
 
                     <div
@@ -359,6 +431,11 @@ export default function Program() {
                   </div>
                 </button>
               ))}
+              {!visibleWeeklyPlans.length && (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-5 text-sm text-slate-500 shadow-sm">
+                  Your workout programs will appear here once you create one.
+                </div>
+              )}
             </div>
           </section>
         </main>

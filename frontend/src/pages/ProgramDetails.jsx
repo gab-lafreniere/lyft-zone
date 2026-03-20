@@ -1,149 +1,17 @@
-import { useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-
-const whiteThumb =
-  "https://dummyimage.com/160x160/ffffff/cbd5e1.png&text=Exercise";
-
-const programs = {
-  "v-taper-foundation": {
-    id: "v-taper-foundation",
-    name: "V-Taper Foundation",
-    status: "draft",
-    source: "manual",
-    summary: {
-      frequencyPerWeek: 4,
-      workoutCount: 4,
-      totalWeeklySets: 48,
-      totalExercises: 22,
-      averageWorkoutDurationMinutes: 55,
-      averageWorkoutTUTMinutes: 35,
-    },
-    workouts: [
-      {
-        id: "w1",
-        name: "Workout 1: Upper Power",
-        metrics: {
-          exerciseCount: 6,
-          setCount: 18,
-          estimatedDurationMinutes: 75,
-        },
-        blocks: [
-          {
-            id: "b1",
-            type: "single",
-            orderIndex: 1,
-            exercise: {
-              name: "Barbell Bench Press",
-              imageUrl: whiteThumb,
-            },
-            prescription: {
-              setCount: 3,
-              repsLabel: "8",
-              tempoLabel: "3-1-1-0",
-              restLabel: "180s",
-            },
-            notes:
-              "Focus on explosion on the concentric phase. Keep back pinned.",
-          },
-          {
-            id: "b2",
-            type: "single",
-            orderIndex: 2,
-            exercise: {
-              name: "Incline Dumbbell Press",
-              imageUrl: whiteThumb,
-            },
-            prescription: {
-              setCount: 3,
-              repsLabel: "10",
-              tempoLabel: "3-1-1-0",
-              restLabel: "90s",
-            },
-          },
-          {
-            id: "b3",
-            type: "single",
-            orderIndex: 3,
-            exercise: {
-              name: "Weighted Dips",
-              imageUrl: whiteThumb,
-            },
-            prescription: {
-              setCount: 3,
-              repsLabel: "10",
-              tempoLabel: "3-1-1-0",
-              restLabel: "90s",
-            },
-          },
-          {
-            id: "b4",
-            type: "superset",
-            orderIndex: 4,
-            label: "Superset A",
-            restLabel: "90s",
-            exercises: [
-              {
-                laneLabel: "A1",
-                name: "Pull-Ups",
-                imageUrl: whiteThumb,
-                prescription: {
-                  setCount: 4,
-                  repsLabel: "10",
-                  tempoLabel: "2-0-1-0",
-                },
-              },
-              {
-                laneLabel: "A2",
-                name: "Dumbbell Lateral Raise",
-                imageUrl: whiteThumb,
-                prescription: {
-                  setCount: 4,
-                  repsLabel: "15",
-                  tempoLabel: "2-0-1-0",
-                },
-              },
-            ],
-          },
-        ],
-      },
-      {
-        id: "w2",
-        name: "Workout 2: Lower Power",
-        metrics: {
-          exerciseCount: 5,
-          setCount: 15,
-          estimatedDurationMinutes: 65,
-        },
-        blocks: [],
-      },
-      {
-        id: "w3",
-        name: "Workout 3: Upper Volume",
-        metrics: {
-          exerciseCount: 6,
-          setCount: 16,
-          estimatedDurationMinutes: 60,
-        },
-        blocks: [],
-      },
-      {
-        id: "w4",
-        name: "Workout 4: Lower Volume",
-        metrics: {
-          exerciseCount: 5,
-          setCount: 14,
-          estimatedDurationMinutes: 58,
-        },
-        blocks: [],
-      },
-    ],
-    weeklyMuscleDistribution: [
-      { label: "Chest & Back", percentage: 40 },
-      { label: "Legs & Posterior", percentage: 35 },
-      { label: "Shoulders & Arms", percentage: 25 },
-    ],
-  },
-};
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useManualProgram } from "../context/ManualProgramContext";
+import { buildOrigin, resolveBackTarget } from "../features/weeklyPlans/navigation";
+import {
+  getManualBuilderPath,
+  getWeeklyPlanDetailsPath,
+  getWeeklyPlansPath,
+} from "../features/weeklyPlans/routes";
+import { mapWeeklyPlanDetailsToUi } from "../features/weeklyPlans/mappers";
+import {
+  getWeeklyPlanById,
+  openOrCreateWeeklyPlanEditDraft,
+} from "../services/api";
 
 function formatMinutes(value) {
     return `${value}m`;
@@ -159,47 +27,145 @@ function formatMinutes(value) {
 
 export default function ProgramDetails() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { programId } = useParams();
-
-  const program = useMemo(
-    () => programs[programId] || programs["v-taper-foundation"],
-    [programId]
-  );
-
-  const [activeWorkoutId, setActiveWorkoutId] = useState(
-    program.workouts[0]?.id || null
-  );
-
-  const activeWorkout =
-    program.workouts.find((workout) => workout.id === activeWorkoutId) ||
-    program.workouts[0];
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { hydrateProgramDraft } = useManualProgram();
+  const [program, setProgram] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [showMuscleDistribution, setShowMuscleDistribution] = useState(false);
+  const [isOpeningDraft, setIsOpeningDraft] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadProgram() {
+      setIsLoading(true);
+
+      try {
+        const response = await getWeeklyPlanById(programId);
+        if (isMounted) {
+          setProgram(mapWeeklyPlanDetailsToUi(response));
+        }
+      } catch (error) {
+        if (isMounted) {
+          setProgram(null);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    loadProgram();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [programId]);
+
+  const activeWorkoutId = searchParams.get("workoutId");
+  const activeWorkout =
+    program?.workouts.find((workout) => workout.id === activeWorkoutId) ||
+    program?.workouts[0] ||
+    null;
+
+  useEffect(() => {
+    if (!program?.workouts?.length || !activeWorkout) {
+      return;
+    }
+
+    if (searchParams.get("workoutId") === activeWorkout.id) {
+      return;
+    }
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("workoutId", activeWorkout.id);
+    setSearchParams(nextParams, { replace: true });
+  }, [activeWorkout, program, searchParams, setSearchParams]);
 
   const topStats = useMemo(
-    () => [
-      {
-        label: "Exercises",
-        value: String(program.summary.totalExercises),
-        width: getMetricBarWidth(program.summary.totalExercises, 32),
-      },
-      {
-        label: "Sets",
-        value: String(program.summary.totalWeeklySets),
-        width: getMetricBarWidth(program.summary.totalWeeklySets, 80),
-      },
-      {
-        label: "AVG. Time",
-        value: formatMinutes(program.summary.averageWorkoutDurationMinutes),
-        width: getMetricBarWidth(program.summary.averageWorkoutDurationMinutes, 120),
-      },
-      {
-        label: "AVG. TUT",
-        value: formatMinutes(program.summary.averageWorkoutTUTMinutes),
-        width: getMetricBarWidth(program.summary.averageWorkoutTUTMinutes, 60),
-      },
-    ],
+    () =>
+      program
+        ? [
+            {
+              label: "Exercises",
+              value: String(program.summary.totalExercises),
+              width: getMetricBarWidth(program.summary.totalExercises, 32),
+            },
+            {
+              label: "Sets",
+              value: String(program.summary.totalWeeklySets),
+              width: getMetricBarWidth(program.summary.totalWeeklySets, 80),
+            },
+            {
+              label: "AVG. Time",
+              value: formatMinutes(program.summary.averageWorkoutDurationMinutes),
+              width: getMetricBarWidth(program.summary.averageWorkoutDurationMinutes, 120),
+            },
+            {
+              label: "AVG. TUT",
+              value: formatMinutes(program.summary.averageWorkoutTUTMinutes),
+              width: getMetricBarWidth(program.summary.averageWorkoutTUTMinutes, 60),
+            },
+          ]
+        : [],
     [program]
   );
+
+  const handleOpenDraft = async () => {
+    if (!program) {
+      return;
+    }
+
+    setIsOpeningDraft(true);
+
+    try {
+      const response = await openOrCreateWeeklyPlanEditDraft(program.weeklyPlanParentId);
+      hydrateProgramDraft(response, {
+        originRoute: buildOrigin(location),
+      });
+      navigate(getManualBuilderPath(), {
+        state: {
+          from: buildOrigin(location),
+          returnTo: resolveBackTarget(location, getWeeklyPlansPath()),
+        },
+      });
+    } catch (error) {
+      // Keep the current details view if opening the draft fails.
+    } finally {
+      setIsOpeningDraft(false);
+    }
+  };
+
+  if (isLoading || !program) {
+    return (
+      <div className="-mx-6 min-h-full bg-background-light text-slate-900">
+        <header className="sticky top-0 z-40 border-b border-slate-200 bg-background-light/80 backdrop-blur-md">
+          <div className="flex h-16 items-center justify-between px-4">
+            <button
+              type="button"
+              onClick={() => navigate(resolveBackTarget(location, getWeeklyPlansPath()))}
+              className="flex size-10 items-center justify-center rounded-full transition-colors hover:bg-slate-100"
+              aria-label="Back"
+            >
+              <span className="material-symbols-outlined text-slate-700">arrow_back</span>
+            </button>
+            <h1 className="text-lg font-bold tracking-tight">Program Details</h1>
+            <div className="size-10" />
+          </div>
+        </header>
+        {!isLoading && (
+          <main className="px-4 py-6">
+            <div className="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-sm">
+              This weekly plan could not be loaded.
+            </div>
+          </main>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="-mx-6 min-h-full bg-background-light text-slate-900">
@@ -208,7 +174,7 @@ export default function ProgramDetails() {
         <div className="flex min-w-0 items-center gap-3">
             <button
             type="button"
-            onClick={() => navigate("/program/all")}
+            onClick={() => navigate(resolveBackTarget(location, getWeeklyPlansPath()))}
             className="flex size-10 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-slate-100"
             aria-label="Back"
             >
@@ -224,12 +190,13 @@ export default function ProgramDetails() {
 
         <button
             type="button"
-            onClick={() => navigate("/program/manual-builder")}
+            onClick={handleOpenDraft}
             className="flex size-10 shrink-0 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
             aria-label="Edit program settings"
+            disabled={isOpeningDraft}
         >
             <span className="material-symbols-outlined text-xl font-light">
-            settings
+            {isOpeningDraft ? "progress_activity" : "settings"}
             </span>
         </button>
         </div>
@@ -322,7 +289,15 @@ export default function ProgramDetails() {
               <button
                 key={workout.id}
                 type="button"
-                onClick={() => setActiveWorkoutId(workout.id)}
+                onClick={() =>
+                  navigate(
+                    getWeeklyPlanDetailsPath(program.weeklyPlanParentId, workout.id),
+                    {
+                      replace: true,
+                      state: location.state,
+                    }
+                  )
+                }
                 className={[
                   "shrink-0 rounded-full px-6 py-2 text-xs font-bold whitespace-nowrap transition-colors",
                   isActive
@@ -517,6 +492,12 @@ export default function ProgramDetails() {
               })}
             </div>
           </section>
+        )}
+
+        {!activeWorkout && (
+          <div className="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-sm">
+            No workout details are available for this weekly plan yet.
+          </div>
         )}
       </main>
     </div>

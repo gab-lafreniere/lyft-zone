@@ -1,4 +1,13 @@
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { mapProgramDraftToWeeklyPlanUpdate, mapBuilderPayloadToProgramDraft } from "../features/weeklyPlans/mappers";
+import { updateWeeklyPlanDraft } from "../services/api";
 
 const ManualProgramContext = createContext(null);
 export const MAX_BLOCK_SET_COUNT = 10;
@@ -228,8 +237,107 @@ function createInitialDraft() {
   };
 }
 
+function createInitialDraftMetadata() {
+  return {
+    weeklyPlanParentId: null,
+    weeklyPlanVersionId: null,
+    status: "draft",
+    source: "manual",
+    loadedFromBackend: false,
+    lastSavedAt: null,
+    saveState: "idle",
+    lastPersistedSignature: "",
+    originRoute: null,
+  };
+}
+
 export function ManualProgramProvider({ children }) {
   const [programDraft, setProgramDraft] = useState(createInitialDraft);
+  const [draftMetadata, setDraftMetadata] = useState(createInitialDraftMetadata);
+
+  const persistDraftNow = useCallback(async (overrideDraft = null) => {
+    if (
+      !draftMetadata.loadedFromBackend ||
+      !draftMetadata.weeklyPlanParentId ||
+      !draftMetadata.weeklyPlanVersionId
+    ) {
+      return null;
+    }
+
+    const nextDraft = overrideDraft || programDraft;
+    const payload = mapProgramDraftToWeeklyPlanUpdate(nextDraft);
+    const signature = JSON.stringify(payload);
+
+    if (signature === draftMetadata.lastPersistedSignature) {
+      return null;
+    }
+
+    setDraftMetadata((prev) => ({
+      ...prev,
+      saveState: "saving",
+    }));
+
+    try {
+      const response = await updateWeeklyPlanDraft(
+        draftMetadata.weeklyPlanParentId,
+        draftMetadata.weeklyPlanVersionId,
+        payload
+      );
+
+      const updatedSignature = JSON.stringify(
+        mapProgramDraftToWeeklyPlanUpdate(response.builderPayload)
+      );
+
+      setDraftMetadata((prev) => ({
+        ...prev,
+        lastSavedAt: response.updatedAt || new Date().toISOString(),
+        saveState: "saved",
+        lastPersistedSignature: updatedSignature,
+      }));
+
+      return response;
+    } catch (error) {
+      setDraftMetadata((prev) => ({
+        ...prev,
+        saveState: "error",
+      }));
+      throw error;
+    }
+  }, [draftMetadata, programDraft]);
+
+  useEffect(() => {
+    if (
+      !draftMetadata.loadedFromBackend ||
+      !draftMetadata.weeklyPlanParentId ||
+      !draftMetadata.weeklyPlanVersionId
+    ) {
+      return undefined;
+    }
+
+    const signature = JSON.stringify(mapProgramDraftToWeeklyPlanUpdate(programDraft));
+
+    if (signature === draftMetadata.lastPersistedSignature) {
+      return undefined;
+    }
+
+    setDraftMetadata((prev) => ({
+      ...prev,
+      saveState: prev.saveState === "saving" ? "saving" : "dirty",
+    }));
+
+    const timeoutId = window.setTimeout(() => {
+      persistDraftNow(programDraft).catch(() => {});
+    }, 700);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    draftMetadata.lastPersistedSignature,
+    draftMetadata.loadedFromBackend,
+    draftMetadata.weeklyPlanParentId,
+    draftMetadata.weeklyPlanVersionId,
+    persistDraftNow,
+    programDraft,
+  ]);
 
   const updateSupersetSetCount = useCallback((workoutId, blockId, nextCount) => {
     const safeCount = clampNumber(nextCount || 1, 1, MAX_BLOCK_SET_COUNT);
@@ -277,6 +385,7 @@ export function ManualProgramProvider({ children }) {
       selectedWeek: payload.selectedWeek ?? 1,
       workouts: [],
     });
+    setDraftMetadata(createInitialDraftMetadata());
   }, []);
 
   const updateProgramMeta = useCallback((updates = {}) => {
@@ -684,6 +793,28 @@ export function ManualProgramProvider({ children }) {
 
   const resetProgramDraft = useCallback(() => {
     setProgramDraft(createInitialDraft());
+    setDraftMetadata(createInitialDraftMetadata());
+  }, []);
+
+  const hydrateProgramDraft = useCallback((response, options = {}) => {
+    const nextState = mapBuilderPayloadToProgramDraft(response);
+    setProgramDraft(nextState.programDraft);
+    setDraftMetadata({
+      ...createInitialDraftMetadata(),
+      ...nextState.metadata,
+      originRoute: options.originRoute ?? null,
+    });
+  }, []);
+
+  const setDraftOriginRoute = useCallback((originRoute) => {
+    setDraftMetadata((prev) => ({
+      ...prev,
+      originRoute: originRoute ?? null,
+    }));
+  }, []);
+
+  const updateDraftMetadata = useCallback((updates = {}) => {
+    setDraftMetadata((prev) => ({ ...prev, ...updates }));
   }, []);
 
   const updateBlock = useCallback((workoutId, blockId, updates) => {
@@ -786,6 +917,11 @@ export function ManualProgramProvider({ children }) {
       updateBlock,
       updateSupersetExercise,
       hasIncompleteSupersets,
+      draftMetadata,
+      hydrateProgramDraft,
+      persistDraftNow,
+      setDraftOriginRoute,
+      updateDraftMetadata,
     }),
     [
       programDraft,
@@ -812,6 +948,11 @@ export function ManualProgramProvider({ children }) {
       updateBlock,
       updateSupersetExercise,
       hasIncompleteSupersets,
+      draftMetadata,
+      hydrateProgramDraft,
+      persistDraftNow,
+      setDraftOriginRoute,
+      updateDraftMetadata,
     ]
   );
 

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   MAX_BLOCK_SET_COUNT,
   useManualProgram,
 } from "../context/ManualProgramContext";
+import { resolveBackTarget } from "../features/weeklyPlans/navigation";
 import { fetchExercises } from "../services/api";
 import { computeWorkoutMetrics } from "../utils/workoutMetrics";
 
@@ -288,11 +289,13 @@ export default function ManualWorkoutEditor() {
   const [activeSearchTarget, setActiveSearchTarget] = useState(null);
 
   const navigate = useNavigate();
+  const location = useLocation();
   const { workoutId } = useParams();
   const searchUiRef = useRef(null);
   const workoutTitleInputRef = useRef(null);
   const {
     programDraft,
+    draftMetadata,
     updateWorkoutName,
     updateBlock,
     updateSupersetExercise,
@@ -626,6 +629,16 @@ export default function ManualWorkoutEditor() {
   }
 
   const handleBack = () => {
+    const contextualBackTarget = resolveBackTarget(
+      location,
+      programDraft.isMultiWeek ? "/program/manual-builder-multi" : "/program/manual-builder"
+    );
+
+    if (location.state?.from) {
+      navigate(contextualBackTarget);
+      return;
+    }
+
     if (programDraft.isMultiWeek) {
       navigate("/program/manual-builder-multi");
       return;
@@ -648,6 +661,15 @@ export default function ManualWorkoutEditor() {
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+
+  const saveStatusLabel =
+    draftMetadata.saveState === "saving"
+      ? "Saving..."
+      : draftMetadata.saveState === "error"
+        ? "Save failed"
+        : draftMetadata.lastSavedAt
+          ? "Saved"
+          : "Draft";
 
   const handleExerciseResultClick = (exercise) => {
     if (activeSearchTarget) {
@@ -854,6 +876,9 @@ export default function ManualWorkoutEditor() {
                     </button>
                   </div>
                 )}
+                <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  {saveStatusLabel}
+                </p>
               </div>
             </div>
           </div>

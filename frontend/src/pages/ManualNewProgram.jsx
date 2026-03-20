@@ -1,14 +1,19 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useManualProgram } from "../context/ManualProgramContext";
+import { createWeeklyPlanDraft } from "../services/api";
+import { buildOrigin, resolveBackTarget } from "../features/weeklyPlans/navigation";
+import { getManualBuilderPath } from "../features/weeklyPlans/routes";
 
 export default function ManualNewProgram() {
   const navigate = useNavigate();
-  const { createProgramDraft } = useManualProgram();
+  const location = useLocation();
+  const { hydrateProgramDraft } = useManualProgram();
   const [programName, setProgramName] = useState("");
   const [sessionsPerWeek, setSessionsPerWeek] = useState(4);
   const [nameError, setNameError] = useState("");
   const [hasInteractedWithName, setHasInteractedWithName] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const trimmedProgramName = programName.trim();
   const isProgramNameEmpty = trimmedProgramName.length === 0;
@@ -44,7 +49,7 @@ export default function ManualNewProgram() {
     setNameError(validateProgramName());
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     setHasInteractedWithName(true);
 
     const nextNameError = validateProgramName();
@@ -54,11 +59,30 @@ export default function ManualNewProgram() {
       return;
     }
 
-    createProgramDraft({
-      programName: trimmedProgramName,
-      sessionsPerWeek,
-    });
-    navigate("/program/manual-builder");
+    setIsSubmitting(true);
+
+    try {
+      const response = await createWeeklyPlanDraft({
+        name: trimmedProgramName,
+        source: "manual",
+        sessionsPerWeek,
+        workouts: [],
+      });
+
+      hydrateProgramDraft(response, {
+        originRoute: resolveBackTarget(location, "/program"),
+      });
+      navigate(getManualBuilderPath(), {
+        state: {
+          from: buildOrigin(location),
+          returnTo: resolveBackTarget(location, "/program"),
+        },
+      });
+    } catch (error) {
+      setNameError(error.message || "Unable to create program");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -67,7 +91,7 @@ export default function ManualNewProgram() {
         <div className="flex h-16 items-center justify-between px-4">
           <button
             type="button"
-            onClick={() => navigate("/program")}
+            onClick={() => navigate(resolveBackTarget(location, "/program"))}
             className="flex size-10 items-center justify-center rounded-full transition-colors hover:bg-slate-100"
             aria-label="Back"
           >
@@ -188,15 +212,15 @@ export default function ManualNewProgram() {
         <button
           type="button"
           onClick={handleCreate}
-          disabled={!canCreateProgram}
+          disabled={!canCreateProgram || isSubmitting}
           className={[
             "w-full rounded-xl py-4 font-bold transition-all",
-            canCreateProgram
+            canCreateProgram && !isSubmitting
               ? "bg-primary text-white shadow-lg shadow-primary/20 active:scale-[0.98]"
               : "cursor-not-allowed bg-slate-300 text-white/60 shadow-none",
           ].join(" ")}
         >
-          Create Weekly Template
+          {isSubmitting ? "Creating..." : "Create Weekly Template"}
         </button>
       </footer>
     </div>

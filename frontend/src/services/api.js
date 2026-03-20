@@ -2,6 +2,53 @@ const BACKEND_URL =
   process.env.REACT_APP_BACKEND_URL ||
   'https://lyft-zone-backend.onrender.com';
 
+const USER_ID_STORAGE_KEY = 'lyft_zone_user_id';
+
+async function readJsonResponse(response) {
+  const json = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      json?.error?.message ||
+        json?.message ||
+        `API error ${response.status}`
+    );
+  }
+
+  return json;
+}
+
+export async function ensureCurrentUserId() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const existingUserId = window.localStorage.getItem(USER_ID_STORAGE_KEY);
+  if (existingUserId) {
+    return existingUserId;
+  }
+
+  const email = `lyft-zone-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}@example.com`;
+
+  const response = await fetch(`${BACKEND_URL}/api/users`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+
+  const json = await readJsonResponse(response);
+  const userId = json?.user?.id;
+
+  if (!userId) {
+    throw new Error('Unable to create a local user session');
+  }
+
+  window.localStorage.setItem(USER_ID_STORAGE_KEY, userId);
+  return userId;
+}
+
 export const fetchExercises = async ({
   q = '',
   limit = 25,
@@ -76,3 +123,114 @@ export const savePlan = async (programPayload) => {
   }
   return json.data;
 };
+
+export async function createWeeklyPlanDraft(programPayload) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(`${BACKEND_URL}/api/weekly-plans`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...programPayload,
+      userId,
+    }),
+  });
+
+  return readJsonResponse(response);
+}
+
+export async function getWeeklyPlans() {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/weekly-plans?${new URLSearchParams({ userId }).toString()}`
+  );
+
+  return readJsonResponse(response);
+}
+
+export async function getWeeklyPlanById(weeklyPlanParentId) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/weekly-plans/${weeklyPlanParentId}?${new URLSearchParams({
+      userId,
+    }).toString()}`
+  );
+
+  return readJsonResponse(response);
+}
+
+export async function openOrCreateWeeklyPlanEditDraft(weeklyPlanParentId) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/weekly-plans/${weeklyPlanParentId}/edit-draft`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    }
+  );
+
+  return readJsonResponse(response);
+}
+
+export async function updateWeeklyPlanDraft(
+  weeklyPlanParentId,
+  weeklyPlanVersionId,
+  programPayload
+) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/weekly-plans/${weeklyPlanParentId}/drafts/${weeklyPlanVersionId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...programPayload,
+        userId,
+      }),
+    }
+  );
+
+  return readJsonResponse(response);
+}
+
+export async function publishWeeklyPlanDraft(weeklyPlanParentId) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/weekly-plans/${weeklyPlanParentId}/publish`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    }
+  );
+
+  return readJsonResponse(response);
+}
+
+export async function bookmarkWeeklyPlan(weeklyPlanParentId) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/weekly-plans/${weeklyPlanParentId}/bookmark`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    }
+  );
+
+  return readJsonResponse(response);
+}
+
+export async function unbookmarkWeeklyPlan(weeklyPlanParentId) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/weekly-plans/${weeklyPlanParentId}/bookmark`,
+    {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    }
+  );
+
+  return readJsonResponse(response);
+}
