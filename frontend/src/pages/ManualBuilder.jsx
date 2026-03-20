@@ -42,25 +42,48 @@ function canMoveSelectedWorkouts(workouts, selectedIds, direction) {
   );
 }
 
+function normalizeWorkoutName(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function validatePlanName(value) {
+  return String(value || "").trim() ? "" : "Plan name is required";
+}
+
 export default function ManualBuilder() {
   const navigate = useNavigate();
   const {
     programDraft,
     addWorkout,
-    updateWorkoutName,
     moveWorkouts,
     duplicateWorkouts,
     removeWorkouts,
+    updateProgramMeta,
+    updateSessionsPerWeek,
+    resetProgramDraft,
   } = useManualProgram();
   const [showMuscleDistribution, setShowMuscleDistribution] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [selectedWorkoutIds, setSelectedWorkoutIds] = useState([]);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsProgramNameDraft, setSettingsProgramNameDraft] = useState("");
+  const [settingsNameError, setSettingsNameError] = useState("");
+  const [hasInteractedWithSettingsName, setHasInteractedWithSettingsName] = useState(false);
+  const [settingsSessionsPerWeek, setSettingsSessionsPerWeek] = useState(4);
+  const [settingsSessionsError, setSettingsSessionsError] = useState("");
+  const [showDeleteProgramConfirm, setShowDeleteProgramConfirm] = useState(false);
 
-  const programName = programDraft.programName || "New Program";
+  const programName = programDraft.programName;
   const sessionsPerWeek = programDraft.sessionsPerWeek || 4;
   const createdWorkoutCount = programDraft.workouts.length;
-  const isWeeklyTemplateComplete = createdWorkoutCount === sessionsPerWeek;
   const canCreateWorkout = createdWorkoutCount < sessionsPerWeek;
+  const hasEmptyWorkouts = useMemo(
+    () =>
+      programDraft.workouts.some(
+        (workout) => !Array.isArray(workout.blocks) || workout.blocks.length === 0
+      ),
+    [programDraft.workouts]
+  );
   const selectedWorkoutIdSet = useMemo(
     () => new Set(selectedWorkoutIds),
     [selectedWorkoutIds]
@@ -76,9 +99,58 @@ export default function ManualBuilder() {
   const canDuplicate =
     selectedWorkoutIds.length > 0 &&
     createdWorkoutCount + selectedWorkoutIds.length <= sessionsPerWeek;
-  const canDelete =
-    selectedWorkoutIds.length > 0 &&
-    selectedWorkoutIds.length < createdWorkoutCount;
+  const canDelete = selectedWorkoutIds.length > 0;
+
+  const workoutNameValidationById = useMemo(() => {
+    const normalizedNameCounts = new Map();
+
+    programDraft.workouts.forEach((workout) => {
+      const normalizedName = normalizeWorkoutName(workout.name);
+
+      if (!normalizedName) {
+        return;
+      }
+
+      normalizedNameCounts.set(
+        normalizedName,
+        (normalizedNameCounts.get(normalizedName) || 0) + 1
+      );
+    });
+
+    return Object.fromEntries(
+      programDraft.workouts.map((workout) => {
+        const normalizedName = normalizeWorkoutName(workout.name);
+        const isEmptyName = normalizedName.length === 0;
+        const isDuplicateName =
+          !isEmptyName && (normalizedNameCounts.get(normalizedName) || 0) > 1;
+
+        return [
+          workout.id,
+          {
+            isEmptyName,
+            isDuplicateName,
+            nameError: isEmptyName
+              ? "Workout name is required"
+              : isDuplicateName
+                ? "Workout name must be unique"
+                : "",
+          },
+        ];
+      })
+    );
+  }, [programDraft.workouts]);
+
+  const hasInvalidWorkoutNames = useMemo(
+    () =>
+      programDraft.workouts.some((workout) => {
+        const validation = workoutNameValidationById[workout.id];
+        return Boolean(validation?.nameError);
+      }),
+    [programDraft.workouts, workoutNameValidationById]
+  );
+  const hasInvalidWorkouts = hasEmptyWorkouts || hasInvalidWorkoutNames;
+  const isWeeklyTemplateComplete = createdWorkoutCount === sessionsPerWeek;
+  const isWeeklyTemplateReady = isWeeklyTemplateComplete && !hasInvalidWorkouts;
 
   const weeklyMetrics = useMemo(
     () => aggregateWorkoutMetrics(programDraft.workouts),
@@ -129,6 +201,8 @@ export default function ManualBuilder() {
     [programDraft.workouts]
   );
 
+  const settingsCanSave = settingsProgramNameDraft.trim().length > 0;
+
   const toggleEditMode = () => {
     setIsEditMode((prev) => {
       if (prev) {
@@ -172,6 +246,77 @@ export default function ManualBuilder() {
     setSelectedWorkoutIds([]);
   };
 
+  const openSettingsPanel = () => {
+    setSettingsProgramNameDraft(programDraft.programName);
+    setSettingsNameError("");
+    setHasInteractedWithSettingsName(false);
+    setSettingsSessionsPerWeek(programDraft.sessionsPerWeek || 4);
+    setSettingsSessionsError("");
+    setShowDeleteProgramConfirm(false);
+    setIsSettingsOpen(true);
+  };
+
+  const closeSettingsPanel = () => {
+    setIsSettingsOpen(false);
+    setSettingsNameError("");
+    setHasInteractedWithSettingsName(false);
+    setSettingsSessionsError("");
+    setShowDeleteProgramConfirm(false);
+  };
+
+  const handleSettingsNameChange = (event) => {
+    const nextValue = event.target.value;
+    setSettingsProgramNameDraft(nextValue);
+
+    if (settingsNameError && nextValue.trim()) {
+      setSettingsNameError("");
+    }
+  };
+
+  const handleSettingsNameBlur = () => {
+    setHasInteractedWithSettingsName(true);
+    setSettingsNameError(validatePlanName(settingsProgramNameDraft));
+  };
+
+  const decrementSettingsSessions = () => {
+    const nextValue = Math.max(1, settingsSessionsPerWeek - 1);
+
+    if (nextValue < createdWorkoutCount) {
+      setSettingsSessionsError(
+        "Delete existing workouts before reducing sessions per week"
+      );
+      return;
+    }
+
+    setSettingsSessionsPerWeek(nextValue);
+    setSettingsSessionsError("");
+  };
+
+  const incrementSettingsSessions = () => {
+    setSettingsSessionsPerWeek((prev) => Math.min(7, prev + 1));
+    setSettingsSessionsError("");
+  };
+
+  const handleSaveSettings = () => {
+    const nextSettingsNameError = validatePlanName(settingsProgramNameDraft);
+    setHasInteractedWithSettingsName(true);
+    setSettingsNameError(nextSettingsNameError);
+
+    if (nextSettingsNameError) {
+      return;
+    }
+
+    updateProgramMeta({ programName: settingsProgramNameDraft.trim() });
+    updateSessionsPerWeek(settingsSessionsPerWeek);
+    closeSettingsPanel();
+  };
+
+  const handleDeleteProgram = () => {
+    resetProgramDraft();
+    closeSettingsPanel();
+    navigate("/program");
+  };
+
   const actionButtonClass = (enabled, tone = "neutral") =>
     [
       "inline-flex h-9 w-9 items-center justify-center rounded-full transition-all select-none",
@@ -198,8 +343,9 @@ export default function ManualBuilder() {
           <div className="absolute right-4 flex items-center gap-3">
             <button
               type="button"
-              className="rounded-full p-1.5 transition-colors hover:bg-slate-100"
-              aria-label="Settings"
+              onClick={openSettingsPanel}
+              className="flex size-10 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+              aria-label="Open plan settings"
             >
               <span className="material-symbols-outlined text-xl font-light">
                 settings
@@ -369,6 +515,11 @@ export default function ManualBuilder() {
         <div className="space-y-3">
           {workoutCards.map((workout, index) => {
             const isSelected = selectedWorkoutIdSet.has(workout.id);
+            const validation = workoutNameValidationById[workout.id] || {
+              nameError: "",
+            };
+            const isEmptyWorkout =
+              !Array.isArray(workout.blocks) || workout.blocks.length === 0;
 
             return (
               <button
@@ -380,10 +531,12 @@ export default function ManualBuilder() {
                     : navigate(`/program/manual-builder/workout/${workout.id}`)
                 }
                 className={[
-                  "group flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition-colors",
+                  "group flex w-full items-start gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition-colors",
                   isSelected
                     ? "border-primary/40 bg-primary/5"
-                    : "border-slate-100",
+                    : validation.nameError || isEmptyWorkout
+                      ? "border-red-200"
+                      : "border-slate-100",
                 ].join(" ")}
               >
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center">
@@ -409,32 +562,36 @@ export default function ManualBuilder() {
                 </div>
 
                 <div className="min-w-0 flex-1">
-                  {isEditMode ? (
-                    <div className="flex items-center gap-2">
-                      <span className="block truncate text-base font-semibold text-slate-800">
-                        {workout.name}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={workout.name}
-                        onClick={(event) => event.stopPropagation()}
-                        onChange={(event) =>
-                          updateWorkoutName(workout.id, event.target.value)
-                        }
-                        className="w-full border-none bg-transparent p-0 text-base font-semibold focus:ring-0"
-                      />
-                    </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={[
+                        "block truncate text-base font-semibold",
+                        validation.nameError ? "text-red-600" : "text-slate-800",
+                      ].join(" ")}
+                    >
+                      {workout.name}
+                    </span>
+                  </div>
+
+                  {validation.nameError && (
+                    <p className="mt-1 text-xs font-medium text-red-500">
+                      {validation.nameError}
+                    </p>
                   )}
-                  <p className="text-[11px] leading-relaxed text-slate-500 opacity-80">
+
+                  {isEmptyWorkout && (
+                    <p className="mt-1 text-xs font-medium text-red-500">
+                      Add at least 1 block
+                    </p>
+                  )}
+
+                  <p className="mt-1 text-[11px] leading-relaxed text-slate-500 opacity-80">
                     {workout.meta}
                   </p>
                 </div>
 
                 {!isEditMode && (
-                  <span className="material-symbols-outlined text-slate-400">
+                  <span className="material-symbols-outlined pt-0.5 text-slate-400">
                     chevron_right
                   </span>
                 )}
@@ -455,6 +612,11 @@ export default function ManualBuilder() {
                 <span className="text-sm font-semibold text-slate-400 transition-colors hover:text-primary">
                   Create Workout {createdWorkoutCount + 1}
                 </span>
+                {createdWorkoutCount === 0 && (
+                  <span className="text-xs font-medium text-slate-400">
+                    Start building your weekly template
+                  </span>
+                )}
               </div>
             </button>
           )}
@@ -463,15 +625,15 @@ export default function ManualBuilder() {
         <div className="flex flex-col items-center pb-12 pt-8">
           <button
             type="button"
-            disabled={!isWeeklyTemplateComplete}
+            disabled={!isWeeklyTemplateReady}
             onClick={() => {
-              if (isWeeklyTemplateComplete) {
+              if (isWeeklyTemplateReady) {
                 navigate("/program/manual-convert");
               }
             }}
             className={[
               "flex w-full max-w-xs items-center justify-center gap-2 rounded-xl border-2 py-3 font-semibold transition-all",
-              isWeeklyTemplateComplete
+              isWeeklyTemplateReady
                 ? "border-primary/30 bg-white text-primary hover:border-primary/50"
                 : "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400",
             ].join(" ")}
@@ -493,10 +655,10 @@ export default function ManualBuilder() {
         <div className="mx-auto max-w-md">
           <button
             type="button"
-            disabled={!isWeeklyTemplateComplete}
+            disabled={!isWeeklyTemplateReady}
             className={[
               "flex w-full items-center justify-center rounded-xl py-4 font-bold transition-colors",
-              isWeeklyTemplateComplete
+              isWeeklyTemplateReady
                 ? "bg-primary text-slate-900"
                 : "cursor-not-allowed bg-slate-300 text-white/60",
             ].join(" ")}
@@ -505,6 +667,163 @@ export default function ManualBuilder() {
           </button>
         </div>
       </div>
+
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-[60] flex items-end bg-slate-900/40 backdrop-blur-sm">
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default"
+            aria-label="Close settings"
+            onClick={closeSettingsPanel}
+          />
+
+          <div className="relative w-full rounded-t-3xl bg-white p-5 shadow-2xl">
+            <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-slate-200" />
+
+            <div className="mb-5 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-900">Plan Settings</h3>
+              <button
+                type="button"
+                onClick={closeSettingsPanel}
+                className="flex size-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Close plan settings"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="space-y-5">
+              <section className="space-y-3">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                  Plan Name
+                </label>
+                <input
+                  type="text"
+                  value={settingsProgramNameDraft}
+                  onChange={handleSettingsNameChange}
+                  onBlur={handleSettingsNameBlur}
+                  className={[
+                    "h-12 w-full rounded-xl border bg-white px-4 font-medium outline-none transition-all focus:border-transparent focus:ring-2",
+                    settingsNameError
+                      ? "border-red-300 focus:ring-red-200"
+                      : "border-slate-200 focus:ring-primary",
+                  ].join(" ")}
+                />
+                {hasInteractedWithSettingsName && settingsNameError && (
+                  <p className="text-sm font-medium text-red-500">
+                    {settingsNameError}
+                  </p>
+                )}
+              </section>
+
+              <section className="space-y-3">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Sessions Per Week
+                  </label>
+                  <p className="mt-1 text-xs text-slate-400">
+                    You can&apos;t go below the number of workouts already created.
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <button
+                      type="button"
+                      onClick={decrementSettingsSessions}
+                      className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-slate-600 transition-colors hover:bg-slate-100"
+                      aria-label="Decrease sessions per week"
+                    >
+                      <span className="material-symbols-outlined">remove</span>
+                    </button>
+
+                    <div className="flex-1 text-center">
+                      <span className="text-3xl font-black text-slate-900">
+                        {settingsSessionsPerWeek}
+                      </span>
+                      <span className="mt-1 block text-xs font-semibold uppercase tracking-wider text-primary">
+                        Sessions
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={incrementSettingsSessions}
+                      className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-slate-600 transition-colors hover:bg-slate-100"
+                      aria-label="Increase sessions per week"
+                    >
+                      <span className="material-symbols-outlined">add</span>
+                    </button>
+                  </div>
+                </div>
+
+                {settingsSessionsError && (
+                  <p className="text-sm font-medium text-red-500">
+                    {settingsSessionsError}
+                  </p>
+                )}
+              </section>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={closeSettingsPanel}
+                  className="flex-1 rounded-xl border border-slate-200 py-3 font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveSettings}
+                  disabled={!settingsCanSave}
+                  className={[
+                    "flex-1 rounded-xl py-3 font-semibold transition-colors",
+                    settingsCanSave
+                      ? "bg-primary text-slate-900"
+                      : "cursor-not-allowed bg-slate-300 text-white/60",
+                  ].join(" ")}
+                >
+                  Save
+                </button>
+              </div>
+
+              <section className="rounded-2xl border border-red-100 bg-red-50/60 p-4">
+                {!showDeleteProgramConfirm ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteProgramConfirm(true)}
+                    className="mt-3 w-full rounded-xl border border-red-200 bg-white py-3 font-semibold text-red-500 transition-colors hover:bg-red-50"
+                  >
+                    Delete Program
+                  </button>
+                ) : (
+                  <div className="mt-3 space-y-3">
+                    <p className="text-sm text-red-600">
+                      Delete this draft program? This action can&apos;t be undone.
+                    </p>
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteProgramConfirm(false)}
+                        className="flex-1 rounded-xl border border-slate-200 bg-white py-3 font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDeleteProgram}
+                        className="flex-1 rounded-xl bg-red-500 py-3 font-semibold text-white transition-colors hover:bg-red-600"
+                      >
+                        Delete Program
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

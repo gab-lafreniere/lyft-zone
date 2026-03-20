@@ -224,7 +224,7 @@ function createInitialDraft() {
     endDate: null,
     isMultiWeek: false,
     selectedWeek: 1,
-    workouts: [createWorkout("Workout 1", false)],
+    workouts: [],
   };
 }
 
@@ -266,9 +266,6 @@ export function ManualProgramProvider({ children }) {
     }
 
     const sessions = Math.max(1, Math.min(7, payload.sessionsPerWeek ?? 4));
-    const workouts = Array.from({ length: sessions }, (_, index) =>
-      createWorkout(`Workout ${index + 1}`, false)
-    );
 
     setProgramDraft({
       programName: nextProgramName,
@@ -278,12 +275,27 @@ export function ManualProgramProvider({ children }) {
       endDate: payload.endDate ?? null,
       isMultiWeek: payload.isMultiWeek ?? false,
       selectedWeek: payload.selectedWeek ?? 1,
-      workouts,
+      workouts: [],
     });
   }, []);
 
   const updateProgramMeta = useCallback((updates = {}) => {
     setProgramDraft((prev) => ({ ...prev, ...updates }));
+  }, []);
+
+  const updateSessionsPerWeek = useCallback((nextValue) => {
+    setProgramDraft((prev) => {
+      const safeValue = clampNumber(Number(nextValue) || 1, 1, 7);
+
+      if (safeValue < prev.workouts.length) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        sessionsPerWeek: safeValue,
+      };
+    });
   }, []);
 
   const addWorkout = useCallback((name) => {
@@ -661,24 +673,17 @@ export function ManualProgramProvider({ children }) {
     }
 
     setProgramDraft((prev) => {
-      if (selectedIds.length >= prev.workouts.length) {
-        return prev;
-      }
-
       const selectedIdSet = new Set(selectedIds);
-      const nextWorkouts = prev.workouts.filter(
-        (workout) => !selectedIdSet.has(workout.id)
-      );
-
-      if (!nextWorkouts.length) {
-        return prev;
-      }
 
       return {
         ...prev,
-        workouts: nextWorkouts,
+        workouts: prev.workouts.filter((workout) => !selectedIdSet.has(workout.id)),
       };
     });
+  }, []);
+
+  const resetProgramDraft = useCallback(() => {
+    setProgramDraft(createInitialDraft());
   }, []);
 
   const updateBlock = useCallback((workoutId, blockId, updates) => {
@@ -760,6 +765,8 @@ export function ManualProgramProvider({ children }) {
       programDraft,
       createProgramDraft,
       updateProgramMeta,
+      updateSessionsPerWeek,
+      resetProgramDraft,
       addWorkout,
       updateWorkoutName,
       appendSingleBlockFromExercise,
@@ -784,6 +791,8 @@ export function ManualProgramProvider({ children }) {
       programDraft,
       createProgramDraft,
       updateProgramMeta,
+      updateSessionsPerWeek,
+      resetProgramDraft,
       addWorkout,
       updateWorkoutName,
       appendSingleBlockFromExercise,

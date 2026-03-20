@@ -90,10 +90,11 @@ export default function ManualNewProgram() {
 
           <input
             type="text"
+            autoFocus
             value={programName}
             onChange={handleProgramNameChange}
             onBlur={handleProgramNameBlur}
-            placeholder="Upper Lower Strength - October 2025"
+            placeholder="Name your program"
             className={[
               "h-14 w-full rounded-xl border bg-white px-4 font-medium outline-none transition-all placeholder:text-sm placeholder:text-slate-400 focus:border-transparent focus:ring-2",
               nameError

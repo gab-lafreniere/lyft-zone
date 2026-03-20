@@ -131,6 +131,7 @@ export default function Program() {
   
                 <button
                   type="button"
+                  onClick={() => navigate("/program/all/upper-lower-hypertrophy")}
                   className="w-full mt-4 py-3 rounded-xl text-sm font-bold border shadow-sm hover:shadow-md transition-shadow bg-primary text-white border-primary/20 shadow-md shadow-primary/20"
                 >
                   View Details
@@ -277,7 +278,7 @@ export default function Program() {
             <div className="flex items-center justify-between mb-4 px-2">
               <h3 className="text-lg font-bold">Past Programs</h3>
               <button type="button" className="text-sm font-medium text-primary">
-                See All
+                Browse
               </button>
             </div>
   
@@ -307,39 +308,56 @@ export default function Program() {
             </div>
           </section>
   
-          {/* Saved Programs */}
+          {/* ALL Programs */}
           <section className="pb-6">
             <div className="flex items-center justify-between mb-4 px-2">
-              <h3 className="text-lg font-bold">Saved Programs</h3>
-              <button type="button" className="text-sm font-medium text-primary">
-                Browse
+              <h3 className="text-lg font-bold">All Programs</h3>
+              <button
+                type="button"
+                onClick={() => navigate("/program/all")}
+                className="text-sm font-medium text-primary"
+              >
+                See All
               </button>
             </div>
   
             <div className="space-y-3 px-2">
-              {[
-                { title: "Push Pull Legs Blueprint", subtitle: "6 Days / 125 Sets • Per Week" },
-                { title: "Classic Physique Focus", subtitle: "5 Days / 116 Sets • Per Week" },
+            {[
+                {
+                  id: "v-taper-foundation",
+                  title: "V-Taper Foundation",
+                  subtitle: "4 workouts / 48 total sets • Draft",
+                  isBookmarked: true,
+                },
+                {
+                  id: "upper-lower-hypertrophy",
+                  title: "Upper Lower Hypertrophy",
+                  subtitle: "5 workouts / 52 total sets • Published",
+                  isBookmarked: false,
+                },
               ].map((p) => (
-                <div
-                  key={p.title}
-                  className="relative overflow-hidden rounded-2xl bg-white border border-slate-100 p-5 shadow-sm"
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => navigate(`/program/all/${p.id}`)}
+                  className="group relative w-full overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 text-left shadow-sm transition-all hover:shadow-md"
                 >
                   <div className="flex justify-between items-center">
                     <div>
                       <h4 className="text-sm font-bold">{p.title}</h4>
-                      <p className="text-xs text-slate-500 mt-1">{p.subtitle}</p>
+                      <p className="mt-1 text-xs text-slate-500">{p.subtitle}</p>
                     </div>
-  
-                    <button
-                      type="button"
-                      className="h-8 w-8 rounded-full flex items-center justify-center text-slate-400"
-                      aria-label="Bookmark"
+
+                    <div
+                      className="h-8 w-8 rounded-full flex items-center justify-center text-slate-400 transition-colors group-hover:text-primary"
+                      aria-hidden="true"
                     >
-                      <span className="material-symbols-outlined">bookmark</span>
-                    </button>
+                      <span className="material-symbols-outlined">
+                        {p.isBookmarked ? "bookmark" : "bookmark_border"}
+                      </span>
+                    </div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </section>

@@ -86,6 +86,25 @@ Important:
 - Le suivi d’entraînement enregistre des séances réellement exécutées
 - L’historique utilisateur ne doit jamais écraser le plan théorique d’origine
 
+Statut des plans:
+- draft:
+  - plan en cours de création ou non publié
+  - éditable librement
+  - visible dans la librairie utilisateur
+- published:
+  - plan finalisé et prêt à être utilisé
+  - non modifiable directement (édition via duplication ou mode édition dédié)
+- archived (future):
+  - plan non actif mais conservé pour historique
+
+Règles:
+- Tout plan créé via manual builder ou AI builder commence en draft
+- Un plan doit être valide pour être publié:
+  - tous les workouts créés
+  - aucun workout vide
+  - contraintes respectées
+- La librairie affiche tous les plans (draft + published)
+
 ==================================================
 ENTRÉES UTILISATEUR DU WIZARD
 ==================================================
@@ -162,6 +181,17 @@ Modules principaux:
 - Coach IA longitudinal (Phase 3)
 - Historique des versions de plan et ajustements
 - Gestion utilisateur et préférences
+
+Librairie de programmes:
+- Une page centralise tous les plans utilisateur (All Programs)
+- Supporte:
+  - recherche texte
+  - filtres (draft, published)
+  - bookmarking visuel
+- Chaque plan possède:
+  - statut (draft ou published)
+  - source (manual ou AI)
+- Les plans sont consultables indépendamment du cycle actif
 
 ==================================================
 VOCABULAIRE PRODUIT CANONIQUE
@@ -380,6 +410,14 @@ Règles UX actuelles:
 - Tempo est saisi numériquement puis normalisé
 - Rest est contrôlé via stepper
 
+Contraintes globales du template hebdomadaire:
+- Le nombre de workouts ne peut pas dépasser sessionsPerWeek
+- Tous les workouts doivent être créés pour compléter le template
+- Aucun workout ne peut être vide pour valider le template
+- Le passage à multi-week ou publish est bloqué si:
+  - un workout est vide
+  - le template est incomplet
+
 ==================================================
 ANALYTICS FRONTEND ACTUELLES
 ==================================================
@@ -479,6 +517,11 @@ Données par exercice:
 - isSupersetFriendly
 - fatigueScore
 - status
+
+Assets visuels:
+- Toutes les illustrations d’exercices utilisent un format carré 1:1
+- Fond blanc uniforme
+- Style cohérent pour permettre une intégration UI propre et prévisible
 
 L’IA n’invente jamais d’exercices.
 Elle ne travaille que sur la base interne.
