@@ -4,7 +4,7 @@
   "description": "Backend for Lyft Zone training app",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "prisma migrate deploy --config ./prisma.config.ts && node server.js",
     "dev": "node server.js",
     "test:prisma-api-flow": "node scripts/test-prisma-api-flow.js",
     "validate:exercises": "node src/exercise-library/validate-exercises.js",
