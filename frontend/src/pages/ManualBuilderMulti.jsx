@@ -582,7 +582,15 @@ export default function ManualBuilderMulti() {
             <button
               key={workout.id}
               type="button"
-              onClick={() => navigate(getCycleWorkoutEditorPath(cycleId, workout.id))}
+              onClick={() =>
+                navigate(
+                  getCycleWorkoutEditorPath(
+                    cycleId,
+                    selectedWeek?.weekNumber || programDraft.selectedWeek || 1,
+                    workout.orderIndex
+                  )
+                )
+              }
               className="group flex w-full items-center gap-3 rounded-xl border border-slate-100 bg-white p-3 text-left shadow-sm"
             >
               <div className="min-w-0 flex-1">

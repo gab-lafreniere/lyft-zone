@@ -30,6 +30,7 @@ export default function AppRouter() {
           <Route path="/program/all/:programId" element={<ProgramDetails />} />
           <Route path="/program/cycles/:cycleId" element={<CycleProgramDetails />} />
           <Route path="/program/cycles/:cycleId/builder" element={<ManualBuilderMulti />} />
+          <Route path="/program/cycles/:cycleId/builder/week/:weekNumber/workout/:orderIndex" element={<ManualWorkoutEditor />} />
           <Route path="/program/cycles/:cycleId/builder/workout/:workoutId" element={<ManualWorkoutEditor />} />
           <Route path="/program/manual-new" element={<ManualNewProgram />} />
           <Route path="/program/manual-builder" element={<ManualBuilder />} />

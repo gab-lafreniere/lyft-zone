@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { MAX_BLOCK_SET_COUNT } from "../context/ManualProgramContext";
 import { useEditableProgram } from "../context/EditableProgramContext";
+import { getCycleWorkoutEditorPath } from "../features/multiWeek/routes";
 import { resolveBackTarget } from "../features/weeklyPlans/navigation";
 import { fetchExercises } from "../services/api";
 import { computeWorkoutMetrics } from "../utils/workoutMetrics";
@@ -267,9 +268,11 @@ function resolveMultiWeekBuilderPath(pathname) {
     return builderMatch[1];
   }
 
-  const workoutMatch = pathname.match(/^(\/program\/cycles\/[^/]+)\/workouts\/[^/]+$/);
+  const workoutMatch = pathname.match(
+    /^(\/program\/cycles\/[^/]+\/builder)(?:\/week\/[^/]+\/workout\/[^/]+|\/workout\/[^/]+)$/
+  );
   if (workoutMatch) {
-    return `${workoutMatch[1]}/builder`;
+    return workoutMatch[1];
   }
 
   return "/program/manual-builder-multi";
@@ -302,10 +305,9 @@ export default function ManualWorkoutEditor() {
 
   const navigate = useNavigate();
   const location = useLocation();
-  const { workoutId } = useParams();
+  const { cycleId, workoutId, weekNumber, orderIndex } = useParams();
   const searchUiRef = useRef(null);
   const workoutTitleInputRef = useRef(null);
-  const lastResolvedMultiWeekWorkoutRef = useRef(null);
   const {
     programDraft,
     draftMetadata,
@@ -323,9 +325,38 @@ export default function ManualWorkoutEditor() {
     assignSupersetExercise,
     hasIncompleteSupersets,
   } = useEditableProgram();
+  const parsedWeekNumber = Number(weekNumber);
+  const parsedOrderIndex = Number(orderIndex);
+  const hasCanonicalMultiWeekRoute =
+    Number.isInteger(parsedWeekNumber) &&
+    parsedWeekNumber > 0 &&
+    Number.isInteger(parsedOrderIndex) &&
+    parsedOrderIndex > 0;
 
   const multiWeekWorkoutMatch = useMemo(() => {
     if (!programDraft.isMultiWeek) {
+      return null;
+    }
+
+    if (hasCanonicalMultiWeekRoute) {
+      const matchedWeek = (programDraft.weeks || []).find(
+        (week) => week.weekNumber === parsedWeekNumber
+      );
+      if (!matchedWeek) {
+        return null;
+      }
+
+      const matchedWorkout = (matchedWeek.workouts || []).find(
+        (item) => item.orderIndex === parsedOrderIndex
+      );
+
+      if (matchedWorkout) {
+        return {
+          workout: matchedWorkout,
+          weekNumber: matchedWeek.weekNumber,
+        };
+      }
+
       return null;
     }
 
@@ -341,41 +372,18 @@ export default function ManualWorkoutEditor() {
     }
 
     return null;
-  }, [programDraft.isMultiWeek, programDraft.weeks, workoutId]);
-
-  const preservedMultiWeekWorkoutMatch = useMemo(() => {
-    if (!programDraft.isMultiWeek || multiWeekWorkoutMatch) {
-      return multiWeekWorkoutMatch;
-    }
-
-    const lastResolved = lastResolvedMultiWeekWorkoutRef.current;
-    if (!lastResolved?.weekNumber || !lastResolved?.orderIndex) {
-      return null;
-    }
-
-    const preservedWeek = (programDraft.weeks || []).find(
-      (week) => week.weekNumber === lastResolved.weekNumber
-    );
-    if (!preservedWeek) {
-      return null;
-    }
-
-    const preservedWorkout = (preservedWeek.workouts || []).find(
-      (item) => item.orderIndex === lastResolved.orderIndex
-    );
-    if (!preservedWorkout) {
-      return null;
-    }
-
-    return {
-      workout: preservedWorkout,
-      weekNumber: preservedWeek.weekNumber,
-    };
-  }, [multiWeekWorkoutMatch, programDraft.isMultiWeek, programDraft.weeks]);
+  }, [
+    hasCanonicalMultiWeekRoute,
+    parsedOrderIndex,
+    parsedWeekNumber,
+    programDraft.isMultiWeek,
+    programDraft.weeks,
+    workoutId,
+  ]);
 
   const workout = useMemo(() => {
     if (programDraft.isMultiWeek) {
-      return preservedMultiWeekWorkoutMatch?.workout || null;
+      return multiWeekWorkoutMatch?.workout || null;
     }
 
     if (!programDraft.workouts.length) {
@@ -386,53 +394,43 @@ export default function ManualWorkoutEditor() {
       programDraft.workouts.find((item) => item.id === workoutId) ||
       programDraft.workouts[0]
     );
-  }, [preservedMultiWeekWorkoutMatch, programDraft.isMultiWeek, programDraft.workouts, workoutId]);
+  }, [multiWeekWorkoutMatch, programDraft.isMultiWeek, programDraft.workouts, workoutId]);
 
   useEffect(() => {
-    if (!programDraft.isMultiWeek || !preservedMultiWeekWorkoutMatch?.workout) {
+    if (!programDraft.isMultiWeek || hasCanonicalMultiWeekRoute || !multiWeekWorkoutMatch?.workout) {
       return;
     }
 
-    lastResolvedMultiWeekWorkoutRef.current = {
-      workoutId: preservedMultiWeekWorkoutMatch.workout.id,
-      weekNumber: preservedMultiWeekWorkoutMatch.weekNumber,
-      orderIndex: preservedMultiWeekWorkoutMatch.workout.orderIndex,
-    };
-  }, [preservedMultiWeekWorkoutMatch, programDraft.isMultiWeek]);
-
-  useEffect(() => {
-    if (!programDraft.isMultiWeek || !preservedMultiWeekWorkoutMatch?.workout) {
-      return;
-    }
-
-    const resolvedWorkoutId = preservedMultiWeekWorkoutMatch.workout.id;
-    if (resolvedWorkoutId === workoutId) {
-      return;
-    }
-
-    navigate(`../workouts/${resolvedWorkoutId}`, {
+    navigate(
+      getCycleWorkoutEditorPath(
+        cycleId,
+        multiWeekWorkoutMatch.weekNumber,
+        multiWeekWorkoutMatch.workout.orderIndex
+      ),
+      {
       replace: true,
-      relative: "path",
       state: location.state,
-    });
+      }
+    );
   }, [
+    cycleId,
+    hasCanonicalMultiWeekRoute,
     location.state,
+    multiWeekWorkoutMatch,
     navigate,
-    preservedMultiWeekWorkoutMatch,
     programDraft.isMultiWeek,
-    workoutId,
   ]);
 
   useEffect(() => {
-    if (!programDraft.isMultiWeek || !preservedMultiWeekWorkoutMatch?.weekNumber) {
+    if (!programDraft.isMultiWeek || !multiWeekWorkoutMatch?.weekNumber) {
       return;
     }
 
-    if (programDraft.selectedWeek !== preservedMultiWeekWorkoutMatch.weekNumber) {
-      setSelectedWeek(preservedMultiWeekWorkoutMatch.weekNumber);
+    if (programDraft.selectedWeek !== multiWeekWorkoutMatch.weekNumber) {
+      setSelectedWeek(multiWeekWorkoutMatch.weekNumber);
     }
   }, [
-    preservedMultiWeekWorkoutMatch,
+    multiWeekWorkoutMatch,
     programDraft.isMultiWeek,
     programDraft.selectedWeek,
     setSelectedWeek,
@@ -450,7 +448,22 @@ export default function ManualWorkoutEditor() {
   useEffect(() => {
     const multiWeekBuilderPath = resolveMultiWeekBuilderPath(location.pathname);
 
+    if (
+      programDraft.isMultiWeek &&
+      (!draftMetadata.loadedFromBackend || (!programDraft.weeks || programDraft.weeks.length === 0))
+    ) {
+      return;
+    }
+
     if (!workout && programDraft.isMultiWeek) {
+      const validRequestedWeek =
+        hasCanonicalMultiWeekRoute &&
+        (programDraft.weeks || []).some((week) => week.weekNumber === parsedWeekNumber);
+
+      if (validRequestedWeek && programDraft.selectedWeek !== parsedWeekNumber) {
+        setSelectedWeek(parsedWeekNumber);
+      }
+
       navigate(multiWeekBuilderPath, { replace: true });
       return;
     }
@@ -458,7 +471,18 @@ export default function ManualWorkoutEditor() {
     if (!workout) {
       navigate("/program/manual-builder", { replace: true });
     }
-  }, [location.pathname, navigate, programDraft.isMultiWeek, workout]);
+  }, [
+    draftMetadata.loadedFromBackend,
+    hasCanonicalMultiWeekRoute,
+    location.pathname,
+    navigate,
+    parsedWeekNumber,
+    programDraft.isMultiWeek,
+    programDraft.selectedWeek,
+    programDraft.weeks,
+    setSelectedWeek,
+    workout,
+  ]);
 
   const hasIncompleteSuperset = hasIncompleteSupersets(workout?.id ?? null);
   const shouldShowSearchPanel =
