@@ -454,24 +454,6 @@ export default function ManualBuilderMulti() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-100 bg-white/50 p-4 shadow-sm backdrop-blur-sm">
-          <div className="grid grid-cols-4 gap-2">
-            {topStats.map((item) => (
-              <div key={item.label} className="flex flex-col gap-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  {item.label}
-                </span>
-                <span className="text-sm font-bold text-slate-700">
-                  {item.value}
-                </span>
-                <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div className="h-full bg-primary" style={{ width: item.width }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
         <div className="mb-4 px-1">
           <div className="mb-1 flex items-end justify-between">
             <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
@@ -496,13 +478,18 @@ export default function ManualBuilderMulti() {
                 key={week.weekNumber}
                 type="button"
                 onClick={() => setSelectedWeek(week.weekNumber)}
-                className={[
-                  "flex-1 rounded-t-sm transition-all duration-500 hover:opacity-80",
-                  week.isSelected ? "bg-primary" : "bg-slate-200",
-                ].join(" ")}
-                style={{ height: week.width }}
+                className="flex flex-1 items-end"
                 aria-label={`Select week ${week.weekNumber} volume`}
-              />
+                title={`Week ${week.weekNumber}: ${week.totalSetCount} sets`}
+              >
+                <div
+                  className={[
+                    "w-full rounded-t-sm transition-all duration-500 hover:opacity-80",
+                    week.isSelected ? "bg-primary" : "bg-slate-200",
+                  ].join(" ")}
+                  style={{ height: week.width }}
+                />
+              </button>
             ))}
           </div>
         </div>
