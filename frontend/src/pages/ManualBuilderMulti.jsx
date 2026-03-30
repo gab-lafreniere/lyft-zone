@@ -455,43 +455,6 @@ export default function ManualBuilderMulti() {
         </div>
 
         <div className="rounded-xl border border-slate-100 bg-white/50 p-4 shadow-sm backdrop-blur-sm">
-          <div className="flex items-center justify-between">
-            <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-              Weekly Volume
-            </h4>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Sets / week
-            </span>
-          </div>
-
-          <div className="mt-4 space-y-3">
-            {weeklyVolumeData.map((week) => (
-              <button
-                key={week.weekNumber}
-                type="button"
-                onClick={() => setSelectedWeek(week.weekNumber)}
-                className="w-full text-left"
-              >
-                <div className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider">
-                  <span className={week.isSelected ? "text-primary" : "text-slate-500"}>
-                    Week {week.weekNumber}
-                  </span>
-                  <span className={week.isSelected ? "text-primary" : "text-slate-400"}>
-                    {week.totalSetCount} sets
-                  </span>
-                </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className={week.isSelected ? "h-full rounded-full bg-primary" : "h-full rounded-full bg-slate-300"}
-                    style={{ width: week.width }}
-                  />
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-slate-100 bg-white/50 p-4 shadow-sm backdrop-blur-sm">
           <div className="grid grid-cols-4 gap-2">
             {topStats.map((item) => (
               <div key={item.label} className="flex flex-col gap-1">
@@ -505,6 +468,41 @@ export default function ManualBuilderMulti() {
                   <div className="h-full bg-primary" style={{ width: item.width }} />
                 </div>
               </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mb-4 px-1">
+          <div className="mb-1 flex items-end justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+              Weekly Volume (Sets)
+            </span>
+            <span className="text-[10px] font-bold tracking-tight text-primary">
+              Avg:{" "}
+              {weeklyVolumeData.length
+                ? Math.round(
+                    weeklyVolumeData.reduce(
+                      (sum, week) => sum + week.totalSetCount,
+                      0
+                    ) / weeklyVolumeData.length
+                  )
+                : 0}
+            </span>
+          </div>
+
+          <div className="flex h-12 items-end justify-between gap-1.5 rounded-lg border border-slate-100/50 bg-white/30 px-2 py-1">
+            {weeklyVolumeData.map((week) => (
+              <button
+                key={week.weekNumber}
+                type="button"
+                onClick={() => setSelectedWeek(week.weekNumber)}
+                className={[
+                  "flex-1 rounded-t-sm transition-all duration-500 hover:opacity-80",
+                  week.isSelected ? "bg-primary" : "bg-slate-200",
+                ].join(" ")}
+                style={{ height: week.width }}
+                aria-label={`Select week ${week.weekNumber} volume`}
+              />
             ))}
           </div>
         </div>
