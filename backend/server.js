@@ -11,6 +11,8 @@ const planRoutes = require('./routes/plans');
 const exercisesRouter = require('./routes/exercisesPrisma');
 const usersRouter = require('./routes/users');
 const cyclesRouter = require('./routes/cycles');
+const programsRouter = require('./routes/programs');
+const homeRouter = require('./routes/home');
 const scheduledSessionsRouter = require('./routes/scheduledSessions');
 const weeklyPlansRouter = require('./routes/weeklyPlans');
 
@@ -58,6 +60,8 @@ app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 app.use('/api/exercises', exercisesRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/cycles', cyclesRouter);
+app.use('/api/programs', programsRouter);
+app.use('/api/home', homeRouter);
 app.use('/api/scheduled-sessions', scheduledSessionsRouter);
 app.use('/api/weekly-plans', weeklyPlansRouter);
 

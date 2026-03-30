@@ -93,7 +93,7 @@ function buildPayloads(suffix) {
     plan: {
       name: 'Reference Plan V1',
       sourceType: 'SYSTEM',
-      status: 'ACTIVE',
+      status: 'PUBLISHED',
       isReference: true,
       generationContext: {
         createdFrom: 'onboarding',

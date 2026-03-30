@@ -5,6 +5,7 @@ import HomeDashboard from "../pages/HomeDashboard";
 import Program from "../pages/Program";
 import AllPrograms from "../pages/AllPrograms";
 import ProgramDetails from "../pages/ProgramDetails";
+import CycleProgramDetails from "../pages/CycleProgramDetails";
 import ManualNewProgram from "../pages/ManualNewProgram";
 import ManualBuilder from "../pages/ManualBuilder";
 import ManualConvert from "../pages/ManualConvert";
@@ -25,6 +26,9 @@ export default function AppRouter() {
           <Route path="/program" element={<Program />} />
           <Route path="/program/all" element={<AllPrograms />} />
           <Route path="/program/all/:programId" element={<ProgramDetails />} />
+          <Route path="/program/cycles/:cycleId" element={<CycleProgramDetails />} />
+          <Route path="/program/cycles/:cycleId/builder" element={<ManualBuilderMulti />} />
+          <Route path="/program/cycles/:cycleId/builder/workout/:workoutId" element={<ManualWorkoutEditor />} />
           <Route path="/program/manual-new" element={<ManualNewProgram />} />
           <Route path="/program/manual-builder" element={<ManualBuilder />} />
           <Route path="/program/manual-convert" element={<ManualConvert />} />

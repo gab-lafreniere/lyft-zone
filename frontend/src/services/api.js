@@ -4,6 +4,14 @@ const BACKEND_URL =
 
 const USER_ID_STORAGE_KEY = 'lyft_zone_user_id';
 
+function getLocalTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Toronto';
+  } catch {
+    return 'America/Toronto';
+  }
+}
+
 async function readJsonResponse(response) {
   const json = await response.json();
 
@@ -230,6 +238,117 @@ export async function unbookmarkWeeklyPlan(weeklyPlanParentId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId }),
     }
+  );
+
+  return readJsonResponse(response);
+}
+
+export async function createCycleFromWeeklyPlan(payload) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(`${BACKEND_URL}/api/cycles/from-weekly-plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...payload,
+      userId,
+      timezone: payload.timezone || getLocalTimezone(),
+    }),
+  });
+
+  return readJsonResponse(response);
+}
+
+export async function getProgramsOverview() {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/cycles/overview?${new URLSearchParams({
+      userId,
+      timezone: getLocalTimezone(),
+    }).toString()}`
+  );
+
+  return readJsonResponse(response);
+}
+
+export async function getCycleDetails(cycleId) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/cycles/${cycleId}?${new URLSearchParams({
+      userId,
+      timezone: getLocalTimezone(),
+    }).toString()}`
+  );
+
+  return readJsonResponse(response);
+}
+
+export async function openOrCreateCycleEditDraft(cycleId, options = {}) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(`${BACKEND_URL}/api/cycles/${cycleId}/edit-draft`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...options,
+      userId,
+      timezone: options.timezone || getLocalTimezone(),
+    }),
+  });
+
+  return readJsonResponse(response);
+}
+
+export async function updateCycleDraft(cycleId, planId, payload) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(`${BACKEND_URL}/api/cycles/${cycleId}/drafts/${planId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...payload,
+      userId,
+      timezone: payload.timezone || getLocalTimezone(),
+    }),
+  });
+
+  return readJsonResponse(response);
+}
+
+export async function publishCycleDraft(cycleId, options = {}) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(`${BACKEND_URL}/api/cycles/${cycleId}/publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...options,
+      userId,
+      timezone: options.timezone || getLocalTimezone(),
+    }),
+  });
+
+  return readJsonResponse(response);
+}
+
+export async function rescheduleUpcomingCycle(cycleId, payload) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(`${BACKEND_URL}/api/cycles/${cycleId}/reschedule`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...payload,
+      userId,
+      timezone: payload.timezone || getLocalTimezone(),
+    }),
+  });
+
+  return readJsonResponse(response);
+}
+
+export async function getHomeDashboard() {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/cycles/home-dashboard?${new URLSearchParams({
+      userId,
+      timezone: getLocalTimezone(),
+    }).toString()}`
   );
 
   return readJsonResponse(response);

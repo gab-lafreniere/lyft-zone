@@ -5,7 +5,8 @@ export default function MainLayout() {
   const location = useLocation();
   const hideTabs =
     location.pathname.startsWith("/train") ||
-    location.pathname.startsWith("/program/manual");
+    location.pathname.startsWith("/program/manual") ||
+    location.pathname.startsWith("/program/cycles/");
 
   return (
     <div className="min-h-[100dvh] bg-surface text-ink flex flex-col">

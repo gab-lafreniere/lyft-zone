@@ -1,6 +1,9 @@
 import { useNavigate } from "react-router-dom";
 import { useMemo, useState } from "react";
 import { useManualProgram } from "../context/ManualProgramContext";
+import { useMultiWeekProgram } from "../context/MultiWeekProgramContext";
+import { getCycleBuilderPath } from "../features/multiWeek/routes";
+import { createCycleFromWeeklyPlan } from "../services/api";
 
 function formatDateInput(date) {
   return date.toLocaleDateString("en-US", {
@@ -18,7 +21,8 @@ function addWeeks(date, weeks) {
 
 export default function ManualConvert() {
   const navigate = useNavigate();
-  const { programDraft, updateProgramMeta, toggleMultiWeek } = useManualProgram();
+  const { programDraft, draftMetadata } = useManualProgram();
+  const { hydrateProgramDraft } = useMultiWeekProgram();
 
   const programName = programDraft.programName || "New Program";
   const sessionsPerWeek = programDraft.sessionsPerWeek || 4;
@@ -26,6 +30,8 @@ export default function ManualConvert() {
   const [startDate, setStartDate] = useState(programDraft.startDate || "Oct 24, 2023");
   const [programLength, setProgramLength] = useState(programDraft.programLength || 8);
   const [endDate, setEndDate] = useState(programDraft.endDate || "Dec 19, 2023");
+  const [submitError, setSubmitError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const previewText = useMemo(() => {
     return `This ${programLength}-week program will duplicate your ${sessionsPerWeek}-session weekly template across all weeks.`;
@@ -49,20 +55,35 @@ export default function ManualConvert() {
     }
   };
 
-  const handleConvert = () => {
-    updateProgramMeta({
-      startDate,
-      endDate,
-      programLength,
-    });
-    toggleMultiWeek(true);
-    navigate("/program/manual-builder-multi");
+  const handleConvert = async () => {
+    if (!draftMetadata.weeklyPlanParentId || isSubmitting) {
+      return;
+    }
+
+    setSubmitError("");
+    setIsSubmitting(true);
+
+    try {
+      const response = await createCycleFromWeeklyPlan({
+        weeklyPlanParentId: draftMetadata.weeklyPlanParentId,
+        name: programName,
+        startDate: new Date(startDate).toISOString().slice(0, 10),
+        endDate: new Date(endDate).toISOString().slice(0, 10),
+        durationWeeks: Number(programLength),
+      });
+
+      hydrateProgramDraft(response);
+      navigate(getCycleBuilderPath(response.cycleId));
+    } catch (error) {
+      setSubmitError(error.message || "Unable to convert this weekly plan");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <div className="-mx-6 min-h-full bg-background-light text-slate-900">
       <div className="relative mx-auto flex min-h-screen w-full max-w-md flex-col overflow-x-hidden pb-32">
-        {/* Header */}
         <header className="sticky top-0 z-40 border-b border-slate-200 bg-background-light/80 backdrop-blur-md">
           <div className="flex items-center justify-between p-4">
             <button
@@ -81,13 +102,10 @@ export default function ManualConvert() {
         </header>
 
         <main className="flex flex-col gap-6 px-4 pt-6">
-          {/* Program Identity */}
           <div className="rounded-xl border border-slate-100 bg-white p-6 shadow-sm">
             <div className="mb-4 flex items-center gap-4">
               <div className="rounded-lg bg-primary/20 p-3 text-primary">
-                <span className="material-symbols-outlined">
-                  fitness_center
-                </span>
+                <span className="material-symbols-outlined">fitness_center</span>
               </div>
 
               <div>
@@ -97,13 +115,11 @@ export default function ManualConvert() {
             </div>
           </div>
 
-          {/* Timeline Settings */}
           <div className="flex flex-col gap-4">
             <h3 className="text-lg font-bold leading-tight tracking-tight">
               Timeline Settings
             </h3>
 
-            {/* Start Date */}
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium text-slate-600">
                 Start Date
@@ -123,7 +139,6 @@ export default function ManualConvert() {
               </div>
             </div>
 
-            {/* Program Length */}
             <div className="flex flex-col gap-2 pt-2">
               <label className="text-sm font-medium text-slate-600">
                 Program Length
@@ -152,7 +167,6 @@ export default function ManualConvert() {
               </div>
             </div>
 
-            {/* End Date */}
             <div className="flex flex-col gap-2 pt-2">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-slate-600">
@@ -177,25 +191,28 @@ export default function ManualConvert() {
             </div>
           </div>
 
-          {/* Info Card */}
           <div className="mt-2 rounded-xl border border-primary/20 bg-primary/5 p-4">
             <div className="flex items-center gap-3">
-              <span className="material-symbols-outlined text-primary">
-                info
-              </span>
+              <span className="material-symbols-outlined text-primary">info</span>
               <p className="text-sm text-slate-600">{previewText}</p>
             </div>
           </div>
+
+          {submitError && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+              {submitError}
+            </div>
+          )}
         </main>
 
-        {/* Footer CTA */}
         <footer className="fixed bottom-0 left-1/2 w-full max-w-md -translate-x-1/2 border-t border-slate-200 bg-background-light/80 p-6 backdrop-blur-md">
           <button
             type="button"
             onClick={handleConvert}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-4 text-lg font-bold text-slate-900 shadow-lg shadow-primary/20 transition-all active:scale-[0.98]"
+            disabled={isSubmitting || !draftMetadata.weeklyPlanParentId}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-4 text-lg font-bold text-slate-900 shadow-lg shadow-primary/20 transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Convert to Multi week
+            {isSubmitting ? "Creating..." : "Convert to Multi week"}
             <span className="material-symbols-outlined">add_circle</span>
           </button>
         </footer>

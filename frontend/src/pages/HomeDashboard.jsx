@@ -1,17 +1,88 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { getHomeDashboard } from "../services/api";
+
+function formatDayLabel(dateKey) {
+  return new Date(`${dateKey}T00:00:00Z`).toLocaleDateString("en-US", {
+    weekday: "narrow",
+  });
+}
+
+function formatDayNumber(dateKey) {
+  return new Date(`${dateKey}T00:00:00Z`).getUTCDate();
+}
+
+function getDayCardClasses(day) {
+  if (day?.state === "today") {
+    return "flex flex-col items-center p-2 rounded-lg bg-primary/20 border border-primary/30 relative";
+  }
+
+  if (day?.state === "past_empty") {
+    return "flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-slate-100";
+  }
+
+  if (day?.state === "past_missed") {
+    return "flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-slate-100";
+  }
+
+  if (day?.state === "future_planned") {
+    return "flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-primary/40";
+  }
+
+  return "flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-slate-100";
+}
 
 export default function HomeDashboard() {
-    const [scrolled, setScrolled] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const [dashboard, setDashboard] = useState(null);
+  const [error, setError] = useState("");
 
-    useEffect(() => {
-      const onScroll = () => setScrolled(window.scrollY > 4);
-      onScroll();
-      window.addEventListener("scroll", onScroll, { passive: true });
-      return () => window.removeEventListener("scroll", onScroll);
-    }, []);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 4);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
-    return (
-        <div className="-mx-6 bg-background-light text-slate-900 antialiased font-display">
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadDashboard() {
+      try {
+        const response = await getHomeDashboard();
+        if (isMounted) {
+          setDashboard(response);
+          setError("");
+        }
+      } catch (loadError) {
+        if (isMounted) {
+          setDashboard(null);
+          setError(loadError.message || "Unable to load home dashboard.");
+        }
+      }
+    }
+
+    loadDashboard();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const currentProgram = dashboard?.currentProgram || null;
+  const todayFocus = dashboard?.todayFocus || null;
+  const flatDays = useMemo(
+    () => (dashboard?.weeks || []).flatMap((week) => week.days || []).slice(0, 14),
+    [dashboard]
+  );
+
+  const weeklySetGoal = currentProgram?.summary?.totalSetsFirstWeek || 24;
+  const workoutsPerWeek = currentProgram?.summary?.sessionsPerWeek || 4;
+  const workoutDaysThisWeek = (dashboard?.weeks?.[0]?.days || []).filter(
+    (day) => (day.workouts || []).length > 0
+  ).length;
+
+  return (
+    <div className="-mx-6 bg-background-light text-slate-900 antialiased font-display">
       {/* Header Section */}
       <header
         className={[
@@ -20,42 +91,40 @@ export default function HomeDashboard() {
         ].join(" ")}
       >
         <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-            <div
-                className="size-12 rounded-full overflow-hidden border-2 border-white shadow-sm"
-            >
-                <img
+          <div className="flex items-center gap-3">
+            <div className="size-12 rounded-full overflow-hidden border-2 border-white shadow-sm">
+              <img
                 alt="Alex Johnson"
                 className="w-full h-full object-cover"
                 src="https://lh3.googleusercontent.com/aida-public/AB6AXuAOqSnukIxxig6axnIuq0lGlXj4I6ciPTu5Oe88ZY9cv2aT0AGMV8O7q5dWRK5NhL8gG_ZGNViFE8Y1UQkVSlmp5fOYhI8JHcttUzj0NOrT1vuOpfl1qv5htMMAa3UbR-GLVKqaFMZEFu7S6NIgmO1wD7ueqr9NvXWcPoFBh2muyPArPBj6n1FJPWTbqVRbkXxLqRBvoj5UFAvRDCvxx0M7Pm0Q92fcft6HhL6Xd_Nrzyt9pt97KXKUgOy5jUvSjdrZ1iUBZJAwA68"
-                />
+              />
             </div>
 
             <div className="leading-tight">
-                <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
-                  Good morning
-                </p>
-                <h1 className="font-bold text-xl text-slate-900">Alex Johnson</h1>
+              <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
+                Good morning
+              </p>
+              <h1 className="font-bold text-xl text-slate-900">Alex Johnson</h1>
             </div>
-            </div>
+          </div>
 
-            <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3">
             <button
-                type="button"
-                className="glass size-10 rounded-full flex items-center justify-center text-slate-700 shadow-sm"
-                aria-label="Notifications"
+              type="button"
+              className="glass size-10 rounded-full flex items-center justify-center text-slate-700 shadow-sm"
+              aria-label="Notifications"
             >
-                <span className="material-symbols-outlined text-[22px]">notifications</span>
+              <span className="material-symbols-outlined text-[22px]">notifications</span>
             </button>
 
             <button
-                type="button"
-                className="glass size-10 rounded-full flex items-center justify-center text-slate-700 shadow-sm"
-                aria-label="Settings"
+              type="button"
+              className="glass size-10 rounded-full flex items-center justify-center text-slate-700 shadow-sm"
+              aria-label="Settings"
             >
-                <span className="material-symbols-outlined text-[22px]">settings</span>
+              <span className="material-symbols-outlined text-[22px]">settings</span>
             </button>
-            </div>
+          </div>
         </div>
       </header>
 
@@ -64,7 +133,9 @@ export default function HomeDashboard() {
         <div className="inline-flex w-fit items-center gap-2 px-3 py-1 rounded-full bg-accent-teal/50 border border-primary/20">
           <span className="size-1.5 rounded-full bg-primary animate-pulse"></span>
           <p className="text-[11px] font-semibold text-slate-700 uppercase tracking-tight">
-            Week 4 of 8 · Hypertrophy Phase
+            {currentProgram
+              ? `Week 1 of ${currentProgram.durationWeeks} · ${currentProgram.name}`
+              : "No active published cycle"}
           </p>
         </div>
 
@@ -84,13 +155,15 @@ export default function HomeDashboard() {
                 Today's Focus
               </p>
               <h2 className="text-xl font-black text-white tracking-tight">
-                Lower Body A
+                {todayFocus?.name || "No workout scheduled"}
               </h2>
               <p className="text-white/90 text-xs font-semibold">
-                Quadriceps &amp; Glutes
+                {currentProgram ? currentProgram.name : "Current program unavailable"}
               </p>
               <p className="text-white/60 text-[10px] mt-0.5">
-                65 min · 7 exercises · 24 sets
+                {todayFocus
+                  ? `Workout ${todayFocus.orderIndex} · Week ${todayFocus.weekNumber}`
+                  : "Rest / recovery day"}
               </p>
             </div>
 
@@ -101,9 +174,7 @@ export default function HomeDashboard() {
               <span className="uppercase tracking-wider text-[10px]">
                 Start Session
               </span>
-              <span className="material-symbols-outlined text-lg">
-                play_arrow
-              </span>
+              <span className="material-symbols-outlined text-lg">play_arrow</span>
             </button>
           </div>
         </section>
@@ -123,115 +194,53 @@ export default function HomeDashboard() {
           </div>
 
           <div className="grid grid-cols-7 gap-1.5">
-            <div className="flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-slate-100">
-              <span className="text-[9px] text-slate-400 font-medium">M</span>
-              <span className="text-xs font-bold text-slate-700">12</span>
-              <div className="size-1.5 rounded-full bg-slate-200 mt-1"></div>
-            </div>
+            {flatDays.map((day) => {
+              const isToday = day.state === "today";
+              const hasWorkout = (day.workouts || []).length > 0;
+              const isPastMissed = day.state === "past_missed";
 
-            <div className="flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-primary/40">
-              <span className="text-[9px] text-slate-500 font-medium">T</span>
-              <span className="text-xs font-bold text-slate-900">13</span>
-              <span className="material-symbols-outlined text-[14px] mt-1 text-primary">
-                check_circle
-              </span>
-            </div>
-
-            <div className="flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-slate-100">
-              <span className="text-[9px] text-slate-400 font-medium">W</span>
-              <span className="text-xs font-bold text-slate-700">14</span>
-              <div className="size-1.5 rounded-full bg-slate-200 mt-1"></div>
-            </div>
-
-            <div className="flex flex-col items-center p-2 rounded-lg bg-primary/20 border border-primary/30 relative">
-              <span className="text-[9px] text-primary font-bold">T</span>
-              <span className="text-xs font-black text-slate-900">15</span>
-              <div className="size-1.5 rounded-full bg-primary mt-1 shadow-[0_0_8px_rgba(25,230,212,0.6)]"></div>
-            </div>
-
-            <div className="flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-primary/40">
-              <span className="text-[9px] text-slate-500 font-medium">F</span>
-              <span className="text-xs font-bold text-slate-900">16</span>
-              <span className="material-symbols-outlined text-primary text-[14px] mt-1">
-                fitness_center
-              </span>
-            </div>
-
-            <div className="flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-primary/40">
-              <span className="text-[9px] text-slate-500 font-medium">S</span>
-              <span className="text-xs font-bold text-slate-900">17</span>
-              <span className="material-symbols-outlined text-primary text-[14px] mt-1">
-                fitness_center
-              </span>
-            </div>
-
-            <div className="flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-slate-100">
-              <span className="text-[9px] text-slate-400 font-medium">S</span>
-              <span className="text-xs font-bold text-slate-700">18</span>
-              <div className="size-1.5 rounded-full bg-slate-200 mt-1"></div>
-            </div>
-
-            <div className="flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-slate-100">
-              <span className="text-[9px] text-slate-400 font-medium">M</span>
-              <span className="text-xs font-bold text-slate-700">19</span>
-              <div className="size-1.5 rounded-full bg-slate-200 mt-1"></div>
-            </div>
-
-            <div className="flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-primary/40">
-              <span className="text-[9px] text-slate-500 font-medium">T</span>
-              <span className="text-xs font-bold text-slate-900">20</span>
-              <span className="material-symbols-outlined text-primary text-[14px] mt-1">
-                fitness_center
-              </span>
-            </div>
-
-            <div className="flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-slate-100">
-              <span className="text-[9px] text-slate-400 font-medium">W</span>
-              <span className="text-xs font-bold text-slate-700">21</span>
-              <div className="size-1.5 rounded-full bg-slate-200 mt-1"></div>
-            </div>
-
-            <div className="flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-primary/40">
-              <span className="text-[9px] text-slate-500 font-medium">T</span>
-              <span className="text-xs font-bold text-slate-900">22</span>
-              <span className="material-symbols-outlined text-primary text-[14px] mt-1">
-                fitness_center
-              </span>
-            </div>
-
-            <div className="flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-primary/40">
-              <span className="text-[9px] text-slate-500 font-medium">F</span>
-              <span className="text-xs font-bold text-slate-900">23</span>
-              <span className="material-symbols-outlined text-primary text-[14px] mt-1">
-                fitness_center
-              </span>
-            </div>
-
-            <div className="flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-primary/40">
-              <span className="text-[9px] text-slate-500 font-medium">S</span>
-              <span className="text-xs font-bold text-slate-900">24</span>
-              <span className="material-symbols-outlined text-primary text-[14px] mt-1">
-                fitness_center
-              </span>
-            </div>
-
-            <div className="flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-slate-100">
-              <span className="text-[9px] text-slate-400 font-medium">S</span>
-              <span className="text-xs font-bold text-slate-700">25</span>
-              <div className="size-1.5 rounded-full bg-slate-200 mt-1"></div>
-            </div>
+              return (
+                <div key={day.date} className={getDayCardClasses(day)}>
+                  <span
+                    className={[
+                      "text-[9px] font-medium",
+                      isToday ? "text-primary font-bold" : hasWorkout ? "text-slate-500" : "text-slate-400",
+                    ].join(" ")}
+                  >
+                    {formatDayLabel(day.date)}
+                  </span>
+                  <span
+                    className={[
+                      "text-xs font-bold",
+                      isToday || hasWorkout ? "text-slate-900" : "text-slate-700",
+                      isToday ? "font-black" : "",
+                    ].join(" ")}
+                  >
+                    {formatDayNumber(day.date)}
+                  </span>
+                  {isToday ? (
+                    <div className="size-1.5 rounded-full bg-primary mt-1 shadow-[0_0_8px_rgba(25,230,212,0.6)]"></div>
+                  ) : hasWorkout ? (
+                    <span className="material-symbols-outlined text-primary text-[14px] mt-1">
+                      {isPastMissed ? "fitness_center" : "fitness_center"}
+                    </span>
+                  ) : (
+                    <div className="size-1.5 rounded-full bg-slate-200 mt-1"></div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
 
         {/* Weekly Performance */}
         <section className="glass rounded-xl p-3 shadow-sm border border-white">
-        <div className="flex items-end justify-between mb-2">
+          <div className="flex items-end justify-between mb-2">
             <div>
-                <h3 className="text-sm font-bold text-slate-800 tracking-tight">Weekly Performance</h3>
-                <p className="text-[10px] font-semibold text-slate-500">Week 4</p>
+              <h3 className="text-sm font-bold text-slate-800 tracking-tight">Weekly Performance</h3>
+              <p className="text-[10px] font-semibold text-slate-500">Current Week</p>
             </div>
-            
-        </div>
+          </div>
 
           <div className="flex justify-around items-center gap-4 py-2">
             <div className="flex flex-col items-center">
@@ -251,25 +260,25 @@ export default function HomeDashboard() {
                     cy="18"
                     fill="none"
                     r="16"
-                    strokeDasharray="75, 100"
+                    strokeDasharray={`${Math.min(100, workoutDaysThisWeek * 25)}, 100`}
                     strokeLinecap="round"
                     strokeWidth="3"
                   ></circle>
                 </svg>
                 <div className="absolute flex flex-col items-center">
                   <span className="text-[10px] font-bold text-slate-800">
-                    18/24
+                    {workoutDaysThisWeek}/{Math.max(workoutsPerWeek, 1)}
                   </span>
                   <span className="text-[7px] text-slate-500 uppercase font-bold">
-                    Sets
+                    Days
                   </span>
                 </div>
               </div>
               <div className="mt-2 text-center">
-                <p className="text-[10px] font-bold text-slate-700">
-                  Weekly Sets
+                <p className="text-[10px] font-bold text-slate-700">Weekly Sessions</p>
+                <p className="text-[8px] text-slate-400">
+                  {Math.max(0, workoutsPerWeek - workoutDaysThisWeek)} remaining
                 </p>
-                <p className="text-[8px] text-slate-400">6 remaining</p>
               </div>
             </div>
 
@@ -290,25 +299,23 @@ export default function HomeDashboard() {
                     cy="18"
                     fill="none"
                     r="16"
-                    strokeDasharray="75, 100"
+                    strokeDasharray={`${Math.min(100, Math.round((weeklySetGoal / Math.max(weeklySetGoal, 1)) * 100))}, 100`}
                     strokeLinecap="round"
                     strokeWidth="3"
                   ></circle>
                 </svg>
                 <div className="absolute flex flex-col items-center">
                   <span className="text-[10px] font-bold text-slate-800">
-                    195/260
+                    {weeklySetGoal}
                   </span>
                   <span className="text-[7px] text-slate-500 uppercase font-bold">
-                    Min
+                    Sets
                   </span>
                 </div>
               </div>
               <div className="mt-2 text-center">
-                <p className="text-[10px] font-bold text-slate-700">
-                  Workout Time
-                </p>
-                <p className="text-[8px] text-slate-400">65 min left</p>
+                <p className="text-[10px] font-bold text-slate-700">Planned Sets</p>
+                <p className="text-[8px] text-slate-400">First week target</p>
               </div>
             </div>
           </div>
@@ -327,17 +334,20 @@ export default function HomeDashboard() {
                 AI Coach Insight
               </h3>
               <p className="text-sm text-slate-600 leading-snug">
-                Your squat improved by{" "}
-                <span className="text-slate-900 font-bold">+10 lb</span> this
-                cycle. Recovery is good.{" "}
-                <span className="text-primary font-medium">
-                  Deload recommended
-                </span>{" "}
-                in 10 days.
+                {currentProgram
+                  ? `Your current multi-week cycle is active. Keep the same structure on Home: current week plus next week, with missed past workouts shown in grey.`
+                  : "Create and publish a multi-week cycle to see your current program and the next two weeks here."}
               </p>
             </div>
           </div>
         </section>
+
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-600">
+            {error}
+          </div>
+        )}
+
         {/* Navigation Spacer */}
         <div className="h-[calc(64px+max(8px,env(safe-area-inset-bottom)))]"></div>
       </main>

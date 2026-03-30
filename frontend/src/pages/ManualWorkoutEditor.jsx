@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import {
-  MAX_BLOCK_SET_COUNT,
-  useManualProgram,
-} from "../context/ManualProgramContext";
+import { MAX_BLOCK_SET_COUNT } from "../context/ManualProgramContext";
+import { useEditableProgram } from "../context/EditableProgramContext";
 import { resolveBackTarget } from "../features/weeklyPlans/navigation";
 import { fetchExercises } from "../services/api";
 import { computeWorkoutMetrics } from "../utils/workoutMetrics";
@@ -263,6 +261,20 @@ function getMetricBarWidth(value, maxValue) {
   return `${Math.max(8, Math.min(100, (value / maxValue) * 100))}%`;
 }
 
+function resolveMultiWeekBuilderPath(pathname) {
+  const builderMatch = pathname.match(/^(\/program\/cycles\/[^/]+\/builder)/);
+  if (builderMatch) {
+    return builderMatch[1];
+  }
+
+  const workoutMatch = pathname.match(/^(\/program\/cycles\/[^/]+)\/workouts\/[^/]+$/);
+  if (workoutMatch) {
+    return `${workoutMatch[1]}/builder`;
+  }
+
+  return "/program/manual-builder-multi";
+}
+
 export default function ManualWorkoutEditor() {
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [showAddBlockSheet, setShowAddBlockSheet] = useState(false);
@@ -308,7 +320,7 @@ export default function ManualWorkoutEditor() {
     convertSingleBlockToSuperset,
     assignSupersetExercise,
     hasIncompleteSupersets,
-  } = useManualProgram();
+  } = useEditableProgram();
 
   const workout = useMemo(() => {
     if (!programDraft.workouts.length) {
@@ -331,15 +343,17 @@ export default function ManualWorkoutEditor() {
   }, []);
 
   useEffect(() => {
+    const multiWeekBuilderPath = resolveMultiWeekBuilderPath(location.pathname);
+
     if (!workout && programDraft.isMultiWeek) {
-      navigate("/program/manual-builder-multi", { replace: true });
+      navigate(multiWeekBuilderPath, { replace: true });
       return;
     }
 
     if (!workout) {
       navigate("/program/manual-builder", { replace: true });
     }
-  }, [navigate, programDraft.isMultiWeek, workout]);
+  }, [location.pathname, navigate, programDraft.isMultiWeek, workout]);
 
   const hasIncompleteSuperset = hasIncompleteSupersets(workout?.id ?? null);
   const shouldShowSearchPanel =
@@ -629,9 +643,10 @@ export default function ManualWorkoutEditor() {
   }
 
   const handleBack = () => {
+    const multiWeekBuilderPath = resolveMultiWeekBuilderPath(location.pathname);
     const contextualBackTarget = resolveBackTarget(
       location,
-      programDraft.isMultiWeek ? "/program/manual-builder-multi" : "/program/manual-builder"
+      programDraft.isMultiWeek ? multiWeekBuilderPath : "/program/manual-builder"
     );
 
     if (location.state?.from) {
@@ -640,7 +655,7 @@ export default function ManualWorkoutEditor() {
     }
 
     if (programDraft.isMultiWeek) {
-      navigate("/program/manual-builder-multi");
+      navigate(multiWeekBuilderPath);
       return;
     }
 

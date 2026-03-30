@@ -39,9 +39,8 @@ enum PlanSourceType {
 
 enum PlanStatus {
   DRAFT
-  ACTIVE
+  PUBLISHED
   SUPERSEDED
-  ARCHIVED
 }
 
 enum WeeklyPlanSourceType {
@@ -177,6 +176,7 @@ model TrainingCycle {
   startDate       DateTime     @db.Date
   endDate         DateTime     @db.Date
   durationWeeks   Int
+  timezone        String?
   status          CycleStatus
   mode            TrainingMode
   goalSnapshot    Json?

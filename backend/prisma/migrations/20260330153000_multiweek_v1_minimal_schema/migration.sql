@@ -1,0 +1,4 @@
+ALTER TYPE "PlanStatus" RENAME VALUE 'ACTIVE' TO 'PUBLISHED';
+
+ALTER TABLE "training_cycles"
+ADD COLUMN "timezone" TEXT;
