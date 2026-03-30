@@ -3,6 +3,7 @@ const {
   createCycleFromWeeklyPlanHandler,
   createCycleHandler,
   createPlanForCycleHandler,
+  deleteCycleHandler,
   extendCycleDraftHandler,
   getCycleDetailsHandler,
   getCycleFullHandler,
@@ -28,5 +29,6 @@ router.patch('/:cycleId/drafts/:planId', updateCycleDraftHandler);
 router.post('/:cycleId/publish', publishCycleDraftHandler);
 router.post('/:cycleId/reschedule', rescheduleUpcomingCycleHandler);
 router.post('/:cycleId/draft-extension', extendCycleDraftHandler);
+router.delete('/:cycleId', deleteCycleHandler);
 
 module.exports = router;

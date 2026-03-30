@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMultiWeekProgram } from "../context/MultiWeekProgramContext";
-import { getCycleBuilderPath } from "../features/multiWeek/routes";
-import { getCycleDetails, openOrCreateCycleEditDraft } from "../services/api";
+import {
+  getCycleBuilderPath,
+  getCyclesLibraryPath,
+} from "../features/multiWeek/routes";
+import {
+  deleteCycle,
+  getCycleDetails,
+  openOrCreateCycleEditDraft,
+} from "../services/api";
 
 function formatDate(value) {
   if (!value) {
@@ -23,6 +30,7 @@ export default function CycleProgramDetails() {
   const [details, setDetails] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isOpeningDraft, setIsOpeningDraft] = useState(false);
+  const [isDeletingCycle, setIsDeletingCycle] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -78,6 +86,27 @@ export default function CycleProgramDetails() {
       setError(openError.message || "Unable to open draft.");
     } finally {
       setIsOpeningDraft(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    const confirmed = window.confirm(
+      "Delete this multi-week cycle? This cannot be undone."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsDeletingCycle(true);
+    setError("");
+
+    try {
+      await deleteCycle(cycleId);
+      navigate(getCyclesLibraryPath(), { replace: true });
+    } catch (deleteError) {
+      setError(deleteError.message || "Unable to delete program.");
+      setIsDeletingCycle(false);
     }
   };
 
@@ -155,6 +184,15 @@ export default function CycleProgramDetails() {
             ].join(" ")}
           >
             {isOpeningDraft ? "Opening draft..." : cycle.temporalStatus === "past" ? "Past program" : "Edit program"}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={isDeletingCycle}
+            className="mt-3 w-full rounded-xl border border-red-200 bg-white py-3 font-bold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-60"
+          >
+            {isDeletingCycle ? "Deleting..." : "Delete cycle"}
           </button>
         </section>
 

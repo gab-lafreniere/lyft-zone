@@ -97,6 +97,44 @@ function isValidDate(value) {
   return Boolean(parseDateInput(value));
 }
 
+function ensureNotPastDate(dateKey, todayDateKey, fieldName) {
+  if (compareDateKeys(dateKey, todayDateKey) < 0) {
+    throw new ApiError(400, 'VALIDATION_ERROR', `${fieldName} cannot be in the past`);
+  }
+}
+
+function calculateDurationWeeksFromDateRange(startDateKey, endDateKey) {
+  const start = parseDateInput(startDateKey);
+  const end = parseDateInput(endDateKey);
+
+  if (!start || !end) {
+    return null;
+  }
+
+  const dayDifference = Math.floor((end.getTime() - start.getTime()) / 86400000);
+  if (dayDifference < 0) {
+    return null;
+  }
+
+  return Math.floor(dayDifference / 7) + 1;
+}
+
+function trimDocumentWeeks(document, targetWeekCount) {
+  const safeWeekCount = Math.max(1, normalizeInt(targetWeekCount, 1));
+
+  return {
+    ...document,
+    weeks: (document.weeks || [])
+      .slice(0, safeWeekCount)
+      .map((week, index) => ({
+        ...week,
+        weekNumber: index + 1,
+        orderIndex: index + 1,
+        label: week.label || `Week ${index + 1}`,
+      })),
+  };
+}
+
 function assertEnumValue(value, allowedValues, fieldName) {
   if (value == null) {
     return;
@@ -1013,6 +1051,10 @@ async function createCycleFromWeeklyPlan(payload) {
     user?.profile?.timezone,
     DEFAULT_TIMEZONE
   );
+  const todayDateKey = getTodayDateKey(effectiveTimezone);
+
+  ensureNotPastDate(startDateKey, todayDateKey, 'startDate');
+  ensureNotPastDate(endDateKey, todayDateKey, 'endDate');
 
   const sourceParent = await prisma.weeklyPlanParent.findFirst({
     where: {
@@ -1638,31 +1680,106 @@ async function rescheduleUpcomingCycle(cycleId, payload = {}) {
     const cycle = await loadCycleForUser(tx, cycleId, userId);
     const effectiveTimezone = resolveEffectiveTimezone(cycle.timezone, payload.timezone, DEFAULT_TIMEZONE);
     const temporalStatus = deriveTemporalStatus(cycle, effectiveTimezone);
+    const todayDateKey = getTodayDateKey(effectiveTimezone);
 
     if (temporalStatus !== 'upcoming') {
       throw new ApiError(400, 'VALIDATION_ERROR', 'Only upcoming cycles can be rescheduled');
     }
 
-    if (payload.durationWeeks != null && Number(payload.durationWeeks) !== cycle.durationWeeks) {
+    ensureNotPastDate(nextStartDateKey, todayDateKey, 'startDate');
+
+    const requestedEndDateKey = toDateKey(payload.newEndDate || payload.endDate);
+    const nextEndDateKey =
+      requestedEndDateKey || addDays(nextStartDateKey, cycle.durationWeeks * 7 - 1);
+
+    ensureNotPastDate(nextEndDateKey, todayDateKey, 'endDate');
+
+    if (compareDateKeys(nextEndDateKey, nextStartDateKey) < 0) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'endDate must be on or after startDate');
+    }
+
+    const nextDurationWeeks =
+      normalizeInt(payload.durationWeeks, null) ||
+      calculateDurationWeeksFromDateRange(nextStartDateKey, nextEndDateKey);
+
+    if (nextDurationWeeks == null || nextDurationWeeks < 1) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'durationWeeks must be at least 1');
+    }
+
+    if (nextDurationWeeks > cycle.durationWeeks) {
       throw new ApiError(
         400,
         'VALIDATION_ERROR',
-        'Reschedule only supports moving the cycle in time in V1'
+        'Extending a cycle beyond its current structure is not supported yet'
       );
     }
 
-    const nextEndDateKey = addDays(nextStartDateKey, cycle.durationWeeks * 7 - 1);
     const existingCycles = await tx.trainingCycle.findMany({
       where: { userId },
       select: { id: true, startDate: true, endDate: true },
     });
     validateNoOverlap(existingCycles, nextStartDateKey, nextEndDateKey, cycle.id);
 
+    let draftPlan = await normalizeSingleDraft(tx, cycle.id);
+    const publishedPlan = pickLatestPublished(cycle.plans);
+
+    if (!draftPlan && publishedPlan) {
+      const sourceDocument = clonePlanDocument(publishedPlan);
+      const latestPlan = cycle.plans[0];
+
+      draftPlan = await tx.plan.create({
+        data: {
+          trainingCycleId: cycle.id,
+          parentPlanId: publishedPlan.id,
+          name: sourceDocument.name,
+          versionNumber: (latestPlan?.versionNumber ?? 0) + 1,
+          sourceType: publishedPlan.sourceType || 'USER',
+          status: 'DRAFT',
+          weeks: {
+            create: buildPlanCreateWeeksInput(sourceDocument.weeks),
+          },
+        },
+        include: fullPlanInclude,
+      });
+    }
+
+    if (draftPlan) {
+      const trimmedDocument = trimDocumentWeeks(
+        validateCycleDocument(clonePlanDocument(draftPlan), 'draft'),
+        nextDurationWeeks
+      );
+
+      await tx.workout.deleteMany({
+        where: {
+          planWeek: {
+            planId: draftPlan.id,
+          },
+        },
+      });
+
+      await tx.planWeek.deleteMany({
+        where: {
+          planId: draftPlan.id,
+        },
+      });
+
+      draftPlan = await tx.plan.update({
+        where: { id: draftPlan.id },
+        data: {
+          weeks: {
+            create: buildPlanCreateWeeksInput(trimmedDocument.weeks),
+          },
+        },
+        include: fullPlanInclude,
+      });
+    }
+
     const updatedCycle = await tx.trainingCycle.update({
       where: { id: cycle.id },
       data: {
         startDate: parseDateInput(nextStartDateKey),
         endDate: parseDateInput(nextEndDateKey),
+        durationWeeks: nextDurationWeeks,
       },
       include: {
         plans: {
@@ -1672,8 +1789,8 @@ async function rescheduleUpcomingCycle(cycleId, payload = {}) {
       },
     });
 
-    const draftPlan = pickLatestDraft(updatedCycle.plans);
-    const visiblePlan = draftPlan || pickLatestPublished(updatedCycle.plans);
+    const nextDraftPlan = pickLatestDraft(updatedCycle.plans);
+    const visiblePlan = nextDraftPlan || pickLatestPublished(updatedCycle.plans);
 
     return {
       cycleId: updatedCycle.id,
@@ -1687,6 +1804,27 @@ async function rescheduleUpcomingCycle(cycleId, payload = {}) {
       visiblePlanId: visiblePlan?.id || null,
       status: visiblePlan?.status || 'DRAFT',
       builderPayload: visiblePlan ? buildCycleBuilderPayload(updatedCycle, visiblePlan) : null,
+      temporalStatus: deriveTemporalStatus(updatedCycle, effectiveTimezone),
+      timezone: effectiveTimezone,
+    };
+  });
+}
+
+async function deleteCycle(cycleId, payload = {}) {
+  const prisma = getPrisma();
+  const userId = normalizeOptionalString(payload.userId);
+  await assertUserExists(userId);
+
+  return prisma.$transaction(async (tx) => {
+    const cycle = await loadCycleForUser(tx, cycleId, userId);
+
+    await tx.trainingCycle.delete({
+      where: { id: cycle.id },
+    });
+
+    return {
+      deleted: true,
+      cycleId: cycle.id,
     };
   });
 }
@@ -1855,6 +1993,7 @@ module.exports = {
   createCycle,
   createCycleFromWeeklyPlan,
   createPlanForCycle,
+  deleteCycle,
   extendCycleDraft,
   getCycleDetails,
   getCycleFull,

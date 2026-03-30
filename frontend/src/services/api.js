@@ -377,6 +377,17 @@ export async function rescheduleUpcomingCycle(cycleId, payload) {
   return readJsonResponse(response);
 }
 
+export async function deleteCycle(cycleId) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(`${BACKEND_URL}/api/cycles/${cycleId}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId }),
+  });
+
+  return readJsonResponse(response);
+}
+
 export async function getHomeDashboard() {
   const userId = await ensureCurrentUserId();
   const response = await fetch(

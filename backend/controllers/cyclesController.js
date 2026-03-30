@@ -3,6 +3,7 @@ const {
   createCycle,
   createCycleFromWeeklyPlan,
   createPlanForCycle,
+  deleteCycle,
   extendCycleDraft,
   getCycleDetails,
   getCycleFull,
@@ -136,6 +137,15 @@ async function extendCycleDraftHandler(req, res) {
   }
 }
 
+async function deleteCycleHandler(req, res) {
+  try {
+    const response = await deleteCycle(req.params.cycleId, req.body || {});
+    return res.status(200).json(response);
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
 async function getCycleFullHandler(req, res) {
   try {
     const response = await getCycleFull(req.params.cycleId);
@@ -149,6 +159,7 @@ module.exports = {
   createCycleFromWeeklyPlanHandler,
   createCycleHandler,
   createPlanForCycleHandler,
+  deleteCycleHandler,
   extendCycleDraftHandler,
   getCycleDetailsHandler,
   getCycleFullHandler,

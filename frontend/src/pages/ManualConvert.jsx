@@ -6,17 +6,36 @@ import { getCycleBuilderPath } from "../features/multiWeek/routes";
 import { createCycleFromWeeklyPlan } from "../services/api";
 
 function formatDateInput(date) {
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function addWeeks(date, weeks) {
   const next = new Date(date);
   next.setDate(next.getDate() + weeks * 7 - 1);
   return next;
+}
+
+function getTodayDateInput() {
+  return formatDateInput(new Date());
+}
+
+function calculateDurationWeeks(startDateValue, endDateValue) {
+  const startDate = new Date(`${startDateValue}T00:00:00`);
+  const endDate = new Date(`${endDateValue}T00:00:00`);
+
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return null;
+  }
+
+  const dayDifference = Math.floor((endDate.getTime() - startDate.getTime()) / 86400000);
+  if (dayDifference < 0) {
+    return null;
+  }
+
+  return Math.floor(dayDifference / 7) + 1;
 }
 
 export default function ManualConvert() {
@@ -26,10 +45,16 @@ export default function ManualConvert() {
 
   const programName = programDraft.programName || "New Program";
   const sessionsPerWeek = programDraft.sessionsPerWeek || 4;
+  const todayDate = getTodayDateInput();
+  const initialStartDate = programDraft.startDate || todayDate;
+  const initialProgramLength = programDraft.programLength || 8;
+  const initialEndDate =
+    programDraft.endDate ||
+    formatDateInput(addWeeks(new Date(`${initialStartDate}T00:00:00`), initialProgramLength));
 
-  const [startDate, setStartDate] = useState(programDraft.startDate || "Oct 24, 2023");
-  const [programLength, setProgramLength] = useState(programDraft.programLength || 8);
-  const [endDate, setEndDate] = useState(programDraft.endDate || "Dec 19, 2023");
+  const [startDate, setStartDate] = useState(initialStartDate);
+  const [programLength, setProgramLength] = useState(initialProgramLength);
+  const [endDate, setEndDate] = useState(initialEndDate);
   const [submitError, setSubmitError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -37,10 +62,12 @@ export default function ManualConvert() {
     return `This ${programLength}-week program will duplicate your ${sessionsPerWeek}-session weekly template across all weeks.`;
   }, [programLength, sessionsPerWeek]);
 
+  const endDateMin = startDate || todayDate;
+
   const handleLengthChange = (weeks) => {
     setProgramLength(weeks);
 
-    const parsed = new Date(startDate);
+    const parsed = new Date(`${startDate}T00:00:00`);
     if (!Number.isNaN(parsed.getTime())) {
       setEndDate(formatDateInput(addWeeks(parsed, weeks)));
     }
@@ -49,9 +76,18 @@ export default function ManualConvert() {
   const handleStartDateChange = (value) => {
     setStartDate(value);
 
-    const parsed = new Date(value);
+    const parsed = new Date(`${value}T00:00:00`);
     if (!Number.isNaN(parsed.getTime())) {
       setEndDate(formatDateInput(addWeeks(parsed, programLength)));
+    }
+  };
+
+  const handleEndDateChange = (value) => {
+    setEndDate(value);
+
+    const nextDuration = calculateDurationWeeks(startDate, value);
+    if (nextDuration != null) {
+      setProgramLength(nextDuration);
     }
   };
 
@@ -64,12 +100,18 @@ export default function ManualConvert() {
     setIsSubmitting(true);
 
     try {
+      const derivedProgramLength = calculateDurationWeeks(startDate, endDate);
+
+      if (!startDate || !endDate || derivedProgramLength == null) {
+        throw new Error("Please choose a valid future date range.");
+      }
+
       const response = await createCycleFromWeeklyPlan({
         weeklyPlanParentId: draftMetadata.weeklyPlanParentId,
         name: programName,
-        startDate: new Date(startDate).toISOString().slice(0, 10),
-        endDate: new Date(endDate).toISOString().slice(0, 10),
-        durationWeeks: Number(programLength),
+        startDate,
+        endDate,
+        durationWeeks: Number(derivedProgramLength),
       });
 
       hydrateProgramDraft(response);
@@ -127,10 +169,11 @@ export default function ManualConvert() {
 
               <div className="relative flex items-center">
                 <input
-                  type="text"
+                  type="date"
                   value={startDate}
                   onChange={(e) => handleStartDateChange(e.target.value)}
                   placeholder="Select start date"
+                  min={todayDate}
                   className="h-14 w-full rounded-xl border border-slate-200 bg-white pl-12 pr-4 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
                 />
                 <span className="material-symbols-outlined absolute left-4 text-primary">
@@ -165,6 +208,11 @@ export default function ManualConvert() {
                   );
                 })}
               </div>
+              {!([6, 7, 8].includes(programLength)) && (
+                <p className="text-xs font-medium text-primary">
+                  Custom length: {programLength} weeks
+                </p>
+              )}
             </div>
 
             <div className="flex flex-col gap-2 pt-2">
@@ -179,9 +227,10 @@ export default function ManualConvert() {
 
               <div className="relative flex items-center">
                 <input
-                  type="text"
+                  type="date"
                   value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
+                  onChange={(e) => handleEndDateChange(e.target.value)}
+                  min={endDateMin}
                   className="h-14 w-full rounded-xl border border-slate-200 bg-white pl-12 pr-4 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
                 />
                 <span className="material-symbols-outlined absolute left-4 text-slate-400">
