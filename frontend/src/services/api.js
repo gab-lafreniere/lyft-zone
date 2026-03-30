@@ -270,6 +270,41 @@ export async function getProgramsOverview() {
   return readJsonResponse(response);
 }
 
+function normalizeCycleLibraryItem(item) {
+  return {
+    id: item?.cycleId || item?.id,
+    name: item?.name || 'Untitled cycle',
+    editorialStatus: item?.editorialStatus || 'draft',
+    temporalStatus: item?.temporalStatus || 'upcoming',
+    startDate: item?.startDate || null,
+    endDate: item?.endDate || null,
+    durationWeeks: item?.durationWeeks || 0,
+    sessionsPerWeek: item?.summary?.sessionsPerWeek || 0,
+    totalWeeklySets:
+      typeof item?.summary?.totalSetsFirstWeek === 'number'
+        ? item.summary.totalSetsFirstWeek
+        : null,
+  };
+}
+
+export async function getAllCycles() {
+  const overview = await getProgramsOverview();
+  const orderedItems = [
+    overview?.currentProgram,
+    ...(overview?.upcomingPrograms || []),
+    ...(overview?.pastPrograms || []),
+  ].filter(Boolean);
+
+  const dedupedItems = Array.from(
+    new Map(orderedItems.map((item) => [item.cycleId || item.id, item])).values()
+  );
+
+  return {
+    timezone: overview?.timezone || getLocalTimezone(),
+    items: dedupedItems.map(normalizeCycleLibraryItem),
+  };
+}
+
 export async function getCycleDetails(cycleId) {
   const userId = await ensureCurrentUserId();
   const response = await fetch(

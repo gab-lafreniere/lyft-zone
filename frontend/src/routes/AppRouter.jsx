@@ -4,6 +4,7 @@ import MainLayout from "../layouts/MainLayout";
 import HomeDashboard from "../pages/HomeDashboard";
 import Program from "../pages/Program";
 import AllPrograms from "../pages/AllPrograms";
+import AllCycles from "../pages/AllCycles";
 import ProgramDetails from "../pages/ProgramDetails";
 import CycleProgramDetails from "../pages/CycleProgramDetails";
 import ManualNewProgram from "../pages/ManualNewProgram";
@@ -25,6 +26,7 @@ export default function AppRouter() {
           <Route path="/" element={<HomeDashboard />} />
           <Route path="/program" element={<Program />} />
           <Route path="/program/all" element={<AllPrograms />} />
+          <Route path="/program/cycles" element={<AllCycles />} />
           <Route path="/program/all/:programId" element={<ProgramDetails />} />
           <Route path="/program/cycles/:cycleId" element={<CycleProgramDetails />} />
           <Route path="/program/cycles/:cycleId/builder" element={<ManualBuilderMulti />} />

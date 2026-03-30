@@ -327,6 +327,60 @@ export default function Program() {
           </div>
         </section>
 
+        {/* Upcoming Programs */}
+        <section>
+          <div className="flex items-center justify-between mb-4 px-2">
+            <h3 className="text-lg font-bold">Upcoming Programs</h3>
+            <button
+              type="button"
+              onClick={() => navigate("/program/cycles")}
+              className="text-sm font-medium text-primary"
+            >
+              Browse
+            </button>
+          </div>
+
+          <div className="space-y-3 px-2">
+            {upcomingPrograms.slice(0, 2).map((program) => (
+              <button
+                key={program.cycleId || program.id}
+                type="button"
+                onClick={() => navigate(getCycleDetailsPath(program.cycleId || program.id))}
+                className="flex w-full items-center gap-4 p-4 rounded-2xl bg-white border border-slate-100 shadow-sm text-left"
+              >
+                <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-slate-400">
+                    event_upcoming
+                  </span>
+                </div>
+                <div className="flex-1">
+                  <h4 className="text-sm font-bold">{program.name}</h4>
+                  <p className="text-xs text-slate-500">
+                    Starts {program.startDate || "soon"}
+                  </p>
+                </div>
+                <span className="material-symbols-outlined text-slate-300">
+                  chevron_right
+                </span>
+              </button>
+            ))}
+
+            {!upcomingPrograms.length && (
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-white border border-slate-100 shadow-sm">
+                <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-slate-400">
+                    event_upcoming
+                  </span>
+                </div>
+                <div className="flex-1">
+                  <h4 className="text-sm font-bold">No upcoming programs yet</h4>
+                  <p className="text-xs text-slate-500">Future multi-week cycles will appear here.</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+
         {/* Past Programs */}
         <section>
           <div className="flex items-center justify-between mb-4 px-2">

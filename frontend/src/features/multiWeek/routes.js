@@ -1,3 +1,7 @@
+export function getCyclesLibraryPath() {
+  return `/program/cycles`;
+}
+
 export function getCycleDetailsPath(cycleId) {
   return `/program/cycles/${cycleId}`;
 }
