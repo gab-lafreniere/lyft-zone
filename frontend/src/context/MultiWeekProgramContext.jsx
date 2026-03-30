@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { mapCycleBuilderPayload, mapMultiWeekDraftToApi } from "../features/multiWeek/mappers";
@@ -222,6 +223,16 @@ function resolvePreservedSelectedWeek(currentSelectedWeek, nextDraft) {
 export function MultiWeekProgramProvider({ children }) {
   const [multiWeekDraft, setMultiWeekDraft] = useState(createInitialDraft);
   const [draftMetadata, setDraftMetadata] = useState(createInitialDraftMetadata);
+  const multiWeekDraftRef = useRef(multiWeekDraft);
+  const draftMetadataRef = useRef(draftMetadata);
+
+  useEffect(() => {
+    multiWeekDraftRef.current = multiWeekDraft;
+  }, [multiWeekDraft]);
+
+  useEffect(() => {
+    draftMetadataRef.current = draftMetadata;
+  }, [draftMetadata]);
 
   const selectedWeek = useMemo(
     () => multiWeekDraft.weeks.find((week) => week.weekNumber === multiWeekDraft.selectedWeek) || multiWeekDraft.weeks[0] || null,
@@ -238,27 +249,36 @@ export function MultiWeekProgramProvider({ children }) {
   );
 
   const persistDraftNow = useCallback(async (overrideDraft = null) => {
-    if (!draftMetadata.loadedFromBackend || !draftMetadata.cycleId || !draftMetadata.cyclePlanId) {
+    const currentMetadata = draftMetadataRef.current;
+    if (
+      !currentMetadata.loadedFromBackend ||
+      !currentMetadata.cycleId ||
+      !currentMetadata.cyclePlanId
+    ) {
       return null;
     }
 
-    const nextDraft = overrideDraft || multiWeekDraft;
+    const nextDraft = overrideDraft || multiWeekDraftRef.current;
     const payload = mapMultiWeekDraftToApi(nextDraft);
     const signature = JSON.stringify(payload);
 
-    if (signature === draftMetadata.lastPersistedSignature) {
+    if (signature === currentMetadata.lastPersistedSignature) {
       return null;
     }
 
-    setDraftMetadata((prev) => ({
-      ...prev,
-      saveState: "saving",
-    }));
+    setDraftMetadata((prev) => (
+      prev.saveState === "saving"
+        ? prev
+        : {
+            ...prev,
+            saveState: "saving",
+          }
+    ));
 
     try {
-      const response = await updateCycleDraft(draftMetadata.cycleId, draftMetadata.cyclePlanId, {
+      const response = await updateCycleDraft(currentMetadata.cycleId, currentMetadata.cyclePlanId, {
         ...payload,
-        allowCrossDayDraft: draftMetadata.allowCrossDayDraft,
+        allowCrossDayDraft: currentMetadata.allowCrossDayDraft,
       });
 
       const nextState = mapCycleBuilderPayload(response);
@@ -277,13 +297,17 @@ export function MultiWeekProgramProvider({ children }) {
 
       return response;
     } catch (error) {
-      setDraftMetadata((prev) => ({
-        ...prev,
-        saveState: "error",
-      }));
+      setDraftMetadata((prev) => (
+        prev.saveState === "error"
+          ? prev
+          : {
+              ...prev,
+              saveState: "error",
+            }
+      ));
       throw error;
     }
-  }, [draftMetadata, multiWeekDraft]);
+  }, []);
 
   useEffect(() => {
     if (!draftMetadata.loadedFromBackend || !draftMetadata.cycleId || !draftMetadata.cyclePlanId) {
@@ -295,10 +319,16 @@ export function MultiWeekProgramProvider({ children }) {
       return undefined;
     }
 
-    setDraftMetadata((prev) => ({
-      ...prev,
-      saveState: prev.saveState === "saving" ? "saving" : "dirty",
-    }));
+    setDraftMetadata((prev) => {
+      if (prev.saveState === "saving" || prev.saveState === "dirty") {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        saveState: "dirty",
+      };
+    });
 
     const timeoutId = window.setTimeout(() => {
       persistDraftNow(multiWeekDraft).catch(() => {});
