@@ -205,6 +205,20 @@ function updateSelectedWeekDraft(prev, updater) {
   };
 }
 
+function resolvePreservedSelectedWeek(currentSelectedWeek, nextDraft) {
+  const validWeekNumbers = new Set((nextDraft?.weeks || []).map((week) => week.weekNumber));
+
+  if (validWeekNumbers.has(currentSelectedWeek)) {
+    return currentSelectedWeek;
+  }
+
+  if (validWeekNumbers.has(nextDraft?.selectedWeek)) {
+    return nextDraft.selectedWeek;
+  }
+
+  return nextDraft?.weeks?.[0]?.weekNumber || 1;
+}
+
 export function MultiWeekProgramProvider({ children }) {
   const [multiWeekDraft, setMultiWeekDraft] = useState(createInitialDraft);
   const [draftMetadata, setDraftMetadata] = useState(createInitialDraftMetadata);
@@ -248,7 +262,10 @@ export function MultiWeekProgramProvider({ children }) {
       });
 
       const nextState = mapCycleBuilderPayload(response);
-      setMultiWeekDraft(nextState.programDraft);
+      setMultiWeekDraft((prev) => ({
+        ...nextState.programDraft,
+        selectedWeek: resolvePreservedSelectedWeek(prev.selectedWeek, nextState.programDraft),
+      }));
       setDraftMetadata((prev) => ({
         ...prev,
         ...nextState.metadata,
@@ -299,7 +316,10 @@ export function MultiWeekProgramProvider({ children }) {
 
   const hydrateProgramDraft = useCallback((response) => {
     const nextState = mapCycleBuilderPayload(response);
-    setMultiWeekDraft(nextState.programDraft);
+    setMultiWeekDraft((prev) => ({
+      ...nextState.programDraft,
+      selectedWeek: resolvePreservedSelectedWeek(prev.selectedWeek, nextState.programDraft),
+    }));
     setDraftMetadata({
       ...createInitialDraftMetadata(),
       ...nextState.metadata,

@@ -472,8 +472,8 @@ export default function ManualBuilderMulti() {
           </div>
         </div>
 
-        <div className="mb-4 px-1">
-          <div className="mb-1 flex items-end justify-between">
+        <div className="mb-4">
+          <div className="mb-1 flex items-end justify-between px-1">
             <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
               Weekly Volume (Sets)
             </span>
@@ -491,7 +491,7 @@ export default function ManualBuilderMulti() {
           </div>
 
           <div
-            className="grid h-12 rounded-lg border border-slate-100/50 bg-white/30 p-1"
+            className="grid h-12 rounded-lg border border-slate-100/50 bg-white/30 py-1"
             style={{ gridTemplateColumns: `repeat(${programDraft.programLength || 1}, minmax(0, 1fr))` }}
           >
             {weeklyVolumeData.map((week) => (

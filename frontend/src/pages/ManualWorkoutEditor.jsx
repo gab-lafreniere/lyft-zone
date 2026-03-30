@@ -308,6 +308,7 @@ export default function ManualWorkoutEditor() {
   const {
     programDraft,
     draftMetadata,
+    setSelectedWeek,
     updateWorkoutName,
     updateBlock,
     updateSupersetExercise,
@@ -322,7 +323,30 @@ export default function ManualWorkoutEditor() {
     hasIncompleteSupersets,
   } = useEditableProgram();
 
+  const multiWeekWorkoutMatch = useMemo(() => {
+    if (!programDraft.isMultiWeek) {
+      return null;
+    }
+
+    for (const week of programDraft.weeks || []) {
+      const matchedWorkout = (week.workouts || []).find((item) => item.id === workoutId);
+
+      if (matchedWorkout) {
+        return {
+          workout: matchedWorkout,
+          weekNumber: week.weekNumber,
+        };
+      }
+    }
+
+    return null;
+  }, [programDraft.isMultiWeek, programDraft.weeks, workoutId]);
+
   const workout = useMemo(() => {
+    if (programDraft.isMultiWeek) {
+      return multiWeekWorkoutMatch?.workout || null;
+    }
+
     if (!programDraft.workouts.length) {
       return null;
     }
@@ -331,7 +355,22 @@ export default function ManualWorkoutEditor() {
       programDraft.workouts.find((item) => item.id === workoutId) ||
       programDraft.workouts[0]
     );
-  }, [programDraft.workouts, workoutId]);
+  }, [multiWeekWorkoutMatch, programDraft.isMultiWeek, programDraft.workouts, workoutId]);
+
+  useEffect(() => {
+    if (!programDraft.isMultiWeek || !multiWeekWorkoutMatch?.weekNumber) {
+      return;
+    }
+
+    if (programDraft.selectedWeek !== multiWeekWorkoutMatch.weekNumber) {
+      setSelectedWeek(multiWeekWorkoutMatch.weekNumber);
+    }
+  }, [
+    multiWeekWorkoutMatch,
+    programDraft.isMultiWeek,
+    programDraft.selectedWeek,
+    setSelectedWeek,
+  ]);
 
   useEffect(() => {
     const handleScroll = () => {
