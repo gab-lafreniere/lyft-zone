@@ -7,6 +7,7 @@ const express = require('express');
 const cors = require('cors');
 const { testConnection, syncDatabase } = require('./db');
 
+const healthRoutes = require('./routes/health');
 const planRoutes = require('./routes/plans');
 const exercisesRouter = require('./routes/exercisesPrisma');
 const usersRouter = require('./routes/users');
@@ -57,6 +58,7 @@ app.use(cors(corsOptions));
 app.use(express.json()); // Parse JSON request bodies
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 
+app.use('/health', healthRoutes);
 app.use('/api/exercises', exercisesRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/cycles', cyclesRouter);
