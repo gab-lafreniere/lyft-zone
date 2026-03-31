@@ -5,6 +5,16 @@ import { useMultiWeekProgram } from "../context/MultiWeekProgramContext";
 import { getCycleBuilderPath } from "../features/multiWeek/routes";
 import { createCycleFromWeeklyPlan } from "../services/api";
 
+const WEEKDAY_ROWS = [
+  { day: "MONDAY", shortLabel: "M", fullLabel: "Monday" },
+  { day: "TUESDAY", shortLabel: "T", fullLabel: "Tuesday" },
+  { day: "WEDNESDAY", shortLabel: "W", fullLabel: "Wednesday" },
+  { day: "THURSDAY", shortLabel: "T", fullLabel: "Thursday" },
+  { day: "FRIDAY", shortLabel: "F", fullLabel: "Friday" },
+  { day: "SATURDAY", shortLabel: "S", fullLabel: "Saturday" },
+  { day: "SUNDAY", shortLabel: "S", fullLabel: "Sunday" },
+];
+
 function formatDateInput(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -60,6 +70,60 @@ function clampDateString(value, minValue, maxValue) {
   return value;
 }
 
+function buildInitialWeekdaySlots(workouts = []) {
+  const orderedWorkouts = [...workouts].sort(
+    (left, right) => (left.orderIndex || 0) - (right.orderIndex || 0)
+  );
+
+  return WEEKDAY_ROWS.map((entry, index) => ({
+    ...entry,
+    workout: orderedWorkouts[index]
+      ? {
+          id: orderedWorkouts[index].id,
+          name: orderedWorkouts[index].name,
+          orderIndex: orderedWorkouts[index].orderIndex,
+          blocks: orderedWorkouts[index].blocks || [],
+        }
+      : null,
+  }));
+}
+
+function moveWorkoutWithDownwardPush(slots, sourceIndex, direction) {
+  const targetIndex = sourceIndex + direction;
+  if (
+    sourceIndex < 0 ||
+    sourceIndex >= slots.length ||
+    targetIndex < 0 ||
+    targetIndex >= slots.length ||
+    !slots[sourceIndex]?.workout
+  ) {
+    return null;
+  }
+
+  const nextSlots = slots.map((slot) => ({ ...slot }));
+  const movingWorkout = nextSlots[sourceIndex].workout;
+  nextSlots[sourceIndex] = {
+    ...nextSlots[sourceIndex],
+    workout: null,
+  };
+
+  let displacedWorkout = movingWorkout;
+  for (let index = targetIndex; index < nextSlots.length; index += 1) {
+    const existingWorkout = nextSlots[index].workout;
+    nextSlots[index] = {
+      ...nextSlots[index],
+      workout: displacedWorkout,
+    };
+    displacedWorkout = existingWorkout;
+
+    if (!displacedWorkout) {
+      return nextSlots;
+    }
+  }
+
+  return null;
+}
+
 export default function ManualConvert() {
   const navigate = useNavigate();
   const { programDraft, draftMetadata } = useManualProgram();
@@ -70,6 +134,13 @@ export default function ManualConvert() {
   const todayDate = getTodayDateInput();
   const initialStartDate = programDraft.startDate || todayDate;
   const initialProgramLength = programDraft.programLength || 8;
+  const templateWorkouts = useMemo(
+    () =>
+      [...(programDraft.workouts || [])].sort(
+        (left, right) => (left.orderIndex || 0) - (right.orderIndex || 0)
+      ),
+    [programDraft.workouts]
+  );
   const initialEndDate =
     programDraft.endDate ||
     formatDateInput(addWeeks(new Date(`${initialStartDate}T00:00:00`), initialProgramLength));
@@ -77,6 +148,9 @@ export default function ManualConvert() {
   const [startDate, setStartDate] = useState(initialStartDate);
   const [programLength, setProgramLength] = useState(initialProgramLength);
   const [endDate, setEndDate] = useState(initialEndDate);
+  const [weekdaySlots, setWeekdaySlots] = useState(() =>
+    buildInitialWeekdaySlots(programDraft.workouts || [])
+  );
   const [submitError, setSubmitError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -92,6 +166,39 @@ export default function ManualConvert() {
     () => addDays(startDate || todayDate, Math.max(0, programLength * 7 - 1)),
     [programLength, startDate, todayDate]
   );
+  const weekdayAssignmentError = useMemo(() => {
+    if (templateWorkouts.length === 0) {
+      return "This weekly template has no workouts to convert.";
+    }
+
+    if (templateWorkouts.length > WEEKDAY_ROWS.length) {
+      return "This weekly template has more than 7 workouts and cannot use weekday assignment in V1.";
+    }
+
+    const assignedWorkoutOrderIndexes = weekdaySlots
+      .filter((slot) => slot.workout)
+      .map((slot) => slot.workout.orderIndex);
+    const uniqueAssignedOrderIndexes = new Set(assignedWorkoutOrderIndexes);
+
+    if (assignedWorkoutOrderIndexes.length !== templateWorkouts.length) {
+      return "Each workout must be assigned exactly once.";
+    }
+
+    if (uniqueAssignedOrderIndexes.size !== assignedWorkoutOrderIndexes.length) {
+      return "Each workout must be assigned exactly once.";
+    }
+
+    const expectedWorkoutOrderIndexes = templateWorkouts.map((workout) => workout.orderIndex);
+    if (
+      expectedWorkoutOrderIndexes.some(
+        (orderIndex) => !uniqueAssignedOrderIndexes.has(orderIndex)
+      )
+    ) {
+      return "Each workout must be assigned exactly once.";
+    }
+
+    return "";
+  }, [templateWorkouts, weekdaySlots]);
 
   const handleLengthChange = (weeks) => {
     setProgramLength(weeks);
@@ -113,6 +220,14 @@ export default function ManualConvert() {
     setEndDate(clampDateString(value, finalWeekStartDate, finalWeekEndDate));
   };
 
+  const handleMoveWorkout = (sourceIndex, direction) => {
+    setWeekdaySlots((prev) => {
+      const nextSlots = moveWorkoutWithDownwardPush(prev, sourceIndex, direction);
+      return nextSlots || prev;
+    });
+    setSubmitError("");
+  };
+
   const handleConvert = async () => {
     if (!draftMetadata.weeklyPlanParentId || isSubmitting) {
       return;
@@ -128,12 +243,22 @@ export default function ManualConvert() {
         throw new Error("Please choose a valid future date range.");
       }
 
+      if (weekdayAssignmentError) {
+        throw new Error(weekdayAssignmentError);
+      }
+
       const response = await createCycleFromWeeklyPlan({
         weeklyPlanParentId: draftMetadata.weeklyPlanParentId,
         name: programName,
         startDate,
         endDate,
         durationWeeks: Number(derivedProgramLength),
+        workoutDayAssignments: weekdaySlots
+          .filter((slot) => slot.workout)
+          .map((slot) => ({
+            workoutOrderIndex: slot.workout.orderIndex,
+            scheduledDay: slot.day,
+          })),
       });
 
       hydrateProgramDraft(response);
@@ -263,6 +388,86 @@ export default function ManualConvert() {
             </div>
           </div>
 
+          <div className="flex flex-col gap-4">
+            <div>
+              <h3 className="text-lg font-bold leading-tight tracking-tight">
+                Weekly Schedule
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Assign each workout to a weekday before this template is duplicated across all weeks.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {weekdaySlots.map((slot, index) => {
+                const canMoveUp = Boolean(moveWorkoutWithDownwardPush(weekdaySlots, index, -1));
+                const canMoveDown = Boolean(moveWorkoutWithDownwardPush(weekdaySlots, index, 1));
+
+                return (
+                  <div
+                    key={slot.day}
+                    className="flex items-stretch gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
+                  >
+                    <div className="flex w-11 shrink-0 flex-col items-center justify-center rounded-lg bg-slate-100">
+                      <span className="text-base font-black text-slate-900">
+                        {slot.shortLabel}
+                      </span>
+                      <span className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        {slot.fullLabel.slice(0, 3)}
+                      </span>
+                    </div>
+
+                    {slot.workout ? (
+                      <div className="min-w-0 flex-1 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-bold text-slate-900">
+                              {slot.workout.name}
+                            </p>
+                            <p className="mt-1 text-[11px] font-medium text-slate-500">
+                              Workout {slot.workout.orderIndex}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleMoveWorkout(index, -1)}
+                              disabled={!canMoveUp}
+                              className="flex size-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              aria-label={`Move ${slot.workout.name} up`}
+                            >
+                              <span className="material-symbols-outlined text-base">arrow_upward</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleMoveWorkout(index, 1)}
+                              disabled={!canMoveDown}
+                              className="flex size-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              aria-label={`Move ${slot.workout.name} down`}
+                            >
+                              <span className="material-symbols-outlined text-base">arrow_downward</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex min-h-[76px] flex-1 items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4">
+                        <p className="text-sm font-medium text-slate-400">Rest day</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {weekdayAssignmentError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                {weekdayAssignmentError}
+              </div>
+            )}
+          </div>
+
           <div className="mt-2 rounded-xl border border-primary/20 bg-primary/5 p-4">
             <div className="flex items-center gap-3">
               <span className="material-symbols-outlined text-primary">info</span>
@@ -281,7 +486,7 @@ export default function ManualConvert() {
           <button
             type="button"
             onClick={handleConvert}
-            disabled={isSubmitting || !draftMetadata.weeklyPlanParentId}
+            disabled={isSubmitting || !draftMetadata.weeklyPlanParentId || Boolean(weekdayAssignmentError)}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-4 text-lg font-bold text-slate-900 shadow-lg shadow-primary/20 transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSubmitting ? "Creating..." : "Convert to Multi week"}

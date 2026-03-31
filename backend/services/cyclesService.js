@@ -17,6 +17,15 @@ const CYCLE_STATUSES = new Set(['PLANNED', 'ACTIVE', 'COMPLETED', 'ARCHIVED']);
 const TRAINING_MODES = new Set(['FIXED', 'AI_COACH']);
 const PLAN_SOURCE_TYPES = new Set(['SYSTEM', 'USER', 'AI']);
 const PLAN_STATUSES = new Set(['DRAFT', 'PUBLISHED', 'SUPERSEDED']);
+const DAY_OF_WEEK = new Set([
+  'MONDAY',
+  'TUESDAY',
+  'WEDNESDAY',
+  'THURSDAY',
+  'FRIDAY',
+  'SATURDAY',
+  'SUNDAY',
+]);
 const BLOCK_TYPES = new Set(['SINGLE', 'SUPERSET', 'GIANT_SET', 'CIRCUIT']);
 const BLOCK_REST_STRATEGIES = new Set(['NONE', 'AFTER_EXERCISE', 'AFTER_ROUND']);
 const SET_TYPES = new Set([
@@ -183,6 +192,60 @@ function normalizeNumeric(value) {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeWorkoutDayAssignments(assignments, sourceVersion) {
+  const sourceWorkouts = Array.isArray(sourceVersion?.workouts) ? sourceVersion.workouts : [];
+
+  if (sourceWorkouts.length === 0) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'No weekly workouts are available to convert');
+  }
+
+  if (sourceWorkouts.length > 7) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'This weekly template has more than 7 workouts and cannot use weekday assignment in V1.'
+    );
+  }
+
+  if (!Array.isArray(assignments)) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'Each workout must be assigned exactly once.');
+  }
+
+  const validWorkoutOrderIndexes = new Set(sourceWorkouts.map((workout) => workout.orderIndex));
+  const seenWorkoutOrderIndexes = new Set();
+  const seenScheduledDays = new Set();
+  const assignmentMap = new Map();
+
+  for (const assignment of assignments) {
+    const workoutOrderIndex = normalizeInt(assignment?.workoutOrderIndex, null);
+    const scheduledDay = assignment?.scheduledDay ?? null;
+
+    if (!validWorkoutOrderIndexes.has(workoutOrderIndex)) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'Each workout must be assigned exactly once.');
+    }
+
+    assertEnumValue(scheduledDay, DAY_OF_WEEK, 'scheduledDay');
+
+    if (seenWorkoutOrderIndexes.has(workoutOrderIndex)) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'Each workout must be assigned exactly once.');
+    }
+
+    if (seenScheduledDays.has(scheduledDay)) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'Only one workout can be assigned to a given day.');
+    }
+
+    seenWorkoutOrderIndexes.add(workoutOrderIndex);
+    seenScheduledDays.add(scheduledDay);
+    assignmentMap.set(workoutOrderIndex, scheduledDay);
+  }
+
+  if (assignmentMap.size !== sourceWorkouts.length) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'Each workout must be assigned exactly once.');
+  }
+
+  return assignmentMap;
 }
 
 function normalizeWorkoutsInput(workouts = []) {
@@ -831,11 +894,11 @@ function clonePlanDocument(plan) {
   };
 }
 
-function buildDocumentFromWeeklyVersion(version, durationWeeks) {
+function buildDocumentFromWeeklyVersion(version, durationWeeks, workoutDayAssignments = new Map()) {
   const workouts = version.workouts.map((workout) => ({
     name: workout.name,
     orderIndex: workout.orderIndex,
-    scheduledDay: workout.orderIndex <= 7 ? null : null,
+    scheduledDay: workoutDayAssignments.get(workout.orderIndex) || null,
     estimatedDurationMinutes: workout.estimatedDurationMinutes,
     notes: workout.notes,
     blocks: workout.blocks.map((block) => ({
@@ -1086,7 +1149,15 @@ async function createCycleFromWeeklyPlan(payload) {
   });
   validateNoOverlap(existingCycles, startDateKey, endDateKey);
 
-  const document = buildDocumentFromWeeklyVersion(sourceVersion, durationWeeks);
+  const workoutDayAssignments = normalizeWorkoutDayAssignments(
+    payload.workoutDayAssignments,
+    sourceVersion
+  );
+  const document = buildDocumentFromWeeklyVersion(
+    sourceVersion,
+    durationWeeks,
+    workoutDayAssignments
+  );
   const created = await prisma.$transaction(async (tx) => {
     const cycle = await tx.trainingCycle.create({
       data: {
