@@ -46,6 +46,22 @@ function addDays(dateValue, days) {
   return `${year}-${month}-${day}`;
 }
 
+function clampDateString(value, minValue, maxValue) {
+  if (!value) {
+    return maxValue;
+  }
+
+  if (value < minValue) {
+    return minValue;
+  }
+
+  if (value > maxValue) {
+    return maxValue;
+  }
+
+  return value;
+}
+
 function deriveDurationWeeks(startDate, endDate) {
   const start = new Date(`${startDate}T00:00:00`);
   const end = new Date(`${endDate}T00:00:00`);
@@ -250,11 +266,32 @@ export default function ManualBuilderMulti() {
     return "Draft";
   }, [draftMetadata.lastSavedAt, draftMetadata.saveState]);
 
-  const settingsMinDate = settingsStartDate || todayDate;
+  const settingsFinalWeekStartDate = useMemo(
+    () =>
+      addDays(
+        settingsStartDate || todayDate,
+        Math.max(0, (settingsDurationWeeks - 1) * 7)
+      ),
+    [settingsDurationWeeks, settingsStartDate, todayDate]
+  );
+  const settingsFinalWeekEndDate = useMemo(
+    () =>
+      addDays(
+        settingsStartDate || todayDate,
+        Math.max(0, settingsDurationWeeks * 7 - 1)
+      ),
+    [settingsDurationWeeks, settingsStartDate, todayDate]
+  );
 
   const openSettingsPanel = () => {
     setSettingsStartDate(programDraft.startDate || todayDate);
-    setSettingsEndDate(programDraft.endDate || addDays(todayDate, maxDurationWeeks * 7 - 1));
+    setSettingsEndDate(
+      programDraft.endDate ||
+        addDays(
+          programDraft.startDate || todayDate,
+          Math.max(0, (programDraft.programLength || maxDurationWeeks) * 7 - 1)
+        )
+    );
     setSettingsDurationWeeks(programDraft.programLength || maxDurationWeeks);
     setSettingsError("");
     setShowDeleteConfirm(false);
@@ -271,18 +308,16 @@ export default function ManualBuilderMulti() {
     setSettingsStartDate(value);
     setSettingsError("");
 
-    const nextEndDate = addDays(value, settingsDurationWeeks * 7 - 1);
-    setSettingsEndDate(nextEndDate);
+    const nextFinalWeekStart = addDays(value, Math.max(0, (settingsDurationWeeks - 1) * 7));
+    const nextFinalWeekEnd = addDays(value, Math.max(0, settingsDurationWeeks * 7 - 1));
+    setSettingsEndDate((prev) => clampDateString(prev, nextFinalWeekStart, nextFinalWeekEnd));
   };
 
   const handleSettingsEndDateChange = (value) => {
-    setSettingsEndDate(value);
+    setSettingsEndDate(
+      clampDateString(value, settingsFinalWeekStartDate, settingsFinalWeekEndDate)
+    );
     setSettingsError("");
-
-    const nextDuration = deriveDurationWeeks(settingsStartDate, value);
-    if (nextDuration != null) {
-      setSettingsDurationWeeks(nextDuration);
-    }
   };
 
   const handleSettingsDurationChange = (nextValue) => {
@@ -296,9 +331,23 @@ export default function ManualBuilderMulti() {
     setSettingsDurationWeeks(safeDuration);
     setSettingsError("");
 
-    if (safeDuration <= maxDurationWeeks) {
-      setSettingsEndDate(addDays(settingsStartDate, safeDuration * 7 - 1));
-    }
+    const nextFinalWeekStart = addDays(
+      settingsStartDate || todayDate,
+      Math.max(0, (safeDuration - 1) * 7)
+    );
+    const nextFinalWeekEnd = addDays(
+      settingsStartDate || todayDate,
+      Math.max(0, safeDuration * 7 - 1)
+    );
+    setSettingsEndDate((prev) => clampDateString(prev, nextFinalWeekStart, nextFinalWeekEnd));
+  };
+
+  const decrementSettingsDuration = () => {
+    handleSettingsDurationChange(Math.max(1, settingsDurationWeeks - 1));
+  };
+
+  const incrementSettingsDuration = () => {
+    handleSettingsDurationChange(Math.min(8, settingsDurationWeeks + 1));
   };
 
   const handleSaveSettings = async () => {
@@ -638,77 +687,113 @@ export default function ManualBuilderMulti() {
       </div>
 
       {isSettingsOpen && (
-        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-900/40 px-4 pb-6 pt-10">
-          <div className="relative w-full max-w-md rounded-[28px] bg-white p-5 shadow-2xl">
-            <button
-              type="button"
-              onClick={closeSettingsPanel}
-              className="absolute right-4 top-4 flex size-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
-              aria-label="Close settings"
-            >
-              <span className="material-symbols-outlined text-xl">close</span>
-            </button>
+        <div className="fixed inset-0 z-[70] flex items-end bg-slate-900/40 backdrop-blur-sm">
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default"
+            aria-label="Close settings"
+            onClick={closeSettingsPanel}
+          />
 
-            <div className="space-y-5">
+          <div className="relative w-full rounded-t-3xl bg-white p-5 shadow-2xl">
+            <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-slate-200" />
+
+            <div className="mb-5 flex items-center justify-between">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">
                   Settings
                 </p>
-                <h2 className="mt-1 text-xl font-bold text-slate-900">
-                  Multi-week timeline
-                </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  Update dates for upcoming cycles and delete this cycle for debugging when needed.
-                </p>
+                <h3 className="mt-1 text-lg font-bold text-slate-900">
+                  Multi-Week Timeline
+                </h3>
               </div>
+              <button
+                type="button"
+                onClick={closeSettingsPanel}
+                className="flex size-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Close settings"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
 
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Start date
+            <div className="space-y-5">
+              <section className="space-y-3">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Start Date
                   </label>
-                  <input
-                    type="date"
-                    value={settingsStartDate}
-                    min={todayDate}
-                    onChange={(event) => handleSettingsStartDateChange(event.target.value)}
-                    disabled={!isTimelineEditable}
-                    className="h-12 w-full rounded-xl border border-slate-200 px-3 outline-none focus:border-primary disabled:bg-slate-100 disabled:text-slate-400"
-                  />
+                  <p className="mt-1 text-xs text-slate-400">
+                    Timeline edits are available for upcoming cycles only.
+                  </p>
                 </div>
+                <input
+                  type="date"
+                  value={settingsStartDate}
+                  min={todayDate}
+                  onChange={(event) => handleSettingsStartDateChange(event.target.value)}
+                  disabled={!isTimelineEditable}
+                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 font-medium outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary disabled:bg-slate-100 disabled:text-slate-400"
+                />
+              </section>
 
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    End date
-                  </label>
-                  <input
-                    type="date"
-                    value={settingsEndDate}
-                    min={settingsMinDate}
-                    onChange={(event) => handleSettingsEndDateChange(event.target.value)}
-                    disabled={!isTimelineEditable}
-                    className="h-12 w-full rounded-xl border border-slate-200 px-3 outline-none focus:border-primary disabled:bg-slate-100 disabled:text-slate-400"
-                  />
-                </div>
+              <section className="space-y-3">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                  End Date
+                </label>
+                <input
+                  type="date"
+                  value={settingsEndDate}
+                  min={settingsFinalWeekStartDate}
+                  max={settingsFinalWeekEndDate}
+                  onChange={(event) => handleSettingsEndDateChange(event.target.value)}
+                  disabled={!isTimelineEditable}
+                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 font-medium outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary disabled:bg-slate-100 disabled:text-slate-400"
+                />
+              </section>
 
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Duration in weeks
+              <section className="space-y-3">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Duration In Weeks
                   </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max={String(maxDurationWeeks)}
-                    value={settingsDurationWeeks}
-                    onChange={(event) => handleSettingsDurationChange(event.target.value)}
-                    disabled={!isTimelineEditable}
-                    className="h-12 w-full rounded-xl border border-slate-200 px-3 outline-none focus:border-primary disabled:bg-slate-100 disabled:text-slate-400"
-                  />
-                  <p className="text-xs text-slate-500">
+                  <p className="mt-1 text-xs text-slate-400">
                     You can shorten this cycle. Extending beyond {maxDurationWeeks} weeks is not supported yet.
                   </p>
                 </div>
-              </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <button
+                      type="button"
+                      onClick={decrementSettingsDuration}
+                      disabled={!isTimelineEditable || settingsDurationWeeks <= 1}
+                      className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label="Decrease duration in weeks"
+                    >
+                      <span className="material-symbols-outlined">remove</span>
+                    </button>
+
+                    <div className="flex-1 text-center">
+                      <span className="text-3xl font-black text-slate-900">
+                        {settingsDurationWeeks}
+                      </span>
+                      <span className="mt-1 block text-xs font-semibold uppercase tracking-wider text-primary">
+                        Weeks
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={incrementSettingsDuration}
+                      disabled={!isTimelineEditable || settingsDurationWeeks >= 8}
+                      className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label="Increase duration in weeks"
+                    >
+                      <span className="material-symbols-outlined">add</span>
+                    </button>
+                  </div>
+                </div>
+              </section>
 
               {!isTimelineEditable && (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
@@ -722,61 +807,68 @@ export default function ManualBuilderMulti() {
                 </div>
               )}
 
-              <div className="space-y-3">
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={closeSettingsPanel}
+                  className="flex-1 rounded-xl border border-slate-200 py-3 font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
                 <button
                   type="button"
                   onClick={handleSaveSettings}
                   disabled={!isTimelineEditable || isSavingSettings}
                   className={[
-                    "w-full rounded-xl py-3 font-bold transition-colors",
+                    "flex-1 rounded-xl py-3 font-semibold transition-colors",
                     isTimelineEditable && !isSavingSettings
-                      ? "bg-primary text-white"
-                      : "cursor-not-allowed bg-slate-200 text-slate-400",
+                      ? "bg-primary text-slate-900"
+                      : "cursor-not-allowed bg-slate-300 text-white/60",
                   ].join(" ")}
                 >
-                  {isSavingSettings ? "Saving..." : "Save timeline settings"}
+                  {isSavingSettings ? "Saving..." : "Save"}
                 </button>
-
-                <div className="rounded-2xl border border-red-100 bg-red-50/60 p-4">
-                  <h3 className="text-sm font-bold text-red-700">Delete cycle</h3>
-                  <p className="mt-1 text-xs leading-relaxed text-red-600">
-                    This permanently removes the current multi-week cycle and all of its versions.
-                  </p>
-
-                  {showDeleteConfirm ? (
-                    <div className="mt-3 space-y-2">
-                      <p className="text-xs font-semibold text-red-700">
-                        Confirm deletion of this cycle?
-                      </p>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setShowDeleteConfirm(false)}
-                          className="flex-1 rounded-xl border border-slate-200 bg-white py-2 text-sm font-semibold text-slate-600"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleDeleteCycle}
-                          disabled={isDeletingCycle}
-                          className="flex-1 rounded-xl bg-red-500 py-2 text-sm font-bold text-white disabled:opacity-60"
-                        >
-                          {isDeletingCycle ? "Deleting..." : "Confirm delete"}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleDeleteCycle}
-                      className="mt-3 w-full rounded-xl border border-red-200 bg-white py-2.5 text-sm font-bold text-red-600 transition-colors hover:bg-red-50"
-                    >
-                      Delete cycle
-                    </button>
-                  )}
-                </div>
               </div>
+
+              <section className="rounded-2xl border border-red-100 bg-red-50/60 p-4">
+                <h3 className="text-sm font-bold text-red-700">Delete Cycle</h3>
+                <p className="mt-1 text-sm text-red-600">
+                  Delete this multi-week cycle and all of its versions. This action can&apos;t be undone.
+                </p>
+
+                {!showDeleteConfirm ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="mt-3 w-full rounded-xl border border-red-200 bg-white py-3 font-semibold text-red-500 transition-colors hover:bg-red-50"
+                  >
+                    Delete Cycle
+                  </button>
+                ) : (
+                  <div className="mt-3 space-y-3">
+                    <p className="text-sm text-red-600">
+                      Confirm deletion of this cycle?
+                    </p>
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteConfirm(false)}
+                        className="flex-1 rounded-xl border border-slate-200 bg-white py-3 font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDeleteCycle}
+                        disabled={isDeletingCycle}
+                        className="flex-1 rounded-xl bg-red-500 py-3 font-semibold text-white transition-colors hover:bg-red-600 disabled:opacity-60"
+                      >
+                        {isDeletingCycle ? "Deleting..." : "Delete Cycle"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </section>
             </div>
           </div>
         </div>

@@ -18,6 +18,12 @@ function addWeeks(date, weeks) {
   return next;
 }
 
+function addDays(dateValue, days) {
+  const next = new Date(`${dateValue}T00:00:00`);
+  next.setDate(next.getDate() + days);
+  return formatDateInput(next);
+}
+
 function getTodayDateInput() {
   return formatDateInput(new Date());
 }
@@ -36,6 +42,22 @@ function calculateDurationWeeks(startDateValue, endDateValue) {
   }
 
   return Math.floor(dayDifference / 7) + 1;
+}
+
+function clampDateString(value, minValue, maxValue) {
+  if (!value) {
+    return maxValue;
+  }
+
+  if (value < minValue) {
+    return minValue;
+  }
+
+  if (value > maxValue) {
+    return maxValue;
+  }
+
+  return value;
 }
 
 export default function ManualConvert() {
@@ -62,33 +84,33 @@ export default function ManualConvert() {
     return `This ${programLength}-week program will duplicate your ${sessionsPerWeek}-session weekly template across all weeks.`;
   }, [programLength, sessionsPerWeek]);
 
-  const endDateMin = startDate || todayDate;
+  const finalWeekStartDate = useMemo(
+    () => addDays(startDate || todayDate, Math.max(0, (programLength - 1) * 7)),
+    [programLength, startDate, todayDate]
+  );
+  const finalWeekEndDate = useMemo(
+    () => addDays(startDate || todayDate, Math.max(0, programLength * 7 - 1)),
+    [programLength, startDate, todayDate]
+  );
 
   const handleLengthChange = (weeks) => {
     setProgramLength(weeks);
 
-    const parsed = new Date(`${startDate}T00:00:00`);
-    if (!Number.isNaN(parsed.getTime())) {
-      setEndDate(formatDateInput(addWeeks(parsed, weeks)));
-    }
+    const nextFinalWeekStart = addDays(startDate || todayDate, Math.max(0, (weeks - 1) * 7));
+    const nextFinalWeekEnd = addDays(startDate || todayDate, Math.max(0, weeks * 7 - 1));
+    setEndDate((prev) => clampDateString(prev, nextFinalWeekStart, nextFinalWeekEnd));
   };
 
   const handleStartDateChange = (value) => {
     setStartDate(value);
 
-    const parsed = new Date(`${value}T00:00:00`);
-    if (!Number.isNaN(parsed.getTime())) {
-      setEndDate(formatDateInput(addWeeks(parsed, programLength)));
-    }
+    const nextFinalWeekStart = addDays(value, Math.max(0, (programLength - 1) * 7));
+    const nextFinalWeekEnd = addDays(value, Math.max(0, programLength * 7 - 1));
+    setEndDate((prev) => clampDateString(prev, nextFinalWeekStart, nextFinalWeekEnd));
   };
 
   const handleEndDateChange = (value) => {
-    setEndDate(value);
-
-    const nextDuration = calculateDurationWeeks(startDate, value);
-    if (nextDuration != null) {
-      setProgramLength(nextDuration);
-    }
+    setEndDate(clampDateString(value, finalWeekStartDate, finalWeekEndDate));
   };
 
   const handleConvert = async () => {
@@ -230,7 +252,8 @@ export default function ManualConvert() {
                   type="date"
                   value={endDate}
                   onChange={(e) => handleEndDateChange(e.target.value)}
-                  min={endDateMin}
+                  min={finalWeekStartDate}
+                  max={finalWeekEndDate}
                   className="h-14 w-full rounded-xl border border-slate-200 bg-white pl-12 pr-4 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
                 />
                 <span className="material-symbols-outlined absolute left-4 text-slate-400">
