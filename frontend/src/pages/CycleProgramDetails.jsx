@@ -26,7 +26,7 @@ function formatDate(value) {
 export default function CycleProgramDetails() {
   const navigate = useNavigate();
   const { cycleId } = useParams();
-  const { hydrateCycleDraft } = useMultiWeekProgram();
+  const { hydrateProgramDraft } = useMultiWeekProgram();
   const [details, setDetails] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isOpeningDraft, setIsOpeningDraft] = useState(false);
@@ -80,7 +80,7 @@ export default function CycleProgramDetails() {
 
       try {
         const response = await openOrCreateCycleEditDraft(cycleId);
-      hydrateCycleDraft(response);
+      hydrateProgramDraft(response);
       navigate(getCycleBuilderPath(cycleId));
     } catch (openError) {
       setError(openError.message || "Unable to open draft.");
