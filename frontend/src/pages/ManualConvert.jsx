@@ -71,9 +71,10 @@ function clampDateString(value, minValue, maxValue) {
 }
 
 function buildInitialWeekdaySlots(workouts = []) {
-  const orderedWorkouts = [...workouts].sort(
-    (left, right) => (left.orderIndex || 0) - (right.orderIndex || 0)
-  );
+  const orderedWorkouts = [...workouts].map((workout, index) => ({
+    ...workout,
+    orderIndex: workout.orderIndex ?? index + 1,
+  }));
 
   return WEEKDAY_ROWS.map((entry, index) => ({
     ...entry,
@@ -136,9 +137,10 @@ export default function ManualConvert() {
   const initialProgramLength = programDraft.programLength || 8;
   const templateWorkouts = useMemo(
     () =>
-      [...(programDraft.workouts || [])].sort(
-        (left, right) => (left.orderIndex || 0) - (right.orderIndex || 0)
-      ),
+      [...(programDraft.workouts || [])].map((workout, index) => ({
+        ...workout,
+        orderIndex: workout.orderIndex ?? index + 1,
+      })),
     [programDraft.workouts]
   );
   const initialEndDate =
@@ -170,33 +172,31 @@ export default function ManualConvert() {
     if (templateWorkouts.length === 0) {
       return "This weekly template has no workouts to convert.";
     }
-
+  
     if (templateWorkouts.length > WEEKDAY_ROWS.length) {
       return "This weekly template has more than 7 workouts and cannot use weekday assignment in V1.";
     }
-
-    const assignedWorkoutOrderIndexes = weekdaySlots
+  
+    const assignedWorkoutIds = weekdaySlots
       .filter((slot) => slot.workout)
-      .map((slot) => slot.workout.orderIndex);
-    const uniqueAssignedOrderIndexes = new Set(assignedWorkoutOrderIndexes);
-
-    if (assignedWorkoutOrderIndexes.length !== templateWorkouts.length) {
+      .map((slot) => slot.workout.id);
+  
+    const uniqueAssignedWorkoutIds = new Set(assignedWorkoutIds);
+  
+    if (assignedWorkoutIds.length !== templateWorkouts.length) {
       return "Each workout must be assigned exactly once.";
     }
-
-    if (uniqueAssignedOrderIndexes.size !== assignedWorkoutOrderIndexes.length) {
+  
+    if (uniqueAssignedWorkoutIds.size !== assignedWorkoutIds.length) {
       return "Each workout must be assigned exactly once.";
     }
-
-    const expectedWorkoutOrderIndexes = templateWorkouts.map((workout) => workout.orderIndex);
-    if (
-      expectedWorkoutOrderIndexes.some(
-        (orderIndex) => !uniqueAssignedOrderIndexes.has(orderIndex)
-      )
-    ) {
+  
+    const expectedWorkoutIds = templateWorkouts.map((workout) => workout.id);
+  
+    if (expectedWorkoutIds.some((id) => !uniqueAssignedWorkoutIds.has(id))) {
       return "Each workout must be assigned exactly once.";
     }
-
+  
     return "";
   }, [templateWorkouts, weekdaySlots]);
 
@@ -245,8 +245,15 @@ export default function ManualConvert() {
 
       if (weekdayAssignmentError) {
         throw new Error(weekdayAssignmentError);
+
       }
 
+      const workoutOrderIndexById = new Map(
+        templateWorkouts.map((workout, index) => [
+          workout.id,
+          workout.orderIndex ?? index + 1,
+        ])
+      );
       const response = await createCycleFromWeeklyPlan({
         weeklyPlanParentId: draftMetadata.weeklyPlanParentId,
         name: programName,
@@ -256,7 +263,7 @@ export default function ManualConvert() {
         workoutDayAssignments: weekdaySlots
           .filter((slot) => slot.workout)
           .map((slot) => ({
-            workoutOrderIndex: slot.workout.orderIndex,
+            workoutOrderIndex: workoutOrderIndexById.get(slot.workout.id),
             scheduledDay: slot.day,
           })),
       });
@@ -290,26 +297,26 @@ export default function ManualConvert() {
           </div>
         </header>
 
-        <main className="flex flex-col gap-6 px-4 pt-6">
-          <div className="rounded-xl border border-slate-100 bg-white p-6 shadow-sm">
-            <div className="mb-4 flex items-center gap-4">
-              <div className="rounded-lg bg-primary/20 p-3 text-primary">
-                <span className="material-symbols-outlined">fitness_center</span>
+        <main className="flex flex-col gap-5 px-4 pt-5">
+          <div className="rounded-xl border border-slate-100 bg-white px-4 py-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg bg-primary/15 p-2 text-primary">
+                <span className="material-symbols-outlined text-[20px]">fitness_center</span>
               </div>
 
               <div>
-                <h2 className="text-xl font-bold">Multi week program</h2>
-                <p className="text-sm text-slate-500">{programName}</p>
+                <h2 className="text-lg font-bold leading-tight">Multi week program</h2>
+                <p className="text-xs text-slate-500">{programName}</p>
               </div>
             </div>
           </div>
 
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3.5">
             <h3 className="text-lg font-bold leading-tight tracking-tight">
               Timeline Settings
             </h3>
 
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-1.5">
               <label className="text-sm font-medium text-slate-600">
                 Start Date
               </label>
@@ -329,7 +336,7 @@ export default function ManualConvert() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-2 pt-2">
+            <div className="flex flex-col gap-1.5 pt-1">
               <label className="text-sm font-medium text-slate-600">
                 Program Length
               </label>
@@ -362,7 +369,7 @@ export default function ManualConvert() {
               )}
             </div>
 
-            <div className="flex flex-col gap-2 pt-2">
+            <div className="flex flex-col gap-1.5 pt-1">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-slate-600">
                   End Date (Auto-calculated)
@@ -388,7 +395,7 @@ export default function ManualConvert() {
             </div>
           </div>
 
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3">
             <div>
               <h3 className="text-lg font-bold leading-tight tracking-tight">
                 Weekly Schedule
@@ -398,7 +405,7 @@ export default function ManualConvert() {
               </p>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-2">
               {weekdaySlots.map((slot, index) => {
                 const canMoveUp = Boolean(moveWorkoutWithDownwardPush(weekdaySlots, index, -1));
                 const canMoveDown = Boolean(moveWorkoutWithDownwardPush(weekdaySlots, index, 1));
@@ -406,53 +413,53 @@ export default function ManualConvert() {
                 return (
                   <div
                     key={slot.day}
-                    className="flex items-stretch gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
+                    className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm"
                   >
-                    <div className="flex w-11 shrink-0 flex-col items-center justify-center rounded-lg bg-slate-100">
-                      <span className="text-base font-black text-slate-900">
+                    <div className="flex w-10 shrink-0 flex-col items-center justify-center rounded-lg bg-slate-100 py-2">
+                      <span className="text-sm font-black text-slate-900">
                         {slot.shortLabel}
                       </span>
-                      <span className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      <span className="mt-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
                         {slot.fullLabel.slice(0, 3)}
                       </span>
                     </div>
 
                     {slot.workout ? (
-                      <div className="min-w-0 flex-1 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                        <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
-                            <p className="truncate text-sm font-bold text-slate-900">
+                            <p className="truncate text-sm font-semibold text-slate-900">
                               {slot.workout.name}
                             </p>
-                            <p className="mt-1 text-[11px] font-medium text-slate-500">
-                              Workout {slot.workout.orderIndex}
+                            <p className="mt-0.5 text-[11px] font-medium text-slate-500">
+                              Workout {slot.workout.orderIndex ?? "—"}
                             </p>
                           </div>
 
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5">
                             <button
                               type="button"
                               onClick={() => handleMoveWorkout(index, -1)}
                               disabled={!canMoveUp}
-                              className="flex size-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              className="flex size-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
                               aria-label={`Move ${slot.workout.name} up`}
                             >
-                              <span className="material-symbols-outlined text-base">arrow_upward</span>
+                              <span className="material-symbols-outlined text-[18px]">arrow_upward</span>
                             </button>
                             <button
                               type="button"
                               onClick={() => handleMoveWorkout(index, 1)}
                               disabled={!canMoveDown}
-                              className="flex size-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              className="flex size-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
                               aria-label={`Move ${slot.workout.name} down`}
                             >
-                              <span className="material-symbols-outlined text-base">arrow_downward</span>
+                              <span className="material-symbols-outlined text-[18px]">arrow_downward</span>
                             </button>
                           </div>
                         </div>
                       </div>
                     ) : (
-                      <div className="flex min-h-[76px] flex-1 items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4">
+                      <div className="flex min-h-[52px] flex-1 items-center rounded-lg bg-slate-50 px-3">
                         <p className="text-sm font-medium text-slate-400">Rest day</p>
                       </div>
                     )}

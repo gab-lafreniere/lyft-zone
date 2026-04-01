@@ -12,6 +12,15 @@ import { updateCycleDraft } from "../services/api";
 
 const MultiWeekProgramContext = createContext(null);
 export const MAX_BLOCK_SET_COUNT = 10;
+const DAY_OF_WEEK = [
+  "MONDAY",
+  "TUESDAY",
+  "WEDNESDAY",
+  "THURSDAY",
+  "FRIDAY",
+  "SATURDAY",
+  "SUNDAY",
+];
 
 function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -647,6 +656,49 @@ export function MultiWeekProgramProvider({ children }) {
     );
   }, []);
 
+  const moveWorkoutToScheduledDay = useCallback((workoutId, nextScheduledDay) => {
+    if (!DAY_OF_WEEK.includes(nextScheduledDay)) {
+      return;
+    }
+
+    setMultiWeekDraft((prev) =>
+      updateSelectedWeekDraft(prev, (week) => {
+        const workouts = week.workouts || [];
+        const movingWorkout = workouts.find((workout) => workout.id === workoutId);
+        if (!movingWorkout) {
+          return week;
+        }
+
+        const targetWorkout = workouts.find(
+          (workout) =>
+            workout.id !== workoutId && (workout.scheduledDay || null) === nextScheduledDay
+        );
+        const sourceScheduledDay = movingWorkout.scheduledDay || null;
+
+        return {
+          ...week,
+          workouts: workouts.map((workout) => {
+            if (workout.id === workoutId) {
+              return {
+                ...workout,
+                scheduledDay: nextScheduledDay,
+              };
+            }
+
+            if (targetWorkout && workout.id === targetWorkout.id) {
+              return {
+                ...workout,
+                scheduledDay: sourceScheduledDay,
+              };
+            }
+
+            return workout;
+          }),
+        };
+      })
+    );
+  }, []);
+
   const updateSet = useCallback((workoutId, blockId, setIndex, updates, exerciseIndex = null) => {
     const normalizedUpdates = normalizeSetUpdates(updates);
 
@@ -848,6 +900,7 @@ export function MultiWeekProgramProvider({ children }) {
       updateSupersetExercise,
       updateSupersetSetCount,
       removeBlock,
+      moveWorkoutToScheduledDay,
       addSet,
       removeSet,
       updateSet,
@@ -873,6 +926,7 @@ export function MultiWeekProgramProvider({ children }) {
       updateSupersetExercise,
       updateSupersetSetCount,
       removeBlock,
+      moveWorkoutToScheduledDay,
       addSet,
       removeSet,
       updateSet,

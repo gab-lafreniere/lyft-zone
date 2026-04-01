@@ -17,6 +17,19 @@ import {
   computeWorkoutMetrics,
 } from "../utils/workoutMetrics";
 
+const WEEKDAY_ROWS = [
+  { day: "MONDAY", label: "Monday", shortLabel: "M" },
+  { day: "TUESDAY", label: "Tuesday", shortLabel: "T" },
+  { day: "WEDNESDAY", label: "Wednesday", shortLabel: "W" },
+  { day: "THURSDAY", label: "Thursday", shortLabel: "T" },
+  { day: "FRIDAY", label: "Friday", shortLabel: "F" },
+  { day: "SATURDAY", label: "Saturday", shortLabel: "S" },
+  { day: "SUNDAY", label: "Sunday", shortLabel: "S" },
+];
+const WEEKDAY_INDEX = new Map(
+  WEEKDAY_ROWS.map((entry, index) => [entry.day, index])
+);
+
 function formatDate(value) {
   if (!value) {
     return "";
@@ -90,6 +103,19 @@ function getMetricBarWidth(value, maxValue) {
   return `${Math.max(8, Math.min(100, (value / maxValue) * 100))}%`;
 }
 
+function formatBadgeDate(value) {
+  if (!value) {
+    return "--";
+  }
+
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
+
+  return String(date.getDate());
+}
+
 export default function ManualBuilderMulti() {
   const navigate = useNavigate();
   const { cycleId } = useParams();
@@ -99,6 +125,7 @@ export default function ManualBuilderMulti() {
     hydrateProgramDraft,
     setSelectedWeek,
     updateDraftMetadata,
+    moveWorkoutToScheduledDay,
   } = useMultiWeekProgram();
   const [isLoading, setIsLoading] = useState(true);
   const [isPublishing, setIsPublishing] = useState(false);
@@ -237,18 +264,73 @@ export default function ManualBuilderMulti() {
     [programDraft.sessionsPerWeek, selectedWeekMetrics]
   );
 
-  const workoutCards = useMemo(
-    () =>
-      (selectedWeek?.workouts || []).map((workout) => {
-        const metrics = computeWorkoutMetrics(workout);
+  const weekdayRows = useMemo(() => {
+    const workouts = [...(selectedWeek?.workouts || [])].sort(
+      (left, right) => (left.orderIndex || 0) - (right.orderIndex || 0)
+    );
+    const remainingWorkouts = [...workouts];
+    const rows = WEEKDAY_ROWS.map((entry) => ({
+      ...entry,
+      workout: null,
+    }));
 
+    rows.forEach((row) => {
+      const explicitIndex = remainingWorkouts.findIndex(
+        (workout) => workout.scheduledDay === row.day
+      );
+      if (explicitIndex >= 0) {
+        const [workout] = remainingWorkouts.splice(explicitIndex, 1);
+        rows[WEEKDAY_ROWS.findIndex((entry) => entry.day === row.day)] = {
+          ...row,
+          workout,
+        };
+      }
+    });
+
+    remainingWorkouts.forEach((workout) => {
+      const firstEmptyRow = rows.find((row) => !row.workout);
+      if (firstEmptyRow) {
+        firstEmptyRow.workout = workout;
+      }
+    });
+
+    return rows.map((row, index) => {
+      const calendarDate = programDraft.startDate
+        ? addDays(
+            programDraft.startDate,
+            Math.max(0, ((selectedWeek?.weekNumber || programDraft.selectedWeek || 1) - 1) * 7) +
+              (WEEKDAY_INDEX.get(row.day) || 0)
+          )
+        : null;
+      const workout = row.workout;
+      if (!workout) {
         return {
+          ...row,
+          calendarDate,
+          meta: null,
+          canMoveUp: false,
+          canMoveDown: false,
+          targetDayUp: null,
+          targetDayDown: null,
+        };
+      }
+
+      const metrics = computeWorkoutMetrics(workout);
+
+      return {
+        ...row,
+        calendarDate,
+        workout: {
           ...workout,
           meta: `${metrics.exerciseCount} exercises • ${metrics.setCount} sets • ~${metrics.estimatedDurationMinutes} min • ${metrics.totalTUTMinutes}m TUT`,
-        };
-      }),
-    [selectedWeek]
-  );
+        },
+        canMoveUp: index > 0,
+        canMoveDown: index < WEEKDAY_ROWS.length - 1,
+        targetDayUp: index > 0 ? WEEKDAY_ROWS[index - 1].day : null,
+        targetDayDown: index < WEEKDAY_ROWS.length - 1 ? WEEKDAY_ROWS[index + 1].day : null,
+      };
+    });
+  }, [programDraft.selectedWeek, programDraft.startDate, selectedWeek]);
 
   const saveStatusLabel = useMemo(() => {
     if (draftMetadata.saveState === "saving") {
@@ -626,38 +708,96 @@ export default function ManualBuilderMulti() {
           )}
         </div>
 
-        <div className="space-y-3">
-          {workoutCards.map((workout) => (
-            <button
-              key={workout.id}
-              type="button"
-              onClick={() =>
-                navigate(
-                  getCycleWorkoutEditorPath(
-                    cycleId,
-                    selectedWeek?.weekNumber || programDraft.selectedWeek || 1,
-                    workout.orderIndex
-                  )
-                )
-              }
-              className="group flex w-full items-center gap-3 rounded-xl border border-slate-100 bg-white p-3 text-left shadow-sm"
+        <div className="space-y-2.5">
+          {weekdayRows.map((row) => (
+            <div
+              key={row.day}
+              className={[
+                "flex items-center gap-3",
+                row.workout
+                  ? "rounded-xl border border-slate-100 bg-white p-3 shadow-sm"
+                  : "rounded-lg px-3 py-1",
+              ].join(" ")}
             >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-base font-semibold">{workout.name}</span>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                    Day {workout.orderIndex}
-                  </span>
-                </div>
-                <p className="text-[11px] leading-relaxed text-slate-500 opacity-80">
-                  {workout.meta}
-                </p>
+              <div
+                className={[
+                  "flex w-12 shrink-0 flex-col items-center justify-center rounded-lg bg-slate-100",
+                  row.workout ? "py-2" : "py-1.5",
+                ].join(" ")}
+              >
+                <span className="text-sm font-black leading-none text-slate-900">
+                  {formatBadgeDate(row.calendarDate)}
+                </span>
+                <span className="mt-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                  {row.label.slice(0, 3)}
+                </span>
               </div>
 
-              <span className="material-symbols-outlined text-slate-400">
-                chevron_right
-              </span>
-            </button>
+              {row.workout ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigate(
+                        getCycleWorkoutEditorPath(
+                          cycleId,
+                          selectedWeek?.weekNumber || programDraft.selectedWeek || 1,
+                          row.workout.orderIndex
+                        )
+                      )
+                    }
+                    className="group min-w-0 flex-1 text-left"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-base font-semibold">
+                        {row.workout.name}
+                      </span>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        Day {row.workout.orderIndex}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500 opacity-80">
+                      {row.workout.meta}
+                    </p>
+                  </button>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        row.targetDayUp && moveWorkoutToScheduledDay(row.workout.id, row.targetDayUp)
+                      }
+                      disabled={!row.canMoveUp}
+                      className="flex size-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label={`Move ${row.workout.name} up`}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">arrow_upward</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        row.targetDayDown &&
+                        moveWorkoutToScheduledDay(row.workout.id, row.targetDayDown)
+                      }
+                      disabled={!row.canMoveDown}
+                      className="flex size-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label={`Move ${row.workout.name} down`}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">arrow_downward</span>
+                    </button>
+                    <span className="material-symbols-outlined text-slate-400">
+                      chevron_right
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex min-h-[42px] flex-1 items-center border-b border-dashed border-slate-200 px-1">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                    Rest day
+                  </p>
+                </div>
+              )}
+            </div>
           ))}
         </div>
 

@@ -140,6 +140,7 @@ export function mapMultiWeekDraftToApi(programDraft) {
         id: workout.id,
         name: String(workout.name || "").trim(),
         orderIndex: workout.orderIndex || workoutIndex + 1,
+        scheduledDay: workout.scheduledDay || null,
         estimatedDurationMinutes: null,
         notes: null,
         blocks: (workout.blocks || []).map((block, blockIndex) => {
