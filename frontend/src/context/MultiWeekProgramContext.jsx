@@ -171,6 +171,10 @@ function cloneWorkoutForDuplicate(workout) {
   };
 }
 
+function getDayIndex(day) {
+  return DAY_OF_WEEK.indexOf(day || "");
+}
+
 function createInitialDraft() {
   return {
     programName: "",
@@ -699,6 +703,112 @@ export function MultiWeekProgramProvider({ children }) {
     );
   }, []);
 
+  const moveSelectedWeekWorkoutToScheduledDay = useCallback((orderIndex, nextScheduledDay) => {
+    if (!DAY_OF_WEEK.includes(nextScheduledDay)) {
+      return;
+    }
+
+    setMultiWeekDraft((prev) =>
+      updateSelectedWeekDraft(prev, (week) => {
+        const workouts = week.workouts || [];
+        const movingWorkout = workouts.find(
+          (workout) => Number(workout.orderIndex) === Number(orderIndex)
+        );
+        if (!movingWorkout) {
+          return week;
+        }
+
+        const targetWorkout = workouts.find(
+          (workout) =>
+            Number(workout.orderIndex) !== Number(orderIndex) &&
+            (workout.scheduledDay || null) === nextScheduledDay
+        );
+        const sourceScheduledDay = movingWorkout.scheduledDay || null;
+
+        return {
+          ...week,
+          workouts: workouts.map((workout) => {
+            if (Number(workout.orderIndex) === Number(orderIndex)) {
+              return {
+                ...workout,
+                scheduledDay: nextScheduledDay,
+              };
+            }
+
+            if (targetWorkout && workout.id === targetWorkout.id) {
+              return {
+                ...workout,
+                scheduledDay: sourceScheduledDay,
+              };
+            }
+
+            return workout;
+          }),
+        };
+      })
+    );
+  }, []);
+
+  const duplicateSelectedWeekWorkout = useCallback((orderIndex) => {
+    setMultiWeekDraft((prev) =>
+      updateSelectedWeekDraft(prev, (week) => {
+        const workouts = week.workouts || [];
+        const sourceWorkout = workouts.find(
+          (workout) => Number(workout.orderIndex) === Number(orderIndex)
+        );
+
+        if (!sourceWorkout) {
+          return week;
+        }
+
+        const occupiedDays = new Set(
+          workouts.map((workout) => workout.scheduledDay).filter((day) => DAY_OF_WEEK.includes(day))
+        );
+        const sourceDayIndex = getDayIndex(sourceWorkout.scheduledDay);
+        const nextEmptyAfter = DAY_OF_WEEK.find(
+          (day, index) => index > sourceDayIndex && !occupiedDays.has(day)
+        );
+        const nextEmptyBefore = DAY_OF_WEEK.find(
+          (day, index) => index < sourceDayIndex && !occupiedDays.has(day)
+        );
+        const targetDay = nextEmptyAfter || nextEmptyBefore || null;
+
+        if (!targetDay) {
+          return week;
+        }
+
+        const maxOrderIndex = workouts.reduce(
+          (maxValue, workout) => Math.max(maxValue, Number(workout.orderIndex) || 0),
+          0
+        );
+        const duplicatedWorkout = cloneWorkoutForDuplicate(sourceWorkout);
+
+        return {
+          ...week,
+          workouts: [
+            ...workouts,
+            {
+              ...duplicatedWorkout,
+              orderIndex: maxOrderIndex + 1,
+              scheduledDay: targetDay,
+            },
+          ],
+        };
+      })
+    );
+  }, []);
+
+  const deleteSelectedWeekWorkout = useCallback((orderIndex) => {
+    setMultiWeekDraft((prev) =>
+      updateSelectedWeekDraft(prev, (week) => ({
+        ...week,
+        workouts: (week.workouts || []).filter(
+          (workout) => Number(workout.orderIndex) !== Number(orderIndex)
+        ),
+      }))
+    );
+  }, []);
+
   const updateSet = useCallback((workoutId, blockId, setIndex, updates, exerciseIndex = null) => {
     const normalizedUpdates = normalizeSetUpdates(updates);
 
@@ -901,6 +1011,9 @@ export function MultiWeekProgramProvider({ children }) {
       updateSupersetSetCount,
       removeBlock,
       moveWorkoutToScheduledDay,
+      moveSelectedWeekWorkoutToScheduledDay,
+      duplicateSelectedWeekWorkout,
+      deleteSelectedWeekWorkout,
       addSet,
       removeSet,
       updateSet,
@@ -927,6 +1040,9 @@ export function MultiWeekProgramProvider({ children }) {
       updateSupersetSetCount,
       removeBlock,
       moveWorkoutToScheduledDay,
+      moveSelectedWeekWorkoutToScheduledDay,
+      duplicateSelectedWeekWorkout,
+      deleteSelectedWeekWorkout,
       addSet,
       removeSet,
       updateSet,

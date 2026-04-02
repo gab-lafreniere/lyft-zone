@@ -116,6 +116,29 @@ function formatBadgeDate(value) {
   return String(date.getDate());
 }
 
+function formatShortDateRange(startDateValue, endDateValue) {
+  if (!startDateValue || !endDateValue) {
+    return "";
+  }
+
+  const startDate = new Date(`${startDateValue}T00:00:00`);
+  const endDate = new Date(`${endDateValue}T00:00:00`);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return "";
+  }
+
+  const startLabel = startDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+  const endLabel = endDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+
+  return `${startLabel} to ${endLabel}`;
+}
+
 export default function ManualBuilderMulti() {
   const navigate = useNavigate();
   const { cycleId } = useParams();
@@ -125,7 +148,9 @@ export default function ManualBuilderMulti() {
     hydrateProgramDraft,
     setSelectedWeek,
     updateDraftMetadata,
-    moveWorkoutToScheduledDay,
+    moveSelectedWeekWorkoutToScheduledDay,
+    duplicateSelectedWeekWorkout,
+    deleteSelectedWeekWorkout,
   } = useMultiWeekProgram();
   const [isLoading, setIsLoading] = useState(true);
   const [isPublishing, setIsPublishing] = useState(false);
@@ -139,6 +164,8 @@ export default function ManualBuilderMulti() {
   const [settingsDurationWeeks, setSettingsDurationWeeks] = useState(1);
   const [settingsError, setSettingsError] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [selectedWorkoutOrderIndex, setSelectedWorkoutOrderIndex] = useState(null);
 
   const todayDate = getTodayDateInput();
   const maxDurationWeeks = Math.max(1, programDraft.weeks.length || programDraft.programLength || 1);
@@ -324,13 +351,56 @@ export default function ManualBuilderMulti() {
           ...workout,
           meta: `${metrics.exerciseCount} exercises • ${metrics.setCount} sets • ~${metrics.estimatedDurationMinutes} min • ${metrics.totalTUTMinutes}m TUT`,
         },
-        canMoveUp: index > 0,
-        canMoveDown: index < WEEKDAY_ROWS.length - 1,
         targetDayUp: index > 0 ? WEEKDAY_ROWS[index - 1].day : null,
         targetDayDown: index < WEEKDAY_ROWS.length - 1 ? WEEKDAY_ROWS[index + 1].day : null,
       };
     });
   }, [programDraft.selectedWeek, programDraft.startDate, selectedWeek]);
+
+  const selectedWeekRangeLabel = useMemo(() => {
+    if (!programDraft.startDate) {
+      return "";
+    }
+
+    const currentWeekNumber = selectedWeek?.weekNumber || programDraft.selectedWeek || 1;
+    const weekStart = addDays(programDraft.startDate, Math.max(0, (currentWeekNumber - 1) * 7));
+    const weekEnd = addDays(weekStart, 6);
+    return formatShortDateRange(weekStart, weekEnd);
+  }, [programDraft.selectedWeek, programDraft.startDate, selectedWeek]);
+
+  const selectedWorkoutRow = useMemo(
+    () =>
+      weekdayRows.find(
+        (row) =>
+          row.workout &&
+          Number(row.workout.orderIndex) === Number(selectedWorkoutOrderIndex)
+      ) || null,
+    [selectedWorkoutOrderIndex, weekdayRows]
+  );
+
+  const hasEmptyWeekdaySlot = useMemo(
+    () => weekdayRows.some((row) => !row.workout),
+    [weekdayRows]
+  );
+
+  useEffect(() => {
+    setSelectedWorkoutOrderIndex(null);
+  }, [programDraft.selectedWeek]);
+
+  useEffect(() => {
+    if (
+      selectedWorkoutOrderIndex == null ||
+      weekdayRows.some(
+        (row) =>
+          row.workout &&
+          Number(row.workout.orderIndex) === Number(selectedWorkoutOrderIndex)
+      )
+    ) {
+      return;
+    }
+
+    setSelectedWorkoutOrderIndex(null);
+  }, [selectedWorkoutOrderIndex, weekdayRows]);
 
   const saveStatusLabel = useMemo(() => {
     if (draftMetadata.saveState === "saving") {
@@ -515,6 +585,79 @@ export default function ManualBuilderMulti() {
     } finally {
       setIsPublishing(false);
     }
+  };
+
+  const handleToggleEditMode = () => {
+    setIsEditMode((prev) => {
+      if (prev) {
+        setSelectedWorkoutOrderIndex(null);
+      }
+
+      return !prev;
+    });
+  };
+
+  const handleWorkoutRowClick = (row) => {
+    if (!row?.workout) {
+      return;
+    }
+
+    if (isEditMode) {
+      setSelectedWorkoutOrderIndex((prev) =>
+        Number(prev) === Number(row.workout.orderIndex) ? null : row.workout.orderIndex
+      );
+      return;
+    }
+
+    navigate(
+      getCycleWorkoutEditorPath(
+        cycleId,
+        selectedWeek?.weekNumber || programDraft.selectedWeek || 1,
+        row.workout.orderIndex
+      )
+    );
+  };
+
+  const handleMoveSelectedWorkout = (direction) => {
+    if (!selectedWorkoutRow?.workout) {
+      return;
+    }
+
+    const targetDay =
+      direction === "previous"
+        ? selectedWorkoutRow.targetDayUp
+        : selectedWorkoutRow.targetDayDown;
+
+    if (!targetDay) {
+      return;
+    }
+
+    moveSelectedWeekWorkoutToScheduledDay(
+      selectedWorkoutRow.workout.orderIndex,
+      targetDay
+    );
+  };
+
+  const handleDuplicateSelectedWorkout = () => {
+    if (!selectedWorkoutRow?.workout || !hasEmptyWeekdaySlot) {
+      return;
+    }
+
+    duplicateSelectedWeekWorkout(selectedWorkoutRow.workout.orderIndex);
+  };
+
+  const handleDeleteSelectedWorkout = () => {
+    if (!selectedWorkoutRow?.workout) {
+      return;
+    }
+
+    const accepted = window.confirm("Delete this workout from the current week?");
+    if (!accepted) {
+      return;
+    }
+
+    deleteSelectedWeekWorkout(selectedWorkoutRow.workout.orderIndex);
+    setSelectedWorkoutOrderIndex(null);
   };
 
   if (isLoading) {
@@ -708,6 +851,83 @@ export default function ManualBuilderMulti() {
           )}
         </div>
 
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                Workout Schedule
+              </h3>
+              {selectedWeekRangeLabel && (
+                <p className="mt-1 text-sm font-medium text-slate-500">
+                  {selectedWeekRangeLabel}
+                </p>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleToggleEditMode}
+              className={[
+                "rounded-full px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors",
+                isEditMode
+                  ? "bg-slate-900 text-white"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200",
+              ].join(" ")}
+            >
+              {isEditMode ? "Done" : "Edit"}
+            </button>
+          </div>
+
+          {isEditMode && (
+            <div className="flex items-center justify-between rounded-xl border border-slate-100 bg-white p-2 shadow-sm">
+              <span className="px-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                Edit week
+              </span>
+              <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleMoveSelectedWorkout("previous")}
+                disabled={!selectedWorkoutRow?.targetDayUp}
+                className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Move workout to previous day"
+                title="Move to previous day"
+              >
+                <span className="material-symbols-outlined text-[18px]">arrow_upward</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleMoveSelectedWorkout("next")}
+                disabled={!selectedWorkoutRow?.targetDayDown}
+                className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Move workout to next day"
+                title="Move to next day"
+              >
+                <span className="material-symbols-outlined text-[18px]">arrow_downward</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDuplicateSelectedWorkout}
+                disabled={!selectedWorkoutRow?.workout || !hasEmptyWeekdaySlot}
+                className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Duplicate workout in this week"
+                title="Duplicate"
+              >
+                <span className="material-symbols-outlined text-[18px]">content_copy</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteSelectedWorkout}
+                disabled={!selectedWorkoutRow?.workout}
+                className="flex size-9 items-center justify-center rounded-full border border-red-200 text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Delete workout from this week"
+                title="Delete"
+              >
+                <span className="material-symbols-outlined text-[18px]">delete</span>
+              </button>
+            </div>
+            </div>
+          )}
+
         <div className="space-y-2.5">
           {weekdayRows.map((row) => (
             <div
@@ -715,7 +935,14 @@ export default function ManualBuilderMulti() {
               className={[
                 "flex items-center gap-3",
                 row.workout
-                  ? "rounded-xl border border-slate-100 bg-white p-3 shadow-sm"
+                  ? [
+                      "rounded-xl border bg-white p-3 shadow-sm transition-all",
+                      isEditMode && row.workout
+                        ? Number(selectedWorkoutOrderIndex) === Number(row.workout.orderIndex)
+                          ? "border-primary bg-primary/[0.06] ring-1 ring-primary/20"
+                          : "border-slate-100 opacity-70"
+                        : "border-slate-100",
+                    ].join(" ")
                   : "rounded-lg px-3 py-1",
               ].join(" ")}
             >
@@ -737,15 +964,7 @@ export default function ManualBuilderMulti() {
                 <>
                   <button
                     type="button"
-                    onClick={() =>
-                      navigate(
-                        getCycleWorkoutEditorPath(
-                          cycleId,
-                          selectedWeek?.weekNumber || programDraft.selectedWeek || 1,
-                          row.workout.orderIndex
-                        )
-                      )
-                    }
+                    onClick={() => handleWorkoutRowClick(row)}
                     className="group min-w-0 flex-1 text-left"
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -760,35 +979,11 @@ export default function ManualBuilderMulti() {
                       {row.workout.meta}
                     </p>
                   </button>
-
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        row.targetDayUp && moveWorkoutToScheduledDay(row.workout.id, row.targetDayUp)
-                      }
-                      disabled={!row.canMoveUp}
-                      className="flex size-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                      aria-label={`Move ${row.workout.name} up`}
-                    >
-                      <span className="material-symbols-outlined text-[18px]">arrow_upward</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        row.targetDayDown &&
-                        moveWorkoutToScheduledDay(row.workout.id, row.targetDayDown)
-                      }
-                      disabled={!row.canMoveDown}
-                      className="flex size-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                      aria-label={`Move ${row.workout.name} down`}
-                    >
-                      <span className="material-symbols-outlined text-[18px]">arrow_downward</span>
-                    </button>
+                  {!isEditMode && (
                     <span className="material-symbols-outlined text-slate-400">
                       chevron_right
                     </span>
-                  </div>
+                  )}
                 </>
               ) : (
                 <div className="flex min-h-[42px] flex-1 items-center border-b border-dashed border-slate-200 px-1">
@@ -799,6 +994,7 @@ export default function ManualBuilderMulti() {
               )}
             </div>
           ))}
+        </div>
         </div>
 
         {error && (

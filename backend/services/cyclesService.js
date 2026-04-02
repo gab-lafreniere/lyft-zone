@@ -412,14 +412,18 @@ function validateCycleDocument(payload, mode = 'draft') {
   });
 
   if (mode === 'publish') {
-    const firstWeekCount = weeks[0].workouts.length;
-    if (firstWeekCount < 1 || firstWeekCount > 7) {
-      throw new ApiError(400, 'VALIDATION_ERROR', 'Each week must contain between 1 and 7 workouts');
+    const totalWorkoutCount = weeks.reduce(
+      (sum, week) => sum + (Array.isArray(week.workouts) ? week.workouts.length : 0),
+      0
+    );
+
+    const invalidWeek = weeks.find((week) => week.workouts.length > 7);
+    if (invalidWeek) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'Each week must contain between 0 and 7 workouts');
     }
 
-    const inconsistentWeek = weeks.find((week) => week.workouts.length !== firstWeekCount);
-    if (inconsistentWeek) {
-      throw new ApiError(400, 'VALIDATION_ERROR', 'All weeks must contain the same number of workouts before publishing');
+    if (totalWorkoutCount < 1) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'Cycle must contain at least 1 workout before publishing');
     }
   }
 
