@@ -1,8 +1,25 @@
-const BACKEND_URL =
-  process.env.REACT_APP_BACKEND_URL ||
-  'https://lyft-zone-backend.onrender.com';
+const isLocalhost =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1');
+
+const BACKEND_URL = isLocalhost
+  ? 'http://localhost:5001'
+  : process.env.REACT_APP_BACKEND_URL || 'https://lyft-zone-backend.onrender.com';
 
 const USER_ID_STORAGE_KEY = 'lyft_zone_user_id';
+const LOCAL_DEV_USER_ID =
+  process.env.REACT_APP_LOCAL_DEV_USER_ID ||
+  'cmndfy73q00092ojrnkoez3aj';
+
+function shouldUseLocalDevUserId() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const host = window.location.hostname;
+  return host === 'localhost' || host === '127.0.0.1';
+}
 
 function getLocalTimezone() {
   try {
@@ -29,6 +46,11 @@ async function readJsonResponse(response) {
 export async function ensureCurrentUserId() {
   if (typeof window === 'undefined') {
     return null;
+  }
+
+  if (shouldUseLocalDevUserId()) {
+    window.localStorage.setItem(USER_ID_STORAGE_KEY, LOCAL_DEV_USER_ID);
+    return LOCAL_DEV_USER_ID;
   }
 
   const existingUserId = window.localStorage.getItem(USER_ID_STORAGE_KEY);

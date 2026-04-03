@@ -1543,9 +1543,13 @@ async function getProgramOverviewV2(userId, requestedTimezone) {
 
   const activeCard =
     cards.find((card) => card.temporalStatus === 'active' && card.editorialStatus === 'published') ||
+    cards.find((card) => card.temporalStatus === 'active') ||
     null;
   const todayDateKey = getTodayDateKey(activeCard?.timezone || timezone);
   const upcomingCards = cards.filter((card) => card.temporalStatus === 'upcoming');
+  const nextUpcomingByTime =
+    [...upcomingCards].sort((left, right) => compareDateKeys(left.startDate, right.startDate))[0] ||
+    null;
   const publishedUpcoming = upcomingCards
     .filter((card) => card.editorialStatus === 'published')
     .sort((left, right) => compareDateKeys(left.startDate, right.startDate));
@@ -1563,7 +1567,7 @@ async function getProgramOverviewV2(userId, requestedTimezone) {
   return {
     timezone,
     activeProgramCard: buildActiveProgramCard(activeCard, todayDateKey),
-    cycleStructure: buildCycleStructure(activeCard, nextUpcomingCard, timezone, todayDateKey),
+    cycleStructure: buildCycleStructure(activeCard, nextUpcomingByTime, timezone, todayDateKey),
     upcomingPrograms: prioritizedUpcoming.map(buildProgramPreviewCard),
     pastPrograms,
   };

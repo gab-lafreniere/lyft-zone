@@ -21,6 +21,25 @@ function formatDisplayDate(dateKey) {
   });
 }
 
+function getLocalDateKey(timeZone = "America/Toronto") {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${map.year}-${map.month}-${map.day}`;
+}
+
+function isActiveOnDate(item, todayDateKey) {
+  if (!item?.startDate || !item?.endDate) {
+    return false;
+  }
+
+  return item.startDate <= todayDateKey && item.endDate >= todayDateKey;
+}
+
 function getTimelineFillWidth(rowSlots, progressWeekNumber) {
   if (!Array.isArray(rowSlots) || rowSlots.length < 2 || !Number.isFinite(progressWeekNumber)) {
     return "0%";
@@ -84,6 +103,23 @@ function getTimelineLabelClasses(slot) {
   return "text-slate-400";
 }
 
+function createNeutralTimelineSlots() {
+  return Array.from({ length: 12 }).map((_, index) => ({
+    slotIndex: index + 1,
+    label: `W${index + 1}`,
+    status: "neutral",
+    weekNumber: null,
+    startDate: null,
+    endDate: null,
+    isCurrent: false,
+    isCompleted: false,
+    isInActiveCycle: false,
+    showNowLabel: false,
+    showCheckmark: false,
+    showNextCycleHint: false,
+  }));
+}
+
 export default function Program() {
   const [scrolled, setScrolled] = useState(false);
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
@@ -130,27 +166,29 @@ export default function Program() {
     let isMounted = true;
 
     async function loadData() {
-      try {
-        const [weeklyResponse, overviewResponse] = await Promise.all([
-          getWeeklyPlans(),
-          getProgramOverviewV2(),
-        ]);
+      const [weeklyResult, overviewResult] = await Promise.allSettled([
+        getWeeklyPlans(),
+        getProgramOverviewV2(),
+      ]);
 
-        if (!isMounted) {
-          return;
-        }
+      if (!isMounted) {
+        return;
+      }
 
+      if (weeklyResult.status === "fulfilled") {
         setWeeklyPlans(
-          (weeklyResponse.items || []).map((item) =>
+          (weeklyResult.value.items || []).map((item) =>
             mapWeeklyPlanListItemToUi(item, formatRelativeCreatedLabel(item.createdAt))
           )
         );
-        setProgramOverview(overviewResponse);
-      } catch (error) {
-        if (isMounted) {
-          setWeeklyPlans([]);
-          setProgramOverview(null);
-        }
+      } else {
+        setWeeklyPlans([]);
+      }
+
+      if (overviewResult.status === "fulfilled") {
+        setProgramOverview(overviewResult.value);
+      } else {
+        setProgramOverview(null);
       }
     }
 
@@ -161,17 +199,38 @@ export default function Program() {
     };
   }, []);
 
+  const featuredWeeklyPlan = useMemo(() => weeklyPlans[0] || null, [weeklyPlans]);
   const visibleWeeklyPlans = useMemo(() => weeklyPlans.slice(0, 2), [weeklyPlans]);
   const activeProgramCard = programOverview?.activeProgramCard || null;
   const cycleStructure = programOverview?.cycleStructure || null;
   const upcomingPrograms = programOverview?.upcomingPrograms || [];
   const pastPrograms = programOverview?.pastPrograms || [];
+  const todayDateKey = useMemo(
+    () => getLocalDateKey(programOverview?.timezone || "America/Toronto"),
+    [programOverview?.timezone]
+  );
+  const displayedActiveCycle = useMemo(() => {
+    const cycleCandidates = [
+      activeProgramCard,
+      ...upcomingPrograms,
+      ...pastPrograms,
+    ].filter(Boolean);
+
+    return cycleCandidates.find((item) => isActiveOnDate(item, todayDateKey)) || activeProgramCard;
+  }, [activeProgramCard, pastPrograms, todayDateKey, upcomingPrograms]);
+  const timelineSlots = useMemo(() => {
+    if (Array.isArray(cycleStructure?.slots) && cycleStructure.slots.length === 12) {
+      return cycleStructure.slots;
+    }
+
+    return createNeutralTimelineSlots();
+  }, [cycleStructure]);
   const timelineRows = useMemo(
     () => [
-      cycleStructure?.slots?.slice(0, 6) || [],
-      cycleStructure?.slots?.slice(6, 12) || [],
+      timelineSlots.slice(0, 6),
+      timelineSlots.slice(6, 12),
     ],
-    [cycleStructure]
+    [timelineSlots]
   );
 
   return (
@@ -252,12 +311,12 @@ export default function Program() {
                   Active Program
                 </span>
                 <h2 className="text-xl font-bold mt-1">
-                  {activeProgramCard?.name || "No active cycle yet"}
+                  {displayedActiveCycle?.name || featuredWeeklyPlan?.name || "No weekly plan yet"}
                 </h2>
               </div>
 
               <span className="px-2.5 py-1 rounded-full bg-primary/10 text-primary text-[11px] font-bold uppercase tracking-wider">
-                {activeProgramCard?.editorialStatus || "inactive"}
+                {activeProgramCard?.editorialStatus || featuredWeeklyPlan?.source || "manual"}
               </span>
             </div>
 
@@ -266,12 +325,18 @@ export default function Program() {
                 <span>
                   {activeProgramCard
                     ? `${activeProgramCard.referenceSessionsPerWeek} workouts / week`
-                    : "No active cycle"}
+                    : featuredWeeklyPlan
+                      ? `${featuredWeeklyPlan.frequencyPerWeek} workouts / week`
+                      : "Create a weekly template"}
                 </span>
                 <span>
-                  {activeProgramCard
-                    ? `${activeProgramCard.cycleDurationWeeks} week cycle`
-                    : ""}
+                  {displayedActiveCycle?.startDate && displayedActiveCycle?.endDate
+                    ? `${formatDisplayDate(displayedActiveCycle.startDate)} - ${formatDisplayDate(displayedActiveCycle.endDate)}`
+                    : activeProgramCard
+                      ? `${activeProgramCard.cycleDurationWeeks} week cycle`
+                    : featuredWeeklyPlan
+                      ? `${featuredWeeklyPlan.totalWeeklySets} total sets`
+                      : ""}
                 </span>
               </div>
 
@@ -287,11 +352,25 @@ export default function Program() {
                 onClick={() =>
                   activeProgramCard
                     ? navigate(getCycleDetailsPath(activeProgramCard.cycleId))
-                    : navigate("/program/cycles")
+                    : featuredWeeklyPlan
+                      ? navigate(
+                          getWeeklyPlanDetailsPath(featuredWeeklyPlan.weeklyPlanParentId),
+                          {
+                            state: {
+                              from: buildOrigin(location),
+                            },
+                          }
+                        )
+                      : navigate("/program/manual-new", {
+                          state: {
+                            from: buildOrigin(location),
+                            returnTo: "/program",
+                          },
+                        })
                 }
                 className="w-full mt-4 py-3 rounded-xl text-sm font-bold border shadow-sm hover:shadow-md transition-shadow bg-primary text-white border-primary/20 shadow-md shadow-primary/20"
               >
-                {activeProgramCard ? "View Details" : "Browse Cycles"}
+                {activeProgramCard || featuredWeeklyPlan ? "View Details" : "Create Weekly Template"}
               </button>
             </div>
           </div>
