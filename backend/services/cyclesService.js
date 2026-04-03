@@ -1147,9 +1147,13 @@ async function createCycleFromWeeklyPlan(payload) {
     throw new ApiError(404, 'NOT_FOUND', 'Weekly plan not found');
   }
 
-  const sourceVersion = sourceParent.latestPublishedVersion || sourceParent.latestDraftVersion;
+  const sourceVersion = sourceParent.latestPublishedVersion;
   if (!sourceVersion) {
-    throw new ApiError(400, 'VALIDATION_ERROR', 'No weekly plan version is available to convert');
+    throw new ApiError(
+      400,
+      'WEEKLY_PLAN_NOT_PUBLISHED',
+      'This weekly plan must be published before it can be converted into a multi-week program.'
+    );
   }
 
   const existingCycles = await prisma.trainingCycle.findMany({

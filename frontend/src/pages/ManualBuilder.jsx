@@ -82,7 +82,10 @@ export default function ManualBuilder() {
   const [settingsSessionsError, setSettingsSessionsError] = useState("");
   const [showDeleteProgramConfirm, setShowDeleteProgramConfirm] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isPublishingAndTransforming, setIsPublishingAndTransforming] = useState(false);
+  const [publishAndTransformError, setPublishAndTransformError] = useState("");
   const [deleteProgramError, setDeleteProgramError] = useState("");
+  const [isDeleteBlockedByLinkedCycle, setIsDeleteBlockedByLinkedCycle] = useState(false);
   const [isDeletingProgram, setIsDeletingProgram] = useState(false);
 
   const programName = programDraft.programName;
@@ -282,6 +285,7 @@ export default function ManualBuilder() {
     setSettingsSessionsPerWeek(programDraft.sessionsPerWeek || 4);
     setSettingsSessionsError("");
     setDeleteProgramError("");
+    setIsDeleteBlockedByLinkedCycle(false);
     setShowDeleteProgramConfirm(false);
     setIsSettingsOpen(true);
   };
@@ -292,6 +296,7 @@ export default function ManualBuilder() {
     setHasInteractedWithSettingsName(false);
     setSettingsSessionsError("");
     setDeleteProgramError("");
+    setIsDeleteBlockedByLinkedCycle(false);
     setShowDeleteProgramConfirm(false);
   };
 
@@ -355,6 +360,7 @@ export default function ManualBuilder() {
     }
 
     setDeleteProgramError("");
+    setIsDeleteBlockedByLinkedCycle(false);
     setIsDeletingProgram(true);
 
     try {
@@ -362,6 +368,9 @@ export default function ManualBuilder() {
       closeSettingsPanel();
       navigate(getWeeklyPlansPath(), { replace: true });
     } catch (error) {
+      setIsDeleteBlockedByLinkedCycle(
+        error?.code === "WEEKLY_PLAN_LINKED_TO_CYCLE"
+      );
       setDeleteProgramError(
         error.message ||
           "Unable to delete this weekly plan."
@@ -399,6 +408,46 @@ export default function ManualBuilder() {
       // Keep the builder open so the user can retry publishing.
     } finally {
       setIsPublishing(false);
+    }
+  };
+
+  const handlePublishAndTransform = async () => {
+    if (!isWeeklyTemplateReady || isPublishing || isPublishingAndTransforming) {
+      return;
+    }
+
+    if (!draftMetadata.weeklyPlanParentId) {
+      setPublishAndTransformError(
+        "This weekly plan must be saved before it can be published and transformed."
+      );
+      return;
+    }
+
+    if (!draftMetadata.weeklyPlanVersionId || draftMetadata.status !== "draft") {
+      setPublishAndTransformError(
+        "An editable draft is required before this weekly plan can be published and transformed."
+      );
+      return;
+    }
+
+    setPublishAndTransformError("");
+    setIsPublishingAndTransforming(true);
+
+    try {
+      await persistDraftNow();
+      await publishWeeklyPlanDraft(draftMetadata.weeklyPlanParentId);
+      navigate("/program/manual-convert", {
+        state: {
+          from: `${location.pathname}${location.search || ""}`,
+        },
+      });
+    } catch (error) {
+      setPublishAndTransformError(
+        error.message ||
+          "Unable to publish and transform this weekly plan."
+      );
+    } finally {
+      setIsPublishingAndTransforming(false);
     }
   };
 
@@ -730,26 +779,26 @@ export default function ManualBuilder() {
         <div className="flex flex-col items-center pb-12 pt-8">
           <button
             type="button"
-            disabled={!isWeeklyTemplateReady}
-            onClick={() => {
-              if (isWeeklyTemplateReady) {
-                navigate("/program/manual-convert", {
-                  state: {
-                    from: `${location.pathname}${location.search || ""}`,
-                  },
-                });
-              }
-            }}
+            disabled={!isWeeklyTemplateReady || isPublishing || isPublishingAndTransforming}
+            onClick={handlePublishAndTransform}
             className={[
-              "flex w-full max-w-xs items-center justify-center gap-2 rounded-xl border-2 py-3 font-semibold transition-all",
-              isWeeklyTemplateReady
+              "flex w-full max-w-xs items-center justify-center gap-2 rounded-xl border-2 p-3 font-semibold transition-all",
+              isWeeklyTemplateReady && !isPublishing && !isPublishingAndTransforming
                 ? "border-primary/30 bg-white text-primary hover:border-primary/50"
                 : "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400",
             ].join(" ")}
           >
             <span className="material-symbols-outlined">calendar_today</span>
-            Convert to multi week program
+            {isPublishingAndTransforming
+              ? "Publishing & transforming..."
+              : "Turn into multi-week program"}
           </button>
+
+          {publishAndTransformError ? (
+            <p className="mt-3 max-w-xs text-center text-sm font-medium text-red-500">
+              {publishAndTransformError}
+            </p>
+          ) : null}
 
           <p className="mt-4 px-8 text-center text-[10px] uppercase tracking-widest leading-relaxed text-slate-400">
             Transforming to weekly program allows plan modifications across
@@ -933,8 +982,13 @@ export default function ManualBuilder() {
                       <button
                         type="button"
                         onClick={handleDeleteProgram}
-                        disabled={isDeletingProgram}
-                        className="flex-1 rounded-xl bg-red-500 py-3 font-semibold text-white transition-colors hover:bg-red-600"
+                        disabled={isDeletingProgram || isDeleteBlockedByLinkedCycle}
+                        className={[
+                          "flex-1 rounded-xl py-3 font-semibold transition-colors",
+                          isDeletingProgram || isDeleteBlockedByLinkedCycle
+                            ? "cursor-not-allowed bg-slate-300 text-white/60"
+                            : "bg-red-500 text-white hover:bg-red-600",
+                        ].join(" ")}
                       >
                         {isDeletingProgram ? "Deleting..." : "Delete Program"}
                       </button>

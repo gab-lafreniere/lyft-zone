@@ -33,11 +33,13 @@ async function readJsonResponse(response) {
   const json = await response.json();
 
   if (!response.ok) {
-    throw new Error(
+    const error = new Error(
       json?.error?.message ||
         json?.message ||
         `API error ${response.status}`
     );
+    error.code = json?.error?.code || json?.code || null;
+    throw error;
   }
 
   return json;
