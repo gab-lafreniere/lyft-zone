@@ -150,6 +150,8 @@ function createNeutralTimelineSlots() {
   }));
 }
 
+const EMPTY_ARRAY = [];
+
 export default function Program() {
   const [scrolled, setScrolled] = useState(false);
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
@@ -233,8 +235,8 @@ export default function Program() {
   const visibleWeeklyPlans = useMemo(() => weeklyPlans.slice(0, 2), [weeklyPlans]);
   const activeProgramCard = programOverview?.activeProgramCard || null;
   const cycleStructure = programOverview?.cycleStructure || null;
-  const upcomingPrograms = programOverview?.upcomingPrograms || [];
-  const pastPrograms = programOverview?.pastPrograms || [];
+  const upcomingPrograms = programOverview?.upcomingPrograms || EMPTY_ARRAY;
+  const pastPrograms = programOverview?.pastPrograms || EMPTY_ARRAY;
   const hasActiveCycle = Boolean(activeProgramCard);
   const hasUpcomingCycle = upcomingPrograms.length > 0;
   const programState = hasActiveCycle ? "active" : hasUpcomingCycle ? "upcoming_only" : "empty";
