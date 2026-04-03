@@ -59,9 +59,39 @@ function getTimelineFillWidth(rowSlots, progressWeekNumber) {
   return `${(completedSegments / (rowSlots.length - 1)) * 100}%`;
 }
 
+function getTimelineSegmentStyle(rowSlots, startSlotIndex, endSlotIndex) {
+  if (
+    !Array.isArray(rowSlots) ||
+    rowSlots.length < 2 ||
+    !Number.isFinite(startSlotIndex) ||
+    !Number.isFinite(endSlotIndex) ||
+    endSlotIndex < startSlotIndex
+  ) {
+    return null;
+  }
+
+  const firstSlotIndex = rowSlots[0].slotIndex;
+  const lastSlotIndex = rowSlots[rowSlots.length - 1].slotIndex;
+  const visibleStart = Math.max(startSlotIndex, firstSlotIndex);
+  const visibleEnd = Math.min(endSlotIndex, lastSlotIndex);
+
+  if (visibleEnd < visibleStart) {
+    return null;
+  }
+
+  const segmentCount = rowSlots.length - 1;
+  const left = ((visibleStart - firstSlotIndex) / segmentCount) * 100;
+  const width = ((visibleEnd - visibleStart) / segmentCount) * 100;
+
+  return {
+    left: `${left}%`,
+    width: `${width}%`,
+  };
+}
+
 function getTimelineNodeClasses(slot) {
   if (slot.isCurrent) {
-    return "w-10 h-10 rounded-full bg-primary border-4 border-white text-white shadow-lg shadow-primary/40 -mt-1";
+    return "relative h-8 w-8 rounded-full bg-primary text-white";
   }
 
   if (slot.isCompleted) {
@@ -73,7 +103,7 @@ function getTimelineNodeClasses(slot) {
   }
 
   if (slot.status === "deload") {
-    return "w-8 h-8 rounded-full bg-white border-2 border-slate-300 text-slate-500";
+    return "h-8 w-8 rounded-full bg-slate-50 border-2 border-dashed border-slate-300 text-slate-500";
   }
 
   if (slot.status === "neutral") {
@@ -232,6 +262,47 @@ export default function Program() {
     ],
     [timelineSlots]
   );
+  const activeCycleRange = useMemo(() => {
+    if (!activeProgramCard || Number(cycleStructure?.totalWeeks || 0) < 1) {
+      return null;
+    }
+
+    return {
+      startSlotIndex: 1,
+      endSlotIndex: Number(cycleStructure.totalWeeks),
+    };
+  }, [activeProgramCard, cycleStructure]);
+  const nextCycleRange = useMemo(() => {
+    if (!activeProgramCard) {
+      return null;
+    }
+
+    const nextCycleStartSlot = timelineSlots.find((slot) => slot.status === "next_cycle")?.slotIndex;
+    const nextCycleDuration = Number(upcomingPrograms[0]?.durationWeeks || 0);
+
+    if (!Number.isFinite(nextCycleStartSlot) || nextCycleDuration < 1) {
+      return null;
+    }
+
+    return {
+      startSlotIndex: nextCycleStartSlot,
+      endSlotIndex: nextCycleStartSlot + nextCycleDuration - 1,
+    };
+  }, [activeProgramCard, timelineSlots, upcomingPrograms]);
+  const activeProgramWeekLabel = useMemo(() => {
+    if (!activeProgramCard) {
+      return "";
+    }
+
+    const currentWeekNumber = Number(cycleStructure?.currentWeekNumber);
+    const totalWeeks = Number(cycleStructure?.totalWeeks);
+
+    if (!Number.isFinite(currentWeekNumber) || !Number.isFinite(totalWeeks) || totalWeeks < 1) {
+      return "";
+    }
+
+    return `Week ${currentWeekNumber} of ${totalWeeks}`;
+  }, [activeProgramCard, cycleStructure]);
 
   return (
     <div className="-mx-6 bg-background-light text-slate-900 antialiased font-display">
@@ -321,7 +392,7 @@ export default function Program() {
             </div>
 
             <div className="space-y-4">
-              <div className="flex items-center justify-between text-sm text-slate-500">
+              <div className="flex items-end justify-between text-sm text-slate-500">
                 <span>
                   {activeProgramCard
                     ? `${activeProgramCard.referenceSessionsPerWeek} workouts / week`
@@ -329,14 +400,19 @@ export default function Program() {
                       ? `${featuredWeeklyPlan.frequencyPerWeek} workouts / week`
                       : "Create a weekly template"}
                 </span>
-                <span>
-                  {displayedActiveCycle?.startDate && displayedActiveCycle?.endDate
-                    ? `${formatDisplayDate(displayedActiveCycle.startDate)} - ${formatDisplayDate(displayedActiveCycle.endDate)}`
-                    : activeProgramCard
-                      ? `${activeProgramCard.cycleDurationWeeks} week cycle`
-                    : featuredWeeklyPlan
-                      ? `${featuredWeeklyPlan.totalWeeklySets} total sets`
-                      : ""}
+                <span className="flex flex-col items-end text-right">
+                  {activeProgramWeekLabel ? (
+                    <span>{activeProgramWeekLabel}</span>
+                  ) : null}
+                  <span>
+                    {displayedActiveCycle?.startDate && displayedActiveCycle?.endDate
+                      ? `${formatDisplayDate(displayedActiveCycle.startDate)} - ${formatDisplayDate(displayedActiveCycle.endDate)}`
+                      : activeProgramCard
+                        ? `${activeProgramCard.cycleDurationWeeks} week cycle`
+                        : featuredWeeklyPlan
+                          ? `${featuredWeeklyPlan.totalWeeklySets} total sets`
+                          : ""}
+                  </span>
                 </span>
               </div>
 
@@ -387,6 +463,44 @@ export default function Program() {
               >
                 <div className={`absolute ${rowIndex === 0 ? "top-4" : "top-12"} left-0 w-full h-1 bg-slate-200 z-0`} />
 
+                {(() => {
+                  const activeSegmentStyle = getTimelineSegmentStyle(
+                    row,
+                    activeCycleRange?.startSlotIndex,
+                    activeCycleRange?.endSlotIndex
+                  );
+
+                  if (!activeSegmentStyle) {
+                    return null;
+                  }
+
+                  return (
+                    <div
+                      className={`absolute ${rowIndex === 0 ? "top-4" : "top-12"} h-1 rounded-full bg-primary/40 z-[1]`}
+                      style={activeSegmentStyle}
+                    />
+                  );
+                })()}
+
+                {(() => {
+                  const nextSegmentStyle = getTimelineSegmentStyle(
+                    row,
+                    nextCycleRange?.startSlotIndex,
+                    nextCycleRange?.endSlotIndex
+                  );
+
+                  if (!nextSegmentStyle) {
+                    return null;
+                  }
+
+                  return (
+                    <div
+                      className={`absolute ${rowIndex === 0 ? "top-4" : "top-12"} h-1 rounded-full bg-slate-900/30 z-[1]`}
+                      style={nextSegmentStyle}
+                    />
+                  );
+                })()}
+
                 <div
                   className={`absolute ${rowIndex === 0 ? "top-4" : "top-12"} left-0 h-1 bg-primary z-10 transition-all`}
                   style={{
@@ -407,12 +521,15 @@ export default function Program() {
 
                     <div
                       className={[
-                        "flex items-center justify-center shadow-sm",
+                        "relative flex items-center justify-center shadow-sm",
                         getTimelineNodeClasses(slot),
                       ].join(" ")}
                     >
-                      {slot.showCheckmark ? (
-                        <span className="material-symbols-outlined text-sm">check</span>
+                      {slot.isCurrent ? (
+                        <span className="pointer-events-none absolute inset-[-3px] rounded-full border-4 border-white shadow-lg shadow-primary/40" />
+                      ) : null}
+                      {slot.isCompleted ? (
+                        <span className="material-symbols-outlined text-sm transition-opacity duration-200">check</span>
                       ) : (
                         <span className="text-[10px] font-bold">
                           {slot.isCurrent ? slot.label : slot.slotIndex}
