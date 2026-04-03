@@ -78,6 +78,17 @@ function addDays(dateKey, days) {
   return parsed.toISOString().slice(0, 10);
 }
 
+function diffDateKeys(startDateKey, endDateKey) {
+  const start = parseDateInput(startDateKey);
+  const end = parseDateInput(endDateKey);
+
+  if (!start || !end) {
+    return null;
+  }
+
+  return Math.floor((end.getTime() - start.getTime()) / 86400000);
+}
+
 function compareDateKeys(left, right) {
   if (left === right) {
     return 0;
@@ -114,16 +125,39 @@ function getStartOfSundayWeek(dateKey) {
   return addDays(dateKey, -getDayOfWeek(dateKey));
 }
 
+function getStartOfMondayWeek(dateKey) {
+  const dayOfWeek = getDayOfWeek(dateKey);
+  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  return addDays(dateKey, mondayOffset);
+}
+
+function getEndOfMondayWeek(dateKey) {
+  return addDays(getStartOfMondayWeek(dateKey), 6);
+}
+
+function isDateWithinRange(dateKey, startDateKey, endDateKey) {
+  return compareDateKeys(dateKey, startDateKey) >= 0 && compareDateKeys(dateKey, endDateKey) <= 0;
+}
+
+function rangesOverlap(startA, endA, startB, endB) {
+  return compareDateKeys(endA, startB) >= 0 && compareDateKeys(endB, startA) >= 0;
+}
+
 module.exports = {
   DEFAULT_TIMEZONE,
   addDays,
   compareDateKeys,
+  diffDateKeys,
+  getEndOfMondayWeek,
   getDayOfWeek,
   getLocalDateTimeParts,
+  getStartOfMondayWeek,
   getStartOfSundayWeek,
   getTodayDateKey,
+  isDateWithinRange,
   isWithinGraceWindow,
   parseDateInput,
+  rangesOverlap,
   resolveEffectiveTimezone,
   toDateKey,
 };

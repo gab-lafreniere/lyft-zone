@@ -270,6 +270,18 @@ export async function getProgramsOverview() {
   return readJsonResponse(response);
 }
 
+export async function getProgramOverviewV2() {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/cycles/program-overview-v2?${new URLSearchParams({
+      userId,
+      timezone: getLocalTimezone(),
+    }).toString()}`
+  );
+
+  return readJsonResponse(response);
+}
+
 function normalizeCycleLibraryItem(item) {
   return {
     id: item?.cycleId || item?.id,

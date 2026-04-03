@@ -4,11 +4,16 @@ const {
   DEFAULT_TIMEZONE,
   addDays,
   compareDateKeys,
+  diffDateKeys,
+  getEndOfMondayWeek,
   getLocalDateTimeParts,
+  getStartOfMondayWeek,
   getStartOfSundayWeek,
   getTodayDateKey,
   isWithinGraceWindow,
+  isDateWithinRange,
   parseDateInput,
+  rangesOverlap,
   resolveEffectiveTimezone,
   toDateKey,
 } = require('./cycleDateUtils');
@@ -1280,6 +1285,199 @@ function buildCycleCard(cycle, visiblePlan, timeZone, now = new Date()) {
   };
 }
 
+function buildProgramPreviewCard(card) {
+  if (!card) {
+    return null;
+  }
+
+  return {
+    cycleId: card.cycleId,
+    visiblePlanId: card.visiblePlanId,
+    name: card.name,
+    startDate: card.startDate,
+    endDate: card.endDate,
+    durationWeeks: card.durationWeeks,
+    editorialStatus: card.editorialStatus,
+    temporalStatus: card.temporalStatus,
+  };
+}
+
+function resolveReferenceSessionsPerWeek(card) {
+  return Math.max(0, Number(card?.summary?.sessionsPerWeek) || 0);
+}
+
+function buildDayProgress(startDateKey, endDateKey, todayDateKey) {
+  const totalDaysDiff = diffDateKeys(startDateKey, endDateKey);
+  const elapsedDaysDiff = diffDateKeys(startDateKey, todayDateKey);
+  const totalDays = Math.max(1, (totalDaysDiff ?? 0) + 1);
+  const elapsedDays = Math.min(totalDays, Math.max(1, (elapsedDaysDiff ?? 0) + 1));
+
+  return {
+    elapsedDays,
+    totalDays,
+    currentDayInCycle: elapsedDays,
+    dayProgressPercent: Math.max(0, Math.min(100, Math.floor((elapsedDays / totalDays) * 100))),
+  };
+}
+
+function buildActiveProgramCard(card, todayDateKey) {
+  if (!card) {
+    return null;
+  }
+
+  const dayProgress = buildDayProgress(card.startDate, card.endDate, todayDateKey);
+
+  return {
+    cycleId: card.cycleId,
+    visiblePlanId: card.visiblePlanId,
+    name: card.name,
+    editorialStatus: card.editorialStatus,
+    temporalStatus: card.temporalStatus,
+    startDate: card.startDate,
+    endDate: card.endDate,
+    cycleDurationWeeks: card.durationWeeks,
+    referenceSessionsPerWeek: resolveReferenceSessionsPerWeek(card),
+    dayProgressPercent: dayProgress.dayProgressPercent,
+    dayProgress: {
+      elapsedDays: dayProgress.elapsedDays,
+      totalDays: dayProgress.totalDays,
+      currentDayInCycle: dayProgress.currentDayInCycle,
+    },
+  };
+}
+
+function createTimelineSlot(slotIndex, startDate, endDate, status, weekNumber, isInActiveCycle) {
+  return {
+    slotIndex,
+    label: `W${slotIndex}`,
+    status,
+    weekNumber,
+    startDate,
+    endDate,
+    isCurrent: status === 'current',
+    isCompleted: status === 'completed',
+    isInActiveCycle: Boolean(isInActiveCycle),
+    showNowLabel: status === 'current',
+    showCheckmark: status === 'completed',
+    showNextCycleHint: status === 'next_cycle',
+  };
+}
+
+function buildNeutralCycleStructure(timezone, todayDateKey) {
+  const anchorWeekStart = getStartOfMondayWeek(todayDateKey);
+
+  return {
+    cycleId: null,
+    timezone,
+    currentWeekNumber: null,
+    totalWeeks: 0,
+    progressWeekNumber: null,
+    slots: Array.from({ length: 12 }).map((_, index) => {
+      const slotStart = addDays(anchorWeekStart, index * 7);
+      const slotEnd = getEndOfMondayWeek(slotStart);
+      return createTimelineSlot(index + 1, slotStart, slotEnd, 'neutral', null, false);
+    }),
+  };
+}
+
+function buildCycleStructure(activeCard, nextUpcomingCard, timezone, todayDateKey) {
+  const anchorCard = activeCard || nextUpcomingCard;
+  if (!anchorCard) {
+    return buildNeutralCycleStructure(timezone, todayDateKey);
+  }
+
+  const anchorWeekStart = getStartOfMondayWeek(anchorCard.startDate);
+  const nextCycleStartDate = nextUpcomingCard?.startDate || null;
+  const totalWeeks = Number(anchorCard.durationWeeks) || 0;
+  const currentWeekNumber = activeCard
+    ? Math.min(
+        Math.max(1, Math.floor((diffDateKeys(anchorWeekStart, getStartOfMondayWeek(todayDateKey)) || 0) / 7) + 1),
+        Math.max(1, totalWeeks)
+      )
+    : null;
+  const progressWeekNumber = activeCard ? currentWeekNumber : null;
+  const activeWeeksByNumber = new Map(
+    (anchorCard?.planWeeks || []).map((week) => [week.weekNumber, week])
+  );
+
+  const slots = Array.from({ length: 12 }).map((_, index) => {
+    const slotIndex = index + 1;
+    const slotStart = addDays(anchorWeekStart, index * 7);
+    const slotEnd = getEndOfMondayWeek(slotStart);
+    const weekNumber = slotIndex <= totalWeeks ? slotIndex : null;
+
+    if (activeCard) {
+      if (slotIndex <= totalWeeks) {
+        const activeWeek = activeWeeksByNumber.get(slotIndex);
+        const workoutCount = Array.isArray(activeWeek?.workouts) ? activeWeek.workouts.length : 0;
+        const status =
+          slotIndex < currentWeekNumber
+            ? 'completed'
+            : slotIndex === currentWeekNumber
+              ? 'current'
+              : workoutCount === 0
+                ? 'deload'
+                : 'future_in_active_cycle';
+
+        return createTimelineSlot(slotIndex, slotStart, slotEnd, status, slotIndex, true);
+      }
+
+      if (nextCycleStartDate && isDateWithinRange(nextCycleStartDate, slotStart, slotEnd)) {
+        return createTimelineSlot(slotIndex, slotStart, slotEnd, 'next_cycle', null, false);
+      }
+
+      if (nextCycleStartDate && compareDateKeys(slotStart, nextCycleStartDate) < 0) {
+        return createTimelineSlot(slotIndex, slotStart, slotEnd, 'deload', null, false);
+      }
+
+      return createTimelineSlot(slotIndex, slotStart, slotEnd, 'neutral', null, false);
+    }
+
+    if (nextCycleStartDate && isDateWithinRange(nextCycleStartDate, slotStart, slotEnd)) {
+      return createTimelineSlot(slotIndex, slotStart, slotEnd, 'next_cycle', slotIndex <= totalWeeks ? slotIndex : null, false);
+    }
+
+    if (
+      nextCycleStartDate &&
+      compareDateKeys(slotStart, nextCycleStartDate) > 0 &&
+      slotIndex <= totalWeeks
+    ) {
+      const upcomingWeek = activeWeeksByNumber.get(slotIndex);
+      const workoutCount = Array.isArray(upcomingWeek?.workouts) ? upcomingWeek.workouts.length : 0;
+      return createTimelineSlot(
+        slotIndex,
+        slotStart,
+        slotEnd,
+        workoutCount === 0 ? 'deload' : 'future_in_active_cycle',
+        slotIndex,
+        false
+      );
+    }
+
+    return createTimelineSlot(slotIndex, slotStart, slotEnd, 'neutral', null, false);
+  });
+
+  return {
+    cycleId: anchorCard.cycleId,
+    timezone,
+    currentWeekNumber,
+    totalWeeks,
+    progressWeekNumber,
+    slots,
+  };
+}
+
+function buildProgramOverviewCardSource(cycle, visiblePlan, requestedTimezone) {
+  const timezone = resolveEffectiveTimezone(cycle.timezone, requestedTimezone, DEFAULT_TIMEZONE);
+  const card = buildCycleCard(cycle, visiblePlan, timezone);
+  const serializedPlan = serializePlan(visiblePlan);
+
+  return {
+    ...card,
+    planWeeks: serializedPlan?.weeks || [],
+  };
+}
+
 async function getProgramsOverview(userId, requestedTimezone) {
   const prisma = getPrisma();
   await assertUserExists(userId);
@@ -1313,6 +1511,61 @@ async function getProgramsOverview(userId, requestedTimezone) {
       ) || null,
     upcomingPrograms: cards.filter((card) => card.temporalStatus === 'upcoming'),
     pastPrograms: cards.filter((card) => card.temporalStatus === 'past').reverse(),
+  };
+}
+
+async function getProgramOverviewV2(userId, requestedTimezone) {
+  const prisma = getPrisma();
+  await assertUserExists(userId);
+
+  const cycles = await prisma.trainingCycle.findMany({
+    where: { userId },
+    orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }],
+    include: {
+      plans: {
+        orderBy: { versionNumber: 'desc' },
+        include: fullPlanInclude,
+      },
+    },
+  });
+
+  const timezone = resolveEffectiveTimezone(requestedTimezone, DEFAULT_TIMEZONE);
+  const cards = cycles
+    .map((cycle) => {
+      const visiblePlan = pickVisiblePlan(cycle.plans);
+      if (!visiblePlan) {
+        return null;
+      }
+
+      return buildProgramOverviewCardSource(cycle, visiblePlan, requestedTimezone);
+    })
+    .filter(Boolean);
+
+  const activeCard =
+    cards.find((card) => card.temporalStatus === 'active' && card.editorialStatus === 'published') ||
+    null;
+  const todayDateKey = getTodayDateKey(activeCard?.timezone || timezone);
+  const upcomingCards = cards.filter((card) => card.temporalStatus === 'upcoming');
+  const publishedUpcoming = upcomingCards
+    .filter((card) => card.editorialStatus === 'published')
+    .sort((left, right) => compareDateKeys(left.startDate, right.startDate));
+  const draftUpcoming = upcomingCards
+    .filter((card) => card.editorialStatus !== 'published')
+    .sort((left, right) => compareDateKeys(left.startDate, right.startDate));
+  const prioritizedUpcoming = [...publishedUpcoming, ...draftUpcoming].slice(0, 2);
+  const nextUpcomingCard = prioritizedUpcoming[0] || null;
+  const pastPrograms = cards
+    .filter((card) => card.temporalStatus === 'past')
+    .sort((left, right) => compareDateKeys(right.endDate, left.endDate))
+    .slice(0, 2)
+    .map(buildProgramPreviewCard);
+
+  return {
+    timezone,
+    activeProgramCard: buildActiveProgramCard(activeCard, todayDateKey),
+    cycleStructure: buildCycleStructure(activeCard, nextUpcomingCard, timezone, todayDateKey),
+    upcomingPrograms: prioritizedUpcoming.map(buildProgramPreviewCard),
+    pastPrograms,
   };
 }
 
@@ -2073,6 +2326,7 @@ module.exports = {
   getCycleDetails,
   getCycleFull,
   getHomeDashboard,
+  getProgramOverviewV2,
   getProgramsOverview,
   openOrCreateCycleEditDraft,
   publishCycleDraft,

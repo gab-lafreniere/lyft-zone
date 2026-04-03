@@ -8,6 +8,7 @@ const {
   getCycleDetails,
   getCycleFull,
   getHomeDashboard,
+  getProgramOverviewV2,
   getProgramsOverview,
   openOrCreateCycleEditDraft,
   publishCycleDraft,
@@ -64,6 +65,15 @@ async function createPlanForCycleHandler(req, res) {
 async function getProgramsOverviewHandler(req, res) {
   try {
     const response = await getProgramsOverview(req.query.userId, req.query.timezone);
+    return res.status(200).json(response);
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
+async function getProgramOverviewV2Handler(req, res) {
+  try {
+    const response = await getProgramOverviewV2(req.query.userId, req.query.timezone);
     return res.status(200).json(response);
   } catch (error) {
     return handleError(res, error);
@@ -164,6 +174,7 @@ module.exports = {
   getCycleDetailsHandler,
   getCycleFullHandler,
   getHomeDashboardHandler,
+  getProgramOverviewV2Handler,
   getProgramsOverviewHandler,
   openOrCreateCycleEditDraftHandler,
   publishCycleDraftHandler,

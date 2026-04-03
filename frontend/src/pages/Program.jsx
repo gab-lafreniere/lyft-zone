@@ -1,45 +1,94 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { formatRelativeCreatedLabel } from "../features/weeklyPlans/formatters";
-import { buildOrigin } from "../features/weeklyPlans/navigation";
 import { mapWeeklyPlanListItemToUi } from "../features/weeklyPlans/mappers";
+import { buildOrigin } from "../features/weeklyPlans/navigation";
 import {
   getWeeklyPlanDetailsPath,
   getWeeklyPlansPath,
 } from "../features/weeklyPlans/routes";
 import { getCycleDetailsPath } from "../features/multiWeek/routes";
-import { getProgramsOverview, getWeeklyPlans } from "../services/api";
+import { getProgramOverviewV2, getWeeklyPlans } from "../services/api";
 
-function createCycleNodes(currentProgram, upcomingPrograms) {
-  const totalWeeks = Math.max(12, currentProgram?.durationWeeks || 8);
-  const currentWeek = currentProgram ? Math.min(totalWeeks, Math.max(1, 1)) : null;
+function formatDisplayDate(dateKey) {
+  if (!dateKey) {
+    return "";
+  }
 
-  return Array.from({ length: totalWeeks }).map((_, index) => {
-    const weekNumber = index + 1;
-    const isCompleted = currentProgram && currentWeek && weekNumber < currentWeek;
-    const isCurrent = currentProgram && currentWeek === weekNumber;
-    const isUpcoming = !isCompleted && !isCurrent;
-
-    return {
-      weekNumber,
-      isCompleted,
-      isCurrent,
-      isUpcoming,
-      highlight:
-        !currentProgram && weekNumber === 1
-          ? "new"
-          : upcomingPrograms.length > 0 && weekNumber === totalWeeks - 1
-            ? "next"
-            : null,
-    };
+  return new Date(`${dateKey}T00:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
   });
+}
+
+function getTimelineFillWidth(rowSlots, progressWeekNumber) {
+  if (!Array.isArray(rowSlots) || rowSlots.length < 2 || !Number.isFinite(progressWeekNumber)) {
+    return "0%";
+  }
+
+  const firstSlotIndex = rowSlots[0].slotIndex;
+  const lastSlotIndex = rowSlots[rowSlots.length - 1].slotIndex;
+  if (progressWeekNumber < firstSlotIndex) {
+    return "0%";
+  }
+
+  if (progressWeekNumber >= lastSlotIndex) {
+    return "100%";
+  }
+
+  const completedSegments = progressWeekNumber - firstSlotIndex;
+  return `${(completedSegments / (rowSlots.length - 1)) * 100}%`;
+}
+
+function getTimelineNodeClasses(slot) {
+  if (slot.isCurrent) {
+    return "w-10 h-10 rounded-full bg-primary border-4 border-white text-white shadow-lg shadow-primary/40 -mt-1";
+  }
+
+  if (slot.isCompleted) {
+    return "w-8 h-8 rounded-full bg-primary text-white";
+  }
+
+  if (slot.status === "next_cycle") {
+    return "w-8 h-8 rounded-full bg-slate-900 text-white";
+  }
+
+  if (slot.status === "deload") {
+    return "w-8 h-8 rounded-full bg-white border-2 border-slate-300 text-slate-500";
+  }
+
+  if (slot.status === "neutral") {
+    return "w-8 h-8 rounded-full bg-white border-2 border-slate-200 text-slate-300";
+  }
+
+  return "w-8 h-8 rounded-full bg-white border-2 border-slate-200 text-slate-400";
+}
+
+function getTimelineLabelClasses(slot) {
+  if (slot.isCurrent) {
+    return "text-primary";
+  }
+
+  if (slot.isCompleted) {
+    return "text-slate-500";
+  }
+
+  if (slot.status === "next_cycle") {
+    return "text-slate-900";
+  }
+
+  if (slot.status === "deload") {
+    return "text-slate-500";
+  }
+
+  return "text-slate-400";
 }
 
 export default function Program() {
   const [scrolled, setScrolled] = useState(false);
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const [weeklyPlans, setWeeklyPlans] = useState([]);
-  const [overview, setOverview] = useState(null);
+  const [programOverview, setProgramOverview] = useState(null);
   const createMenuRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
@@ -84,7 +133,7 @@ export default function Program() {
       try {
         const [weeklyResponse, overviewResponse] = await Promise.all([
           getWeeklyPlans(),
-          getProgramsOverview(),
+          getProgramOverviewV2(),
         ]);
 
         if (!isMounted) {
@@ -96,11 +145,11 @@ export default function Program() {
             mapWeeklyPlanListItemToUi(item, formatRelativeCreatedLabel(item.createdAt))
           )
         );
-        setOverview(overviewResponse);
+        setProgramOverview(overviewResponse);
       } catch (error) {
         if (isMounted) {
           setWeeklyPlans([]);
-          setOverview(null);
+          setProgramOverview(null);
         }
       }
     }
@@ -112,22 +161,21 @@ export default function Program() {
     };
   }, []);
 
-  const featuredWeeklyPlan = useMemo(() => weeklyPlans[0] || null, [weeklyPlans]);
   const visibleWeeklyPlans = useMemo(() => weeklyPlans.slice(0, 2), [weeklyPlans]);
-  const currentProgram = overview?.currentProgram || null;
-  const pastPrograms = overview?.pastPrograms || [];
-  const upcomingPrograms = useMemo(
-    () => overview?.upcomingPrograms || [],
-    [overview]
-  );
-  const cycleNodes = useMemo(
-    () => createCycleNodes(currentProgram, upcomingPrograms),
-    [currentProgram, upcomingPrograms]
+  const activeProgramCard = programOverview?.activeProgramCard || null;
+  const cycleStructure = programOverview?.cycleStructure || null;
+  const upcomingPrograms = programOverview?.upcomingPrograms || [];
+  const pastPrograms = programOverview?.pastPrograms || [];
+  const timelineRows = useMemo(
+    () => [
+      cycleStructure?.slots?.slice(0, 6) || [],
+      cycleStructure?.slots?.slice(6, 12) || [],
+    ],
+    [cycleStructure]
   );
 
   return (
     <div className="-mx-6 bg-background-light text-slate-900 antialiased font-display">
-      {/* Sticky Header */}
       <header
         className={[
           "sticky top-0 z-40 px-6 pt-3 pb-3 bg-background-light transition-shadow duration-200",
@@ -196,7 +244,6 @@ export default function Program() {
       </header>
 
       <main className="px-6 space-y-8 pt-6">
-        {/* Active Program Card */}
         <section>
           <div className="relative overflow-hidden rounded-xl bg-white shadow-sm border border-slate-200/50 p-5">
             <div className="flex justify-between items-start mb-4">
@@ -205,86 +252,76 @@ export default function Program() {
                   Active Program
                 </span>
                 <h2 className="text-xl font-bold mt-1">
-                  {currentProgram?.name || featuredWeeklyPlan?.name || "No weekly plan yet"}
+                  {activeProgramCard?.name || "No active cycle yet"}
                 </h2>
               </div>
 
               <span className="px-2.5 py-1 rounded-full bg-primary/10 text-primary text-[11px] font-bold uppercase tracking-wider">
-                {currentProgram?.editorialStatus || featuredWeeklyPlan?.source || "manual"}
+                {activeProgramCard?.editorialStatus || "inactive"}
               </span>
             </div>
 
             <div className="space-y-4">
               <div className="flex items-center justify-between text-sm text-slate-500">
                 <span>
-                  {currentProgram
-                    ? `${currentProgram.summary?.sessionsPerWeek || currentProgram.durationWeeks} workouts / week`
-                    : featuredWeeklyPlan
-                      ? `${featuredWeeklyPlan.frequencyPerWeek} workouts / week`
-                      : "Create a weekly template"}
+                  {activeProgramCard
+                    ? `${activeProgramCard.referenceSessionsPerWeek} workouts / week`
+                    : "No active cycle"}
                 </span>
                 <span>
-                  {currentProgram
-                    ? `${currentProgram.durationWeeks} week cycle`
-                    : featuredWeeklyPlan
-                      ? `${featuredWeeklyPlan.totalWeeklySets} total sets`
-                      : ""}
+                  {activeProgramCard
+                    ? `${activeProgramCard.cycleDurationWeeks} week cycle`
+                    : ""}
                 </span>
               </div>
 
               <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                <div className="h-full bg-primary rounded-full w-1/2" />
+                <div
+                  className="h-full bg-primary rounded-full transition-all"
+                  style={{ width: `${activeProgramCard?.dayProgressPercent || 0}%` }}
+                />
               </div>
 
               <button
                 type="button"
                 onClick={() =>
-                  currentProgram
-                    ? navigate(getCycleDetailsPath(currentProgram.cycleId || currentProgram.id))
-                    : featuredWeeklyPlan
-                      ? navigate(
-                          getWeeklyPlanDetailsPath(featuredWeeklyPlan.weeklyPlanParentId),
-                          {
-                            state: {
-                              from: buildOrigin(location),
-                            },
-                          }
-                        )
-                      : navigate("/program/manual-new", {
-                          state: {
-                            from: buildOrigin(location),
-                            returnTo: "/program",
-                          },
-                        })
+                  activeProgramCard
+                    ? navigate(getCycleDetailsPath(activeProgramCard.cycleId))
+                    : navigate("/program/cycles")
                 }
                 className="w-full mt-4 py-3 rounded-xl text-sm font-bold border shadow-sm hover:shadow-md transition-shadow bg-primary text-white border-primary/20 shadow-md shadow-primary/20"
               >
-                {currentProgram || featuredWeeklyPlan ? "View Details" : "Create Weekly Template"}
+                {activeProgramCard ? "View Details" : "Browse Cycles"}
               </button>
             </div>
           </div>
         </section>
 
-        {/* Cycle Structure */}
         <section>
           <h3 className="text-lg font-bold mb-8 px-2">Cycle Structure</h3>
 
           <div className="space-y-12 px-2">
-            {[cycleNodes.slice(0, 6), cycleNodes.slice(6, 12)].map((row, rowIndex) => (
+            {timelineRows.map((row, rowIndex) => (
               <div
                 key={rowIndex}
                 className={rowIndex === 0 ? "relative flex justify-between items-center" : "relative flex justify-between items-center pt-8 pb-8"}
               >
                 <div className={`absolute ${rowIndex === 0 ? "top-4" : "top-12"} left-0 w-full h-1 bg-slate-200 z-0`} />
 
-                {rowIndex === 0 && currentProgram && (
-                  <div className="absolute top-4 left-0 w-[60%] h-1 bg-primary z-10" />
-                )}
+                <div
+                  className={`absolute ${rowIndex === 0 ? "top-4" : "top-12"} left-0 h-1 bg-primary z-10 transition-all`}
+                  style={{
+                    width: getTimelineFillWidth(
+                      row,
+                      Number(cycleStructure?.progressWeekNumber || 0)
+                    ),
+                  }}
+                />
 
-                {row.map((node, index) => (
-                  <div key={node.weekNumber} className="relative z-20 flex flex-col items-center">
-                    {node.highlight === "next" && (
-                      <span className="absolute -top-7 text-[8px] font-bold tracking-wider uppercase whitespace-nowrap">
+                {row.map((slot) => (
+                  <div key={slot.slotIndex} className="relative z-20 flex flex-col items-center">
+                    {slot.showNextCycleHint && (
+                      <span className="absolute -top-7 text-[8px] font-bold tracking-wider uppercase whitespace-nowrap text-slate-900">
                         Next Cycle
                       </span>
                     )}
@@ -292,18 +329,14 @@ export default function Program() {
                     <div
                       className={[
                         "flex items-center justify-center shadow-sm",
-                        node.isCurrent
-                          ? "w-10 h-10 rounded-full bg-primary border-4 border-white text-white shadow-lg shadow-primary/40 -mt-1"
-                          : node.isCompleted
-                            ? "w-8 h-8 rounded-full bg-primary text-white"
-                            : "w-8 h-8 rounded-full bg-white border-2 border-slate-200 text-slate-400",
+                        getTimelineNodeClasses(slot),
                       ].join(" ")}
                     >
-                      {node.isCompleted ? (
+                      {slot.showCheckmark ? (
                         <span className="material-symbols-outlined text-sm">check</span>
                       ) : (
                         <span className="text-[10px] font-bold">
-                          {node.isCurrent ? `W${node.weekNumber}` : node.weekNumber}
+                          {slot.isCurrent ? slot.label : slot.slotIndex}
                         </span>
                       )}
                     </div>
@@ -311,14 +344,10 @@ export default function Program() {
                     <span
                       className={[
                         "absolute -bottom-6 text-[10px] font-bold",
-                        node.isCurrent
-                          ? "text-primary"
-                          : node.isCompleted
-                            ? "text-slate-500"
-                            : "text-slate-400",
+                        getTimelineLabelClasses(slot),
                       ].join(" ")}
                     >
-                      {node.isCurrent ? "NOW" : `W${node.weekNumber}`}
+                      {slot.showNowLabel ? "NOW" : slot.label}
                     </span>
                   </div>
                 ))}
@@ -327,7 +356,6 @@ export default function Program() {
           </div>
         </section>
 
-        {/* Upcoming Programs */}
         <section>
           <div className="flex items-center justify-between mb-4 px-2">
             <h3 className="text-lg font-bold">Upcoming Programs</h3>
@@ -341,11 +369,11 @@ export default function Program() {
           </div>
 
           <div className="space-y-3 px-2">
-            {upcomingPrograms.slice(0, 2).map((program) => (
+            {upcomingPrograms.map((program) => (
               <button
-                key={program.cycleId || program.id}
+                key={program.cycleId}
                 type="button"
-                onClick={() => navigate(getCycleDetailsPath(program.cycleId || program.id))}
+                onClick={() => navigate(getCycleDetailsPath(program.cycleId))}
                 className="flex w-full items-center gap-4 p-4 rounded-2xl bg-white border border-slate-100 shadow-sm text-left"
               >
                 <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center">
@@ -356,7 +384,7 @@ export default function Program() {
                 <div className="flex-1">
                   <h4 className="text-sm font-bold">{program.name}</h4>
                   <p className="text-xs text-slate-500">
-                    Starts {program.startDate || "soon"}
+                    Starts {formatDisplayDate(program.startDate) || "soon"}
                   </p>
                 </div>
                 <span className="material-symbols-outlined text-slate-300">
@@ -381,7 +409,6 @@ export default function Program() {
           </div>
         </section>
 
-        {/* Past Programs */}
         <section>
           <div className="flex items-center justify-between mb-4 px-2">
             <h3 className="text-lg font-bold">Past Programs</h3>
@@ -391,11 +418,11 @@ export default function Program() {
           </div>
 
           <div className="space-y-3 px-2">
-            {pastPrograms.slice(0, 2).map((program) => (
+            {pastPrograms.map((program) => (
               <button
-                key={program.cycleId || program.id}
+                key={program.cycleId}
                 type="button"
-                onClick={() => navigate(getCycleDetailsPath(program.cycleId || program.id))}
+                onClick={() => navigate(getCycleDetailsPath(program.cycleId))}
                 className="flex w-full items-center gap-4 p-4 rounded-2xl bg-white border border-slate-100 shadow-sm text-left"
               >
                 <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center">
@@ -406,7 +433,7 @@ export default function Program() {
                 <div className="flex-1">
                   <h4 className="text-sm font-bold">{program.name}</h4>
                   <p className="text-xs text-slate-500">
-                    Completed {program.endDate || "previously"}
+                    Completed {formatDisplayDate(program.endDate) || "previously"}
                   </p>
                 </div>
                 <span className="material-symbols-outlined text-slate-300">
@@ -431,7 +458,6 @@ export default function Program() {
           </div>
         </section>
 
-        {/* ALL Programs */}
         <section className="pb-6">
           <div className="flex items-center justify-between mb-4 px-2">
             <h3 className="text-lg font-bold">All Programs</h3>
@@ -487,7 +513,6 @@ export default function Program() {
         </section>
       </main>
 
-      {/* Spacer for BottomTabs */}
       <div className="h-[calc(64px+max(8px,env(safe-area-inset-bottom)))]" />
     </div>
   );
