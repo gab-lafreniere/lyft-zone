@@ -1407,8 +1407,50 @@ async function setWeeklyPlanBookmark(weeklyPlanParentId, userId, shouldBookmark)
   };
 }
 
+async function deleteWeeklyPlan(weeklyPlanParentId, userId) {
+  const prisma = getPrisma();
+  const normalizedUserId = normalizeOptionalString(userId);
+  await assertUserExists(normalizedUserId);
+
+  const parent = await prisma.weeklyPlanParent.findFirst({
+    where: {
+      id: weeklyPlanParentId,
+      userId: normalizedUserId,
+    },
+    select: { id: true },
+  });
+
+  if (!parent) {
+    throw new ApiError(404, 'NOT_FOUND', 'Weekly plan not found');
+  }
+
+  const linkedCycleCount = await prisma.trainingCycle.count({
+    where: {
+      sourceWeeklyPlanParentId: weeklyPlanParentId,
+    },
+  });
+
+  if (linkedCycleCount > 0) {
+    throw new ApiError(
+      409,
+      'WEEKLY_PLAN_LINKED_TO_CYCLE',
+      'This weekly plan is linked to one or more cycles. Delete the linked cycle first before deleting this weekly plan.'
+    );
+  }
+
+  await prisma.weeklyPlanParent.delete({
+    where: { id: weeklyPlanParentId },
+  });
+
+  return {
+    weeklyPlanParentId,
+    status: 'DELETED',
+  };
+}
+
 module.exports = {
   createWeeklyPlan,
+  deleteWeeklyPlan,
   getWeeklyPlanDetails,
   listVisibleWeeklyPlans,
   openOrCreateEditDraft,

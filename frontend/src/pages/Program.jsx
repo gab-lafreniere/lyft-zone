@@ -235,6 +235,9 @@ export default function Program() {
   const cycleStructure = programOverview?.cycleStructure || null;
   const upcomingPrograms = programOverview?.upcomingPrograms || [];
   const pastPrograms = programOverview?.pastPrograms || [];
+  const hasActiveCycle = Boolean(activeProgramCard);
+  const hasUpcomingCycle = upcomingPrograms.length > 0;
+  const programState = hasActiveCycle ? "active" : hasUpcomingCycle ? "upcoming_only" : "empty";
   const todayDateKey = useMemo(
     () => getLocalDateKey(programOverview?.timezone || "America/Toronto"),
     [programOverview?.timezone]
@@ -303,6 +306,7 @@ export default function Program() {
 
     return `Week ${currentWeekNumber} of ${totalWeeks}`;
   }, [activeProgramCard, cycleStructure]);
+  const nextUpcomingProgram = upcomingPrograms[0] || null;
 
   return (
     <div className="-mx-6 bg-background-light text-slate-900 antialiased font-display">
@@ -378,75 +382,97 @@ export default function Program() {
           <div className="relative overflow-hidden rounded-xl bg-white shadow-sm border border-slate-200/50 p-5">
             <div className="flex justify-between items-start mb-4">
               <div>
-                <span className="text-[10px] font-bold uppercase tracking-widest text-primary">
-                  Active Program
-                </span>
+                {programState !== "empty" ? (
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-primary">
+                    Active Program
+                  </span>
+                ) : null}
                 <h2 className="text-xl font-bold mt-1">
-                  {displayedActiveCycle?.name || featuredWeeklyPlan?.name || "No weekly plan yet"}
+                  {programState === "active"
+                    ? displayedActiveCycle?.name || featuredWeeklyPlan?.name || "No weekly plan yet"
+                    : "No active program"}
                 </h2>
               </div>
 
-              <span className="px-2.5 py-1 rounded-full bg-primary/10 text-primary text-[11px] font-bold uppercase tracking-wider">
-                {activeProgramCard?.editorialStatus || featuredWeeklyPlan?.source || "manual"}
-              </span>
+              {programState === "active" ? (
+                <span className="px-2.5 py-1 rounded-full bg-primary/10 text-primary text-[11px] font-bold uppercase tracking-wider">
+                  {activeProgramCard?.editorialStatus || featuredWeeklyPlan?.source || "manual"}
+                </span>
+              ) : null}
             </div>
 
             <div className="space-y-4">
               <div className="flex items-end justify-between text-sm text-slate-500">
-                <span>
-                  {activeProgramCard
-                    ? `${activeProgramCard.referenceSessionsPerWeek} workouts / week`
-                    : featuredWeeklyPlan
-                      ? `${featuredWeeklyPlan.frequencyPerWeek} workouts / week`
-                      : "Create a weekly template"}
-                </span>
-                <span className="flex flex-col items-end text-right">
-                  {activeProgramWeekLabel ? (
-                    <span>{activeProgramWeekLabel}</span>
-                  ) : null}
-                  <span>
-                    {displayedActiveCycle?.startDate && displayedActiveCycle?.endDate
-                      ? `${formatDisplayDate(displayedActiveCycle.startDate)} - ${formatDisplayDate(displayedActiveCycle.endDate)}`
-                      : activeProgramCard
-                        ? `${activeProgramCard.cycleDurationWeeks} week cycle`
+                {programState === "active" ? (
+                  <>
+                    <span>
+                      {activeProgramCard
+                        ? `${activeProgramCard.referenceSessionsPerWeek} workouts / week`
                         : featuredWeeklyPlan
-                          ? `${featuredWeeklyPlan.totalWeeklySets} total sets`
-                          : ""}
-                  </span>
-                </span>
+                          ? `${featuredWeeklyPlan.frequencyPerWeek} workouts / week`
+                          : "Create a weekly template"}
+                    </span>
+                    <span className="flex flex-col items-end text-right">
+                      {activeProgramWeekLabel ? (
+                        <span>{activeProgramWeekLabel}</span>
+                      ) : null}
+                      <span>
+                        {displayedActiveCycle?.startDate && displayedActiveCycle?.endDate
+                          ? `${formatDisplayDate(displayedActiveCycle.startDate)} - ${formatDisplayDate(displayedActiveCycle.endDate)}`
+                          : activeProgramCard
+                            ? `${activeProgramCard.cycleDurationWeeks} week cycle`
+                            : featuredWeeklyPlan
+                              ? `${featuredWeeklyPlan.totalWeeklySets} total sets`
+                              : ""}
+                      </span>
+                    </span>
+                  </>
+                ) : programState === "upcoming_only" ? (
+                  <>
+                    <span>Your next cycle is already planned.</span>
+                    <span className="text-right">
+                      {nextUpcomingProgram?.startDate
+                        ? `Starts ${formatDisplayDate(nextUpcomingProgram.startDate)}`
+                        : ""}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span>Convert a weekly plan into a cycle to get started.</span>
+                    <span className="text-right" />
+                  </>
+                )}
               </div>
 
-              <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary rounded-full transition-all"
-                  style={{ width: `${activeProgramCard?.dayProgressPercent || 0}%` }}
-                />
-              </div>
+              {programState === "active" ? (
+                <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary rounded-full transition-all"
+                    style={{ width: `${activeProgramCard?.dayProgressPercent || 0}%` }}
+                  />
+                </div>
+              ) : null}
 
               <button
                 type="button"
                 onClick={() =>
-                  activeProgramCard
+                  programState === "active" && activeProgramCard
                     ? navigate(getCycleDetailsPath(activeProgramCard.cycleId))
-                    : featuredWeeklyPlan
-                      ? navigate(
-                          getWeeklyPlanDetailsPath(featuredWeeklyPlan.weeklyPlanParentId),
-                          {
-                            state: {
-                              from: buildOrigin(location),
-                            },
-                          }
-                        )
-                      : navigate("/program/manual-new", {
+                    : programState === "upcoming_only" && nextUpcomingProgram
+                      ? navigate(getCycleDetailsPath(nextUpcomingProgram.cycleId))
+                      : navigate(getWeeklyPlansPath(), {
                           state: {
                             from: buildOrigin(location),
-                            returnTo: "/program",
                           },
                         })
                 }
                 className="w-full mt-4 py-3 rounded-xl text-sm font-bold border shadow-sm hover:shadow-md transition-shadow bg-primary text-white border-primary/20 shadow-md shadow-primary/20"
               >
-                {activeProgramCard || featuredWeeklyPlan ? "View Details" : "Create Weekly Template"}
+                {programState === "active"
+                  ? "View Details"
+                  : programState === "upcoming_only"
+                    ? "View Upcoming Cycle"
+                    : "Browse Weekly Plans"}
               </button>
             </div>
           </div>
@@ -555,13 +581,15 @@ export default function Program() {
         <section>
           <div className="flex items-center justify-between mb-4 px-2">
             <h3 className="text-lg font-bold">Upcoming Programs</h3>
-            <button
-              type="button"
-              onClick={() => navigate("/program/cycles")}
-              className="text-sm font-medium text-primary"
-            >
-              Browse
-            </button>
+            {!(programState === "empty" && upcomingPrograms.length === 0) ? (
+              <button
+                type="button"
+                onClick={() => navigate("/program/cycles")}
+                className="text-sm font-medium text-primary"
+              >
+                Browse
+              </button>
+            ) : null}
           </div>
 
           <div className="space-y-3 px-2">
@@ -598,8 +626,21 @@ export default function Program() {
                 </div>
                 <div className="flex-1">
                   <h4 className="text-sm font-bold">No upcoming programs yet</h4>
-                  <p className="text-xs text-slate-500">Future multi-week cycles will appear here.</p>
+                  <p className="text-xs text-slate-500">
+                    {programState === "empty"
+                      ? "Convert a weekly plan into a cycle to see it here."
+                      : "Future multi-week cycles will appear here."}
+                  </p>
                 </div>
+                {programState === "empty" ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate(getWeeklyPlansPath())}
+                    className="rounded-xl bg-primary px-3 py-2 text-xs font-bold text-white shadow-md shadow-primary/20"
+                  >
+                    Browse Plans
+                  </button>
+                ) : null}
               </div>
             )}
           </div>
@@ -608,9 +649,11 @@ export default function Program() {
         <section>
           <div className="flex items-center justify-between mb-4 px-2">
             <h3 className="text-lg font-bold">Past Programs</h3>
-            <button type="button" className="text-sm font-medium text-primary">
-              Browse
-            </button>
+            {pastPrograms.length > 0 ? (
+              <button type="button" className="text-sm font-medium text-primary">
+                Browse
+              </button>
+            ) : null}
           </div>
 
           <div className="space-y-3 px-2">

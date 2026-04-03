@@ -1,6 +1,7 @@
 const { ApiError } = require('../services/usersService');
 const {
   createWeeklyPlan,
+  deleteWeeklyPlan,
   getWeeklyPlanDetails,
   listVisibleWeeklyPlans,
   openOrCreateEditDraft,
@@ -41,6 +42,18 @@ async function listWeeklyPlansHandler(req, res) {
   try {
     const items = await listVisibleWeeklyPlans(req.query.userId);
     return res.status(200).json({ items });
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
+async function deleteWeeklyPlanHandler(req, res) {
+  try {
+    const response = await deleteWeeklyPlan(
+      req.params.weeklyPlanParentId,
+      req.body?.userId || req.query.userId
+    );
+    return res.status(200).json(response);
   } catch (error) {
     return handleError(res, error);
   }
@@ -115,6 +128,7 @@ async function unbookmarkWeeklyPlanHandler(req, res) {
 module.exports = {
   bookmarkWeeklyPlanHandler,
   createWeeklyPlanHandler,
+  deleteWeeklyPlanHandler,
   getWeeklyPlanDetailsHandler,
   listWeeklyPlansHandler,
   openOrCreateEditDraftHandler,
@@ -122,4 +136,3 @@ module.exports = {
   unbookmarkWeeklyPlanHandler,
   updateWeeklyPlanDraftHandler,
 };
-

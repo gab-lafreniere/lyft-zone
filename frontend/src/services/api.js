@@ -237,6 +237,21 @@ export async function publishWeeklyPlanDraft(weeklyPlanParentId) {
   return readJsonResponse(response);
 }
 
+export async function deleteWeeklyPlan(weeklyPlanParentId) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/weekly-plans/${weeklyPlanParentId}?${new URLSearchParams({
+      userId,
+    }).toString()}`,
+    {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+    }
+  );
+
+  return readJsonResponse(response);
+}
+
 export async function bookmarkWeeklyPlan(weeklyPlanParentId) {
   const userId = await ensureCurrentUserId();
   const response = await fetch(

@@ -6,7 +6,7 @@ import {
   getWeeklyPlanDetailsPath,
   getWeeklyPlansPath,
 } from "../features/weeklyPlans/routes";
-import { publishWeeklyPlanDraft } from "../services/api";
+import { deleteWeeklyPlan, publishWeeklyPlanDraft } from "../services/api";
 import {
   aggregateWorkoutMetrics,
   computeWorkoutMetrics,
@@ -82,6 +82,8 @@ export default function ManualBuilder() {
   const [settingsSessionsError, setSettingsSessionsError] = useState("");
   const [showDeleteProgramConfirm, setShowDeleteProgramConfirm] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [deleteProgramError, setDeleteProgramError] = useState("");
+  const [isDeletingProgram, setIsDeletingProgram] = useState(false);
 
   const programName = programDraft.programName;
   const sessionsPerWeek = programDraft.sessionsPerWeek || 4;
@@ -279,6 +281,7 @@ export default function ManualBuilder() {
     setHasInteractedWithSettingsName(false);
     setSettingsSessionsPerWeek(programDraft.sessionsPerWeek || 4);
     setSettingsSessionsError("");
+    setDeleteProgramError("");
     setShowDeleteProgramConfirm(false);
     setIsSettingsOpen(true);
   };
@@ -288,6 +291,7 @@ export default function ManualBuilder() {
     setSettingsNameError("");
     setHasInteractedWithSettingsName(false);
     setSettingsSessionsError("");
+    setDeleteProgramError("");
     setShowDeleteProgramConfirm(false);
   };
 
@@ -338,10 +342,33 @@ export default function ManualBuilder() {
     closeSettingsPanel();
   };
 
-  const handleDeleteProgram = () => {
-    resetProgramDraft();
-    closeSettingsPanel();
-    navigate("/program");
+  const handleDeleteProgram = async () => {
+    if (!draftMetadata.loadedFromBackend) {
+      resetProgramDraft();
+      closeSettingsPanel();
+      navigate("/program");
+      return;
+    }
+
+    if (!draftMetadata.weeklyPlanParentId || isDeletingProgram) {
+      return;
+    }
+
+    setDeleteProgramError("");
+    setIsDeletingProgram(true);
+
+    try {
+      await deleteWeeklyPlan(draftMetadata.weeklyPlanParentId);
+      closeSettingsPanel();
+      navigate(getWeeklyPlansPath(), { replace: true });
+    } catch (error) {
+      setDeleteProgramError(
+        error.message ||
+          "Unable to delete this weekly plan."
+      );
+    } finally {
+      setIsDeletingProgram(false);
+    }
   };
 
   const handleBack = () => {
@@ -875,11 +902,7 @@ export default function ManualBuilder() {
               </div>
 
               <section className="rounded-2xl border border-red-100 bg-red-50/60 p-4">
-                {draftMetadata.loadedFromBackend ? (
-                  <p className="text-sm text-red-600">
-                    Delete is not available in this milestone for persisted weekly plans.
-                  </p>
-                ) : !showDeleteProgramConfirm ? (
+                {!showDeleteProgramConfirm ? (
                   <button
                     type="button"
                     onClick={() => setShowDeleteProgramConfirm(true)}
@@ -890,8 +913,15 @@ export default function ManualBuilder() {
                 ) : (
                   <div className="mt-3 space-y-3">
                     <p className="text-sm text-red-600">
-                      Delete this draft program? This action can&apos;t be undone.
+                      {draftMetadata.loadedFromBackend
+                        ? "Are you sure you want to delete this weekly plan? This action can't be undone."
+                        : "Delete this draft program? This action can&apos;t be undone."}
                     </p>
+                    {deleteProgramError ? (
+                      <p className="text-sm font-medium text-red-600">
+                        {deleteProgramError}
+                      </p>
+                    ) : null}
                     <div className="flex gap-3">
                       <button
                         type="button"
@@ -903,9 +933,10 @@ export default function ManualBuilder() {
                       <button
                         type="button"
                         onClick={handleDeleteProgram}
+                        disabled={isDeletingProgram}
                         className="flex-1 rounded-xl bg-red-500 py-3 font-semibold text-white transition-colors hover:bg-red-600"
                       >
-                        Delete Program
+                        {isDeletingProgram ? "Deleting..." : "Delete Program"}
                       </button>
                     </div>
                   </div>
