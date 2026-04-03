@@ -117,20 +117,47 @@ function ensureNotPastDate(dateKey, todayDateKey, fieldName) {
   }
 }
 
-function calculateDurationWeeksFromDateRange(startDateKey, endDateKey) {
-  const start = parseDateInput(startDateKey);
-  const end = parseDateInput(endDateKey);
-
-  if (!start || !end) {
-    return null;
+function normalizeCanonicalMultiWeekDateRange(
+  startDateInput,
+  durationWeeksInput,
+  requestedEndDateInput = null,
+  startFieldName = 'startDate',
+  endFieldName = 'endDate'
+) {
+  const startDateKey = toDateKey(startDateInput);
+  if (!startDateKey) {
+    throw new ApiError(400, 'VALIDATION_ERROR', `${startFieldName} must be a valid date`);
   }
 
-  const dayDifference = Math.floor((end.getTime() - start.getTime()) / 86400000);
-  if (dayDifference < 0) {
-    return null;
+  if (startDateKey !== getStartOfMondayWeek(startDateKey)) {
+    throw new ApiError(400, 'VALIDATION_ERROR', `${startFieldName} must be a Monday`);
   }
 
-  return Math.floor(dayDifference / 7) + 1;
+  const durationWeeks = normalizeInt(durationWeeksInput, null);
+  if (durationWeeks == null || durationWeeks < 1) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'durationWeeks must be at least 1');
+  }
+
+  const endDateKey = addDays(startDateKey, durationWeeks * 7 - 1);
+  const finalWeekStartDateKey = addDays(startDateKey, (durationWeeks - 1) * 7);
+  if (endDateKey !== getEndOfMondayWeek(finalWeekStartDateKey)) {
+    throw new ApiError(500, 'INTERNAL_SERVER_ERROR', 'Unable to derive a canonical cycle endDate');
+  }
+
+  const requestedEndDateKey = toDateKey(requestedEndDateInput);
+  if (requestedEndDateKey && requestedEndDateKey !== endDateKey) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      `${endFieldName} must match the derived cycle end date`
+    );
+  }
+
+  return {
+    startDateKey,
+    endDateKey,
+    durationWeeks,
+  };
 }
 
 function trimDocumentWeeks(document, targetWeekCount) {
@@ -1102,21 +1129,11 @@ async function createCycleFromWeeklyPlan(payload) {
     throw new ApiError(400, 'VALIDATION_ERROR', 'weeklyPlanParentId is required');
   }
 
-  const startDateKey = toDateKey(payload.startDate);
-  if (!startDateKey) {
-    throw new ApiError(400, 'VALIDATION_ERROR', 'startDate must be a valid date');
-  }
-
-  const durationWeeks = normalizeInt(payload.durationWeeks, null);
-  if (durationWeeks == null || durationWeeks < 1) {
-    throw new ApiError(400, 'VALIDATION_ERROR', 'durationWeeks must be at least 1');
-  }
-
-  const autoEndDateKey = addDays(startDateKey, durationWeeks * 7 - 1);
-  const endDateKey = toDateKey(payload.endDate) || autoEndDateKey;
-  if (compareDateKeys(endDateKey, startDateKey) < 0) {
-    throw new ApiError(400, 'VALIDATION_ERROR', 'endDate must be on or after startDate');
-  }
+  const { startDateKey, endDateKey, durationWeeks } = normalizeCanonicalMultiWeekDateRange(
+    payload.startDate,
+    payload.durationWeeks,
+    payload.endDate
+  );
 
   const effectiveTimezone = resolveEffectiveTimezone(
     payload.timezone,
@@ -1186,13 +1203,14 @@ async function createCycleFromWeeklyPlan(payload) {
       },
     });
 
-    const draftPlan = await tx.plan.create({
+    const publishedPlan = await tx.plan.create({
       data: {
         trainingCycleId: cycle.id,
         name: document.name,
         versionNumber: 1,
         sourceType: 'USER',
-        status: 'DRAFT',
+        status: 'PUBLISHED',
+        publishedAt: new Date(),
         weeks: {
           create: buildPlanCreateWeeksInput(document.weeks),
         },
@@ -1200,18 +1218,19 @@ async function createCycleFromWeeklyPlan(payload) {
       include: fullPlanInclude,
     });
 
-    return { cycle, draftPlan };
+    return { cycle, publishedPlan };
   });
 
   const temporalStatus = deriveTemporalStatus(created.cycle, effectiveTimezone);
   return {
     cycleId: created.cycle.id,
-    planId: created.draftPlan.id,
-    status: created.draftPlan.status,
+    planId: created.publishedPlan.id,
+    publishedPlanId: created.publishedPlan.id,
+    status: created.publishedPlan.status,
     temporalStatus,
     timezone: effectiveTimezone,
     cycle: created.cycle,
-    builderPayload: buildCycleBuilderPayload(created.cycle, created.draftPlan),
+    builderPayload: buildCycleBuilderPayload(created.cycle, created.publishedPlan),
     draftState: {
       state: 'fresh',
       effectiveTimezone,
@@ -1219,7 +1238,7 @@ async function createCycleFromWeeklyPlan(payload) {
       isGraceWindow: false,
       canExtendDraft: false,
     },
-    updatedAt: created.draftPlan.updatedAt,
+    updatedAt: created.publishedPlan.updatedAt,
   };
 }
 
@@ -2007,11 +2026,6 @@ async function rescheduleUpcomingCycle(cycleId, payload = {}) {
   const userId = normalizeOptionalString(payload.userId);
   await assertUserExists(userId);
 
-  const nextStartDateKey = toDateKey(payload.newStartDate);
-  if (!nextStartDateKey) {
-    throw new ApiError(400, 'VALIDATION_ERROR', 'newStartDate must be a valid date');
-  }
-
   return prisma.$transaction(async (tx) => {
     const cycle = await loadCycleForUser(tx, cycleId, userId);
     const effectiveTimezone = resolveEffectiveTimezone(cycle.timezone, payload.timezone, DEFAULT_TIMEZONE);
@@ -2022,25 +2036,17 @@ async function rescheduleUpcomingCycle(cycleId, payload = {}) {
       throw new ApiError(400, 'VALIDATION_ERROR', 'Only upcoming cycles can be rescheduled');
     }
 
-    ensureNotPastDate(nextStartDateKey, todayDateKey, 'startDate');
+    const { startDateKey: normalizedStartDateKey, endDateKey: nextEndDateKey, durationWeeks: nextDurationWeeks } =
+      normalizeCanonicalMultiWeekDateRange(
+        payload.newStartDate,
+        payload.durationWeeks,
+        payload.newEndDate || payload.endDate,
+        'newStartDate',
+        'newEndDate'
+      );
 
-    const requestedEndDateKey = toDateKey(payload.newEndDate || payload.endDate);
-    const nextEndDateKey =
-      requestedEndDateKey || addDays(nextStartDateKey, cycle.durationWeeks * 7 - 1);
-
+    ensureNotPastDate(normalizedStartDateKey, todayDateKey, 'startDate');
     ensureNotPastDate(nextEndDateKey, todayDateKey, 'endDate');
-
-    if (compareDateKeys(nextEndDateKey, nextStartDateKey) < 0) {
-      throw new ApiError(400, 'VALIDATION_ERROR', 'endDate must be on or after startDate');
-    }
-
-    const nextDurationWeeks =
-      normalizeInt(payload.durationWeeks, null) ||
-      calculateDurationWeeksFromDateRange(nextStartDateKey, nextEndDateKey);
-
-    if (nextDurationWeeks == null || nextDurationWeeks < 1) {
-      throw new ApiError(400, 'VALIDATION_ERROR', 'durationWeeks must be at least 1');
-    }
 
     if (nextDurationWeeks > cycle.durationWeeks) {
       throw new ApiError(
@@ -2054,7 +2060,7 @@ async function rescheduleUpcomingCycle(cycleId, payload = {}) {
       where: { userId },
       select: { id: true, startDate: true, endDate: true },
     });
-    validateNoOverlap(existingCycles, nextStartDateKey, nextEndDateKey, cycle.id);
+    validateNoOverlap(existingCycles, normalizedStartDateKey, nextEndDateKey, cycle.id);
 
     let draftPlan = await normalizeSingleDraft(tx, cycle.id);
     const publishedPlan = pickLatestPublished(cycle.plans);
@@ -2113,7 +2119,7 @@ async function rescheduleUpcomingCycle(cycleId, payload = {}) {
     const updatedCycle = await tx.trainingCycle.update({
       where: { id: cycle.id },
       data: {
-        startDate: parseDateInput(nextStartDateKey),
+        startDate: parseDateInput(normalizedStartDateKey),
         endDate: parseDateInput(nextEndDateKey),
         durationWeeks: nextDurationWeeks,
       },

@@ -59,36 +59,27 @@ function addDays(dateValue, days) {
   return `${year}-${month}-${day}`;
 }
 
-function clampDateString(value, minValue, maxValue) {
-  if (!value) {
-    return maxValue;
-  }
-
-  if (value < minValue) {
-    return minValue;
-  }
-
-  if (value > maxValue) {
-    return maxValue;
-  }
-
-  return value;
+function formatDateInput(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
-function deriveDurationWeeks(startDate, endDate) {
-  const start = new Date(`${startDate}T00:00:00`);
-  const end = new Date(`${endDate}T00:00:00`);
+function getNextMondayDateValue(dateValue = getTodayDateInput()) {
+  const date = new Date(`${dateValue}T00:00:00`);
+  const day = date.getDay();
+  const daysUntilMonday = day === 1 ? 0 : day === 0 ? 1 : 8 - day;
+  date.setDate(date.getDate() + daysUntilMonday);
+  return formatDateInput(date);
+}
 
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-    return null;
+function isMondayDateInput(value) {
+  if (!value) {
+    return false;
   }
 
-  const diffDays = Math.floor((end.getTime() - start.getTime()) / 86400000);
-  if (diffDays < 0) {
-    return null;
-  }
-
-  return Math.floor(diffDays / 7) + 1;
+  return new Date(`${value}T00:00:00`).getDay() === 1;
 }
 
 function formatMinutes(value) {
@@ -160,7 +151,6 @@ export default function ManualBuilderMulti() {
   const [showMuscleDistribution, setShowMuscleDistribution] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsStartDate, setSettingsStartDate] = useState("");
-  const [settingsEndDate, setSettingsEndDate] = useState("");
   const [settingsDurationWeeks, setSettingsDurationWeeks] = useState(1);
   const [settingsError, setSettingsError] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -168,6 +158,7 @@ export default function ManualBuilderMulti() {
   const [selectedWorkoutOrderIndex, setSelectedWorkoutOrderIndex] = useState(null);
 
   const todayDate = getTodayDateInput();
+  const minSettingsStartDate = useMemo(() => getNextMondayDateValue(todayDate), [todayDate]);
   const maxDurationWeeks = Math.max(1, programDraft.weeks.length || programDraft.programLength || 1);
   const isUpcomingCycle = draftMetadata.temporalStatus === "upcoming";
   const isTimelineEditable = isUpcomingCycle;
@@ -418,14 +409,6 @@ export default function ManualBuilderMulti() {
     return "Draft";
   }, [draftMetadata.lastSavedAt, draftMetadata.saveState]);
 
-  const settingsFinalWeekStartDate = useMemo(
-    () =>
-      addDays(
-        settingsStartDate || todayDate,
-        Math.max(0, (settingsDurationWeeks - 1) * 7)
-      ),
-    [settingsDurationWeeks, settingsStartDate, todayDate]
-  );
   const settingsFinalWeekEndDate = useMemo(
     () =>
       addDays(
@@ -434,16 +417,10 @@ export default function ManualBuilderMulti() {
       ),
     [settingsDurationWeeks, settingsStartDate, todayDate]
   );
+  const settingsEndDate = settingsFinalWeekEndDate;
 
   const openSettingsPanel = () => {
     setSettingsStartDate(programDraft.startDate || todayDate);
-    setSettingsEndDate(
-      programDraft.endDate ||
-        addDays(
-          programDraft.startDate || todayDate,
-          Math.max(0, (programDraft.programLength || maxDurationWeeks) * 7 - 1)
-        )
-    );
     setSettingsDurationWeeks(programDraft.programLength || maxDurationWeeks);
     setSettingsError("");
     setShowDeleteConfirm(false);
@@ -459,17 +436,6 @@ export default function ManualBuilderMulti() {
   const handleSettingsStartDateChange = (value) => {
     setSettingsStartDate(value);
     setSettingsError("");
-
-    const nextFinalWeekStart = addDays(value, Math.max(0, (settingsDurationWeeks - 1) * 7));
-    const nextFinalWeekEnd = addDays(value, Math.max(0, settingsDurationWeeks * 7 - 1));
-    setSettingsEndDate((prev) => clampDateString(prev, nextFinalWeekStart, nextFinalWeekEnd));
-  };
-
-  const handleSettingsEndDateChange = (value) => {
-    setSettingsEndDate(
-      clampDateString(value, settingsFinalWeekStartDate, settingsFinalWeekEndDate)
-    );
-    setSettingsError("");
   };
 
   const handleSettingsDurationChange = (nextValue) => {
@@ -482,16 +448,6 @@ export default function ManualBuilderMulti() {
     const safeDuration = Math.max(1, Math.trunc(parsed));
     setSettingsDurationWeeks(safeDuration);
     setSettingsError("");
-
-    const nextFinalWeekStart = addDays(
-      settingsStartDate || todayDate,
-      Math.max(0, (safeDuration - 1) * 7)
-    );
-    const nextFinalWeekEnd = addDays(
-      settingsStartDate || todayDate,
-      Math.max(0, safeDuration * 7 - 1)
-    );
-    setSettingsEndDate((prev) => clampDateString(prev, nextFinalWeekStart, nextFinalWeekEnd));
   };
 
   const decrementSettingsDuration = () => {
@@ -514,9 +470,13 @@ export default function ManualBuilderMulti() {
       return;
     }
 
-    const derivedDuration = deriveDurationWeeks(settingsStartDate, settingsEndDate);
-    if (!settingsStartDate || !settingsEndDate || derivedDuration == null) {
-      setSettingsError("Choose a valid future date range.");
+    if (!settingsStartDate) {
+      setSettingsError("Choose a valid future start date.");
+      return;
+    }
+
+    if (!isMondayDateInput(settingsStartDate)) {
+      setSettingsError("Start date must be a Monday.");
       return;
     }
 
@@ -525,7 +485,7 @@ export default function ManualBuilderMulti() {
       return;
     }
 
-    if (derivedDuration > maxDurationWeeks) {
+    if (settingsDurationWeeks > maxDurationWeeks) {
       setSettingsError("Extending a cycle beyond its current structure isn't supported yet.");
       return;
     }
@@ -536,8 +496,7 @@ export default function ManualBuilderMulti() {
     try {
       const response = await rescheduleUpcomingCycle(cycleId, {
         newStartDate: settingsStartDate,
-        newEndDate: settingsEndDate,
-        durationWeeks: derivedDuration,
+        durationWeeks: settingsDurationWeeks,
       });
       hydrateProgramDraft(response);
       closeSettingsPanel();
@@ -881,7 +840,7 @@ export default function ManualBuilderMulti() {
           {isEditMode && (
             <div className="flex items-center justify-between rounded-xl border border-slate-100 bg-white p-2 shadow-sm">
               <span className="px-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
-                Edit week
+                {selectedWorkoutOrderIndex == null ? "Select a workout" : "Edit week"}
               </span>
               <div className="flex items-center gap-1.5">
               <button
@@ -1066,26 +1025,27 @@ export default function ManualBuilderMulti() {
                 <input
                   type="date"
                   value={settingsStartDate}
-                  min={todayDate}
+                  min={minSettingsStartDate}
+                  step={7}
                   onChange={(event) => handleSettingsStartDateChange(event.target.value)}
                   disabled={!isTimelineEditable}
                   className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 font-medium outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary disabled:bg-slate-100 disabled:text-slate-400"
                 />
+                <p className="text-xs text-slate-400">
+                  Start dates must fall on a Monday.
+                </p>
               </section>
 
               <section className="space-y-3">
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
                   End Date
                 </label>
-                <input
-                  type="date"
-                  value={settingsEndDate}
-                  min={settingsFinalWeekStartDate}
-                  max={settingsFinalWeekEndDate}
-                  onChange={(event) => handleSettingsEndDateChange(event.target.value)}
-                  disabled={!isTimelineEditable}
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 font-medium outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary disabled:bg-slate-100 disabled:text-slate-400"
-                />
+                <div className="flex h-12 items-center rounded-xl border border-slate-200 bg-slate-50 px-4 font-medium text-slate-600">
+                  {formatDate(settingsEndDate)}
+                </div>
+                <p className="text-xs text-slate-400">
+                  End date is derived automatically from the Monday start date and duration.
+                </p>
               </section>
 
               <section className="space-y-3">

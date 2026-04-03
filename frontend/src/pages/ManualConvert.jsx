@@ -28,46 +28,24 @@ function addWeeks(date, weeks) {
   return next;
 }
 
-function addDays(dateValue, days) {
-  const next = new Date(`${dateValue}T00:00:00`);
-  next.setDate(next.getDate() + days);
-  return formatDateInput(next);
-}
-
 function getTodayDateInput() {
   return formatDateInput(new Date());
 }
 
-function calculateDurationWeeks(startDateValue, endDateValue) {
-  const startDate = new Date(`${startDateValue}T00:00:00`);
-  const endDate = new Date(`${endDateValue}T00:00:00`);
-
-  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-    return null;
-  }
-
-  const dayDifference = Math.floor((endDate.getTime() - startDate.getTime()) / 86400000);
-  if (dayDifference < 0) {
-    return null;
-  }
-
-  return Math.floor(dayDifference / 7) + 1;
+function getNextMondayDateInput(dateValue = getTodayDateInput()) {
+  const date = new Date(`${dateValue}T00:00:00`);
+  const day = date.getDay();
+  const daysUntilMonday = day === 1 ? 0 : day === 0 ? 1 : 8 - day;
+  date.setDate(date.getDate() + daysUntilMonday);
+  return formatDateInput(date);
 }
 
-function clampDateString(value, minValue, maxValue) {
+function isMondayDateInput(value) {
   if (!value) {
-    return maxValue;
+    return false;
   }
 
-  if (value < minValue) {
-    return minValue;
-  }
-
-  if (value > maxValue) {
-    return maxValue;
-  }
-
-  return value;
+  return new Date(`${value}T00:00:00`).getDay() === 1;
 }
 
 function buildInitialWeekdaySlots(workouts = []) {
@@ -133,8 +111,11 @@ export default function ManualConvert() {
   const programName = programDraft.programName || "New Program";
   const sessionsPerWeek = programDraft.sessionsPerWeek || 4;
   const todayDate = getTodayDateInput();
-  const initialStartDate = programDraft.startDate || todayDate;
+  const initialStartDate = isMondayDateInput(programDraft.startDate)
+    ? programDraft.startDate
+    : getNextMondayDateInput(programDraft.startDate || todayDate);
   const initialProgramLength = programDraft.programLength || 8;
+  const minStartDate = useMemo(() => getNextMondayDateInput(todayDate), [todayDate]);
   const templateWorkouts = useMemo(
     () =>
       [...(programDraft.workouts || [])].map((workout, index) => ({
@@ -143,13 +124,9 @@ export default function ManualConvert() {
       })),
     [programDraft.workouts]
   );
-  const initialEndDate =
-    programDraft.endDate ||
-    formatDateInput(addWeeks(new Date(`${initialStartDate}T00:00:00`), initialProgramLength));
 
   const [startDate, setStartDate] = useState(initialStartDate);
   const [programLength, setProgramLength] = useState(initialProgramLength);
-  const [endDate, setEndDate] = useState(initialEndDate);
   const [weekdaySlots, setWeekdaySlots] = useState(() =>
     buildInitialWeekdaySlots(programDraft.workouts || [])
   );
@@ -160,13 +137,12 @@ export default function ManualConvert() {
     return `This ${programLength}-week program will duplicate your ${sessionsPerWeek}-session weekly template across all weeks.`;
   }, [programLength, sessionsPerWeek]);
 
-  const finalWeekStartDate = useMemo(
-    () => addDays(startDate || todayDate, Math.max(0, (programLength - 1) * 7)),
-    [programLength, startDate, todayDate]
-  );
-  const finalWeekEndDate = useMemo(
-    () => addDays(startDate || todayDate, Math.max(0, programLength * 7 - 1)),
-    [programLength, startDate, todayDate]
+  const endDate = useMemo(
+    () =>
+      startDate
+        ? formatDateInput(addWeeks(new Date(`${startDate}T00:00:00`), programLength))
+        : "",
+    [programLength, startDate]
   );
   const weekdayAssignmentError = useMemo(() => {
     if (templateWorkouts.length === 0) {
@@ -202,22 +178,12 @@ export default function ManualConvert() {
 
   const handleLengthChange = (weeks) => {
     setProgramLength(weeks);
-
-    const nextFinalWeekStart = addDays(startDate || todayDate, Math.max(0, (weeks - 1) * 7));
-    const nextFinalWeekEnd = addDays(startDate || todayDate, Math.max(0, weeks * 7 - 1));
-    setEndDate((prev) => clampDateString(prev, nextFinalWeekStart, nextFinalWeekEnd));
+    setSubmitError("");
   };
 
   const handleStartDateChange = (value) => {
     setStartDate(value);
-
-    const nextFinalWeekStart = addDays(value, Math.max(0, (programLength - 1) * 7));
-    const nextFinalWeekEnd = addDays(value, Math.max(0, programLength * 7 - 1));
-    setEndDate((prev) => clampDateString(prev, nextFinalWeekStart, nextFinalWeekEnd));
-  };
-
-  const handleEndDateChange = (value) => {
-    setEndDate(clampDateString(value, finalWeekStartDate, finalWeekEndDate));
+    setSubmitError("");
   };
 
   const handleMoveWorkout = (sourceIndex, direction) => {
@@ -237,10 +203,12 @@ export default function ManualConvert() {
     setIsSubmitting(true);
 
     try {
-      const derivedProgramLength = calculateDurationWeeks(startDate, endDate);
+      if (!startDate) {
+        throw new Error("Please choose a valid start date.");
+      }
 
-      if (!startDate || !endDate || derivedProgramLength == null) {
-        throw new Error("Please choose a valid future date range.");
+      if (!isMondayDateInput(startDate)) {
+        throw new Error("Start date must be a Monday.");
       }
 
       if (weekdayAssignmentError) {
@@ -258,8 +226,7 @@ export default function ManualConvert() {
         weeklyPlanParentId: draftMetadata.weeklyPlanParentId,
         name: programName,
         startDate,
-        endDate,
-        durationWeeks: Number(derivedProgramLength),
+        durationWeeks: Number(programLength),
         workoutDayAssignments: weekdaySlots
           .filter((slot) => slot.workout)
           .map((slot) => ({
@@ -327,13 +294,17 @@ export default function ManualConvert() {
                   value={startDate}
                   onChange={(e) => handleStartDateChange(e.target.value)}
                   placeholder="Select start date"
-                  min={todayDate}
+                  min={minStartDate}
+                  step={7}
                   className="h-14 w-full rounded-xl border border-slate-200 bg-white pl-12 pr-4 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
                 />
                 <span className="material-symbols-outlined absolute left-4 text-primary">
                   calendar_today
                 </span>
               </div>
+              <p className="text-xs text-slate-400">
+                Start dates must fall on a Monday.
+              </p>
             </div>
 
             <div className="flex flex-col gap-1.5 pt-1">
@@ -375,19 +346,12 @@ export default function ManualConvert() {
                   End Date (Auto-calculated)
                 </label>
                 <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
-                  Editable
+                  Derived
                 </span>
               </div>
 
-              <div className="relative flex items-center">
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => handleEndDateChange(e.target.value)}
-                  min={finalWeekStartDate}
-                  max={finalWeekEndDate}
-                  className="h-14 w-full rounded-xl border border-slate-200 bg-white pl-12 pr-4 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
-                />
+              <div className="relative flex h-14 items-center rounded-xl border border-slate-200 bg-slate-50 pl-12 pr-4 text-sm font-medium text-slate-600">
+                <span>{endDate || "--"}</span>
                 <span className="material-symbols-outlined absolute left-4 text-slate-400">
                   event_available
                 </span>
