@@ -238,6 +238,8 @@ export default function Program() {
   const hasActiveCycle = Boolean(activeProgramCard);
   const hasUpcomingCycle = upcomingPrograms.length > 0;
   const programState = hasActiveCycle ? "active" : hasUpcomingCycle ? "upcoming_only" : "empty";
+  const isCombinedEmptyState =
+    programState === "empty" && visibleWeeklyPlans.length === 0;
   const todayDateKey = useMemo(
     () => getLocalDateKey(programOverview?.timezone || "America/Toronto"),
     [programOverview?.timezone]
@@ -460,7 +462,9 @@ export default function Program() {
                     ? navigate(getCycleDetailsPath(activeProgramCard.cycleId))
                     : programState === "upcoming_only" && nextUpcomingProgram
                       ? navigate(getCycleDetailsPath(nextUpcomingProgram.cycleId))
-                      : navigate(getWeeklyPlansPath(), {
+                      : isCombinedEmptyState
+                        ? setIsCreateMenuOpen(true)
+                        : navigate(getWeeklyPlansPath(), {
                           state: {
                             from: buildOrigin(location),
                           },
@@ -472,7 +476,9 @@ export default function Program() {
                   ? "View Details"
                   : programState === "upcoming_only"
                     ? "View Upcoming Cycle"
-                    : "Browse Weekly Plans"}
+                    : isCombinedEmptyState
+                      ? "Create a Weekly Plan"
+                      : "Browse Weekly Plans"}
               </button>
             </div>
           </div>
@@ -628,11 +634,13 @@ export default function Program() {
                   <h4 className="text-sm font-bold">No upcoming programs yet</h4>
                   <p className="text-xs text-slate-500">
                     {programState === "empty"
-                      ? "Convert a weekly plan into a cycle to see it here."
+                      ? isCombinedEmptyState
+                        ? "First create a weekly plan and convert it into a cycle to see it here."
+                        : "Convert a weekly plan into a cycle to see it here."
                       : "Future multi-week cycles will appear here."}
                   </p>
                 </div>
-                {programState === "empty" ? (
+                {programState === "empty" && !isCombinedEmptyState ? (
                   <button
                     type="button"
                     onClick={() => navigate(getWeeklyPlansPath())}
@@ -700,13 +708,15 @@ export default function Program() {
         <section className="pb-6">
           <div className="flex items-center justify-between mb-4 px-2">
             <h3 className="text-lg font-bold">All Programs</h3>
-            <button
-              type="button"
-              onClick={() => navigate(getWeeklyPlansPath())}
-              className="text-sm font-medium text-primary"
-            >
-              See All
-            </button>
+            {!isCombinedEmptyState ? (
+              <button
+                type="button"
+                onClick={() => navigate(getWeeklyPlansPath())}
+                className="text-sm font-medium text-primary"
+              >
+                See All
+              </button>
+            ) : null}
           </div>
 
           <div className="space-y-3 px-2">
