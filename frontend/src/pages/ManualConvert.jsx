@@ -22,6 +22,16 @@ function formatDateInput(date) {
   return `${year}-${month}-${day}`;
 }
 
+function parseDateInput(value) {
+  return new Date(`${value}T00:00:00`);
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
 function addWeeks(date, weeks) {
   const next = new Date(date);
   next.setDate(next.getDate() + weeks * 7 - 1);
@@ -38,6 +48,113 @@ function getNextMondayDateInput(dateValue = getTodayDateInput()) {
   const daysUntilMonday = day === 1 ? 0 : day === 0 ? 1 : 8 - day;
   date.setDate(date.getDate() + daysUntilMonday);
   return formatDateInput(date);
+}
+
+function getCurrentWeekMondayDateInput(dateValue = getTodayDateInput()) {
+  const date = new Date(`${dateValue}T00:00:00`);
+  const day = date.getDay();
+  const daysSinceMonday = day === 0 ? 6 : day - 1;
+  date.setDate(date.getDate() - daysSinceMonday);
+  return formatDateInput(date);
+}
+
+function getStartOfMonthDate(dateValue) {
+  const date = dateValue instanceof Date ? new Date(dateValue) : parseDateInput(dateValue);
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addMonths(dateValue, months) {
+  const date = dateValue instanceof Date ? new Date(dateValue) : parseDateInput(dateValue);
+  return new Date(date.getFullYear(), date.getMonth() + months, 1);
+}
+
+function formatDisplayDate(value) {
+  if (!value) {
+    return "--";
+  }
+
+  return parseDateInput(value).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatMonthHeading(dateValue) {
+  return dateValue.toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function formatWeekRange(startDateValue) {
+  const startDate = parseDateInput(startDateValue);
+  const endDate = addDays(startDate, 6);
+  const sameMonth = startDate.getMonth() === endDate.getMonth();
+  const sameYear = startDate.getFullYear() === endDate.getFullYear();
+
+  const startLabel = startDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+  const endLabel = endDate.toLocaleDateString("en-US", {
+    month: sameMonth ? undefined : "short",
+    day: "numeric",
+    year: sameYear ? undefined : "numeric",
+  });
+
+  return `${startLabel} to ${endLabel}`;
+}
+
+function buildWeekOptionsForMonth(monthDate, minStartDateValue, selectedStartDateValue = null) {
+  const minStartDate = parseDateInput(minStartDateValue);
+  const monthStart = getStartOfMonthDate(monthDate);
+  const monthEnd = addDays(addMonths(monthStart, 1), -1);
+  const firstWeekStart = parseDateInput(getNextMondayDateInput(formatDateInput(addDays(monthStart, -1))));
+  const monthIndex = monthStart.getMonth();
+  const year = monthStart.getFullYear();
+  const normalizedSelectedValue =
+    selectedStartDateValue && isMondayDateInput(selectedStartDateValue)
+      ? selectedStartDateValue
+      : null;
+  const options = [];
+
+  for (let cursor = firstWeekStart; cursor <= monthEnd; cursor = addDays(cursor, 7)) {
+    const optionValue = formatDateInput(cursor);
+    const mondayBelongsToDisplayedMonth =
+      cursor.getMonth() === monthIndex && cursor.getFullYear() === year;
+    const isSelected = optionValue === normalizedSelectedValue;
+
+    if (optionValue < minStartDateValue || (!mondayBelongsToDisplayedMonth && !isSelected)) {
+      continue;
+    }
+
+    options.push({
+      value: optionValue,
+      label: formatWeekRange(optionValue),
+      monthLabel: formatMonthHeading(cursor),
+      isCurrentWeek: optionValue === formatDateInput(minStartDate),
+      isSelectedOutsideMonth: isSelected && !mondayBelongsToDisplayedMonth,
+    });
+  }
+
+  if (
+    normalizedSelectedValue &&
+    !options.some((option) => option.value === normalizedSelectedValue)
+  ) {
+    const selectedDate = parseDateInput(normalizedSelectedValue);
+    if (normalizedSelectedValue >= minStartDateValue) {
+      options.unshift({
+        value: normalizedSelectedValue,
+        label: formatWeekRange(normalizedSelectedValue),
+        monthLabel: formatMonthHeading(selectedDate),
+        isCurrentWeek: normalizedSelectedValue === formatDateInput(minStartDate),
+        isSelectedOutsideMonth: true,
+      });
+    }
+  }
+
+  return options;
 }
 
 function isMondayDateInput(value) {
@@ -115,7 +232,7 @@ export default function ManualConvert() {
     ? programDraft.startDate
     : getNextMondayDateInput(programDraft.startDate || todayDate);
   const initialProgramLength = programDraft.programLength || 8;
-  const minStartDate = useMemo(() => getNextMondayDateInput(todayDate), [todayDate]);
+  const minStartDate = useMemo(() => getCurrentWeekMondayDateInput(todayDate), [todayDate]);
   const templateWorkouts = useMemo(
     () =>
       [...(programDraft.workouts || [])].map((workout, index) => ({
@@ -129,6 +246,10 @@ export default function ManualConvert() {
   const [programLength, setProgramLength] = useState(initialProgramLength);
   const [weekdaySlots, setWeekdaySlots] = useState(() =>
     buildInitialWeekdaySlots(programDraft.workouts || [])
+  );
+  const [isWeekPickerOpen, setIsWeekPickerOpen] = useState(false);
+  const [weekPickerMonth, setWeekPickerMonth] = useState(() =>
+    getStartOfMonthDate(initialStartDate)
   );
   const [submitError, setSubmitError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -175,6 +296,19 @@ export default function ManualConvert() {
   
     return "";
   }, [templateWorkouts, weekdaySlots]);
+  const selectedStartDateLabel = useMemo(() => formatDisplayDate(startDate), [startDate]);
+  const visibleWeekOptions = useMemo(
+    () => buildWeekOptionsForMonth(weekPickerMonth, minStartDate, startDate),
+    [minStartDate, startDate, weekPickerMonth]
+  );
+  const canGoToPreviousMonth = useMemo(
+    () => buildWeekOptionsForMonth(addMonths(weekPickerMonth, -1), minStartDate, startDate).length > 0,
+    [minStartDate, startDate, weekPickerMonth]
+  );
+  const weekPickerMonthLabel = useMemo(
+    () => formatMonthHeading(weekPickerMonth),
+    [weekPickerMonth]
+  );
 
   const handleLengthChange = (weeks) => {
     setProgramLength(weeks);
@@ -184,6 +318,20 @@ export default function ManualConvert() {
   const handleStartDateChange = (value) => {
     setStartDate(value);
     setSubmitError("");
+  };
+
+  const openWeekPicker = () => {
+    setWeekPickerMonth(getStartOfMonthDate(startDate || minStartDate));
+    setIsWeekPickerOpen(true);
+  };
+
+  const closeWeekPicker = () => {
+    setIsWeekPickerOpen(false);
+  };
+
+  const handleSelectWeek = (value) => {
+    handleStartDateChange(value);
+    closeWeekPicker();
   };
 
   const handleMoveWorkout = (sourceIndex, direction) => {
@@ -289,21 +437,25 @@ export default function ManualConvert() {
               </label>
 
               <div className="relative flex items-center">
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => handleStartDateChange(e.target.value)}
-                  placeholder="Select start date"
-                  min={minStartDate}
-                  step={7}
-                  className="h-14 w-full rounded-xl border border-slate-200 bg-white pl-12 pr-4 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
-                />
+                <button
+                  type="button"
+                  onClick={openWeekPicker}
+                  className="flex h-14 w-full items-center rounded-xl border border-slate-200 bg-white pl-12 pr-12 text-left outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
+                  aria-label="Select start week"
+                >
+                  <span className="truncate text-sm font-medium text-slate-900">
+                    {selectedStartDateLabel}
+                  </span>
+                </button>
                 <span className="material-symbols-outlined absolute left-4 text-primary">
                   calendar_today
                 </span>
+                <span className="material-symbols-outlined absolute right-4 text-slate-400">
+                  expand_more
+                </span>
               </div>
               <p className="text-xs text-slate-400">
-                Start dates must fall on a Monday.
+                Choose a start week. The selected start date remains the Monday of that week.
               </p>
             </div>
 
@@ -464,6 +616,105 @@ export default function ManualConvert() {
             <span className="material-symbols-outlined">add_circle</span>
           </button>
         </footer>
+
+        {isWeekPickerOpen && (
+          <div className="fixed inset-0 z-[70] flex items-end bg-slate-900/40 backdrop-blur-sm">
+            <button
+              type="button"
+              className="absolute inset-0 cursor-default"
+              aria-label="Close week picker"
+              onClick={closeWeekPicker}
+            />
+
+            <div className="relative w-full rounded-t-3xl bg-white p-5 shadow-2xl">
+              <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-slate-200" />
+
+              <div className="mb-5 flex items-center justify-between">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">
+                    Start Date
+                  </p>
+                  <h3 className="mt-1 text-lg font-bold text-slate-900">
+                    Select a start week
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeWeekPicker}
+                  className="flex size-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                  aria-label="Close week picker"
+                >
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+
+              <div className="mb-4 flex items-center justify-between rounded-2xl bg-slate-50 px-2 py-2">
+                <button
+                  type="button"
+                  onClick={() => setWeekPickerMonth((prev) => addMonths(prev, -1))}
+                  disabled={!canGoToPreviousMonth}
+                  className="flex size-10 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-30"
+                  aria-label="Previous month"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                <p className="text-sm font-bold text-slate-900">{weekPickerMonthLabel}</p>
+
+                <button
+                  type="button"
+                  onClick={() => setWeekPickerMonth((prev) => addMonths(prev, 1))}
+                  className="flex size-10 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-white"
+                  aria-label="Next month"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+
+              <div className="max-h-[52vh] space-y-2 overflow-y-auto pb-2">
+                {visibleWeekOptions.map((option) => {
+                  const isSelected = option.value === startDate;
+
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => handleSelectWeek(option.value)}
+                      className={[
+                        "flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition-all",
+                        isSelected
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-slate-200 bg-white hover:border-slate-300",
+                      ].join(" ")}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-900">{option.label}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {option.isSelectedOutsideMonth
+                            ? "Selected week"
+                            : option.isCurrentWeek
+                              ? "Current week"
+                              : option.monthLabel}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 pl-3">
+                        {option.isCurrentWeek && (
+                          <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                            Current
+                          </span>
+                        )}
+                        {isSelected && (
+                          <span className="material-symbols-outlined text-primary">check_circle</span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

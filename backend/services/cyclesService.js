@@ -1141,8 +1141,18 @@ async function createCycleFromWeeklyPlan(payload) {
     DEFAULT_TIMEZONE
   );
   const todayDateKey = getTodayDateKey(effectiveTimezone);
+  const currentWeekMondayDateKey = getStartOfMondayWeek(todayDateKey);
 
-  ensureNotPastDate(startDateKey, todayDateKey, 'startDate');
+  if (
+    compareDateKeys(startDateKey, todayDateKey) < 0 &&
+    startDateKey !== currentWeekMondayDateKey
+  ) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'startDate cannot be before the current week'
+    );
+  }
   ensureNotPastDate(endDateKey, todayDateKey, 'endDate');
 
   const sourceParent = await prisma.weeklyPlanParent.findFirst({
