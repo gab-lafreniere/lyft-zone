@@ -1,21 +1,33 @@
-Projet: Lyft-Zone
+Projet: Lyft Zone
 Repository: https://github.com/gab-lafreniere/lyft-zone
 
 ==================================================
 ENVIRONNEMENT
 ==================================================
-- Développement local uniquement
-- Frontend et backend peuvent être lancés localement via des scripts npm.
-- Variables d’environnement chargées depuis le dossier lyft-zone (.env)
-- APIs externes uniquement si open source ou self-hosted
-- Aucun service payant obligatoire
+- Développement principal en local (frontend + backend via scripts npm)
+- Variables d’environnement séparées:
+  - backend/.env
+  - frontend/.env
+- Aucun fichier .env racine utilisé actuellement
+
+Environnements de déploiement:
+- Frontend déployé sur Vercel
+- Backend déployé sur Render
+- Base de données PostgreSQL hébergée sur Neon
+
+Contraintes:
+- APIs externes limitées à des solutions open source ou self-hosted lorsque possible
+- Aucun service payant obligatoire pour le fonctionnement du projet
 
 ==================================================
 VISION PRODUIT
 ==================================================
-Lyft-Zone est une application web qui accompagne les utilisateurs dans leur évolution physique au gym avec une approche factuelle, structurée et orientée esthétique bodybuilding classic.
+Lyft Zone est une application web qui accompagne les utilisateurs dans leur progression physique au gym avec une approche factuelle, structurée et orientée esthétique bodybuilding classic.
 
-Objectif: construire un physique harmonieux selon des critères de classic physique (symétrie, proportions, équilibre musculaire, lignes esthétiques) tout en restant clair et explicable.
+Objectif:
+Construire un physique harmonieux selon des critères de classic physique (symétrie, proportions, équilibre musculaire, lignes esthétiques), en s’appuyant sur des règles claires, explicables et mesurables.
+
+Le produit vise à éliminer le flou dans la prise de décision en entraînement, en transformant des principes complexes en un système structuré et accessible.
 
 Hors scope:
 - nutrition
@@ -36,74 +48,136 @@ Le système applique automatiquement les fondamentaux suivants, sans calcul ment
 8. Structure du programme (ordre, fatigue, cohérence)
 
 ==================================================
-MODÈLE PRODUIT: CYCLES ET PLANS
+MODÈLE PRODUIT: PLANS ET CYCLES
 ==================================================
-Concept central: Cycle d’entraînement
-- Un cycle dure typiquement 6 à 8 semaines
-- Un cycle contient:
-  - un plan de référence (plan initial généré)
-  - zéro ou plusieurs versions modifiées du plan (par l’utilisateur et ou par l’IA)
-  - des séances planifiées dans un calendrier
-  - des métadonnées (date début, date fin, statut actif ou expiré)
 
-Génération initiale
-- Le wizard de nouvel utilisateur crée automatiquement:
-  - un premier cycle (6 à 8 semaines)
-  - un plan de référence
-  - les séances planifiées sur le calendrier
-  - une date de fin de cycle
+Le produit repose sur deux niveaux distincts:
 
-Deux modes de fonctionnement
-A) Mode plan fixe (sans Coach IA)
-- Le plan ne se modifie pas automatiquement au fil du temps
-- L’utilisateur peut:
-  - modifier le plan manuellement
-  - créer un nouveau plan et donc un nouveau cycle à tout moment
-- Aucune recommandation basée sur l’historique ou le check-in
+1. Weekly Plan (template hebdomadaire)
+2. Training Cycle (multi-week)
 
-B) Mode Coach IA (plan adaptatif)
-- Le plan est vivant pendant le cycle
-- L’IA peut proposer et appliquer des ajustements (ex: deload, volume, substitutions, préférences, contraintes)
-- L’utilisateur peut aussi modifier manuellement le plan
-  - Chaque changement doit être tracé avec une source: IA ou utilisateur
-  - Un changement par l'IA doit être avant tout accepter ou refuser auprès de l'utilisateur
-  - Le système recalcule les contraintes (volume, fréquence, fatigue) côté backend
-- Historique des versions:
-  - plan de référence toujours consultable
-  - versions modifiées consultables et comparables
-  - chaque version doit conserver une source claire: système, utilisateur ou IA
-  - les changements importants doivent rester traçables dans l’historique du plan
+--------------------------------------------------
+WEEKLY PLAN (TEMPLATE)
+--------------------------------------------------
 
-Fin de cycle et régénération
-- En mode Coach IA, un check-in est requis à la fin du cycle pour régénérer un nouveau plan et planifier le prochain cycle
-- Si l’utilisateur ne fait rien:
-  - le plan actuel reste utilisable temporairement
-  - des rappels sont envoyés (ex: 7 jours avant la fin, à la fin, puis rappels doux)
+Le weekly plan est une structure hebdomadaire indépendante du temps.
 
-Important:
-- Le plan théorique et l’exécution réelle d’une séance sont deux objets distincts
-- Le calendrier planifie des séances prévues
-- Le suivi d’entraînement enregistre des séances réellement exécutées
-- L’historique utilisateur ne doit jamais écraser le plan théorique d’origine
+- Il représente un template d’entraînement sur une semaine
+- Il peut être créé manuellement ou généré (à terme via IA)
+- Il n’est pas lié directement à un calendrier
 
-Statut des plans:
+Contenu:
+- Une liste de workouts (séances)
+- Chaque workout contient des blocs d’exercices
+- Chaque bloc contient des sets prescrits
+
+Statuts:
 - draft:
-  - plan en cours de création ou non publié
+  - plan en cours de création
   - éditable librement
-  - visible dans la librairie utilisateur
 - published:
-  - plan finalisé et prêt à être utilisé
-  - non modifiable directement (édition via duplication ou mode édition dédié)
-- archived (future):
-  - plan non actif mais conservé pour historique
+  - plan validé et prêt à être utilisé comme référence
+- archived (future)
 
 Règles:
-- Tout plan créé via manual builder ou AI builder commence en draft
-- Un plan doit être valide pour être publié:
-  - tous les workouts créés
-  - aucun workout vide
-  - contraintes respectées
-- La librairie affiche tous les plans (draft + published)
+- Un weekly plan commence toujours en draft
+- Pour être publié:
+  - tous les workouts doivent être créés
+  - aucun workout ne peut être vide
+  - les contraintes doivent être respectées
+
+Librairie:
+- La librairie affiche une seule version visible par plan:
+  - version publiée si elle existe
+  - sinon la dernière version draft
+
+--------------------------------------------------
+TRAINING CYCLE (MULTI-WEEK)
+--------------------------------------------------
+
+Le cycle est une projection temporelle d’un weekly plan.
+
+- Il dure typiquement 6 à 8 semaines
+- Il est créé à partir d’un weekly plan publié
+- Il représente le programme réellement exécuté dans le temps
+
+Contenu:
+- Une structure multi-semaines (weeks)
+- Chaque semaine contient des workouts
+- Les workouts peuvent évoluer dans le temps (multi-week réel)
+
+Métadonnées:
+- date de début
+- date de fin
+- statut (upcoming, active, past)
+
+Règles:
+- Le cycle commence toujours à une date canonique (lundi)
+- Les cycles ne peuvent pas se chevaucher
+- Un cycle actif ne peut pas être modifié rétroactivement sur les séances passées
+
+Draft et édition:
+- Un cycle peut être édité via un draft
+- Le draft permet de modifier les semaines futures
+- Les modifications sont limitées pour préserver l’historique réel
+
+--------------------------------------------------
+RELATION ENTRE PLAN ET CYCLE
+--------------------------------------------------
+
+- Un weekly plan publié peut être converti en cycle
+- La conversion clone la structure initiale
+- Une fois converti, le cycle évolue indépendamment du weekly plan
+
+--------------------------------------------------
+MODES DE FONCTIONNEMENT (VISION PRODUIT)
+--------------------------------------------------
+
+A) Mode plan fixe
+- Le cycle reste statique une fois créé
+- L’utilisateur peut modifier manuellement via des drafts
+- Aucun ajustement automatique
+
+B) Mode Coach IA (phase future)
+- Le cycle devient adaptatif
+- L’IA peut proposer des ajustements:
+  - volume
+  - deload
+  - substitutions
+- Chaque modification doit:
+  - être traçable (source: IA ou utilisateur)
+  - être validée par l’utilisateur
+- Le backend reste responsable de la cohérence des contraintes
+
+Historique (vision cible):
+- Plan de référence consultable
+- Versions modifiées comparables
+- Traçabilité complète des changements
+
+--------------------------------------------------
+GÉNÉRATION INITIALE (EN COURS)
+--------------------------------------------------
+
+- Un wizard utilisateur est prévu pour créer:
+  - un premier weekly plan
+  - puis un cycle associé
+- Ce flow est défini au niveau produit
+- Il n’est pas encore connecté au backend à ce stade
+
+--------------------------------------------------
+SÉPARATION PLAN / EXÉCUTION
+--------------------------------------------------
+
+- Le plan représente l’intention théorique
+- Les séances exécutées sont des entités distinctes
+- L’historique utilisateur ne doit jamais modifier le plan d’origine
+
+--------------------------------------------------
+NOTES IMPORTANTES
+--------------------------------------------------
+
+- Le calendrier actuel est principalement dérivé de la structure du cycle
+- Les scheduled sessions existent côté backend mais ne sont pas encore la source principale du système
 
 ==================================================
 ENTRÉES UTILISATEUR DU WIZARD
@@ -170,28 +244,78 @@ Note:
 ==================================================
 ARCHITECTURE GLOBALE
 ==================================================
-Modules principaux:
-- Générateur de cycles, plans et séances
-- Base d’exercices avancée (self-hosted)
-- Planification et périodisation (cycle, calendrier)
-- Exécution des séances en temps réel (mode entraînement)
-- Suivi de la progression (historique, graphiques)
-- Analyse de performance (basique Phase 2)
-- Analyse esthétique par IA (Phase 3)
-- Coach IA longitudinal (Phase 3)
-- Historique des versions de plan et ajustements
-- Gestion utilisateur et préférences
 
-Librairie de programmes:
-- Une page centralise tous les plans utilisateur (All Programs)
-- Supporte:
-  - recherche texte
-  - filtres (draft, published)
-  - bookmarking visuel
-- Chaque plan possède:
-  - statut (draft ou published)
-  - source (manual ou AI)
-- Les plans sont consultables indépendamment du cycle actif
+Le produit est structuré autour de plusieurs modules fonctionnels.
+
+--------------------------------------------------
+MODULES PRINCIPAUX (ÉTAT ACTUEL)
+--------------------------------------------------
+
+- Générateur de plans et cycles
+  - Création de weekly plans (template)
+  - Conversion en cycles multi-week
+  - Édition via drafts
+
+- Base d’exercices avancée (voir section BASE D’EXERCICES)
+  - Librairie structurée et validée
+  - Recherche via filtres backend + ranking frontend
+
+- Planification (cycle)
+  - Structure multi-semaines
+  - Calendrier dérivé du cycle
+
+- Historique de structure des plans
+  - Gestion draft / published
+  - Version active visible
+
+--------------------------------------------------
+MODULES PARTIELLEMENT IMPLÉMENTÉS
+--------------------------------------------------
+
+- Exécution des séances (mode entraînement)
+  - UI existante (Train)
+  - Logique encore limitée ou non persistée complètement
+
+- Suivi de la progression
+  - Structures prévues (logs, performances)
+  - UI présente (Progress)
+  - Données encore partielles
+
+- Gestion utilisateur
+  - Structure backend existante
+  - Pas d’authentification réelle (userId local)
+
+--------------------------------------------------
+MODULES FUTURS (VISION PRODUIT)
+--------------------------------------------------
+
+- Analyse de performance avancée
+- Analyse esthétique par IA
+- Coach IA longitudinal
+- Ajustements automatiques de programme
+- Historique avancé des décisions et changements
+
+--------------------------------------------------
+LIBRAIRIE DE PROGRAMMES
+--------------------------------------------------
+
+Une page centralise les programmes utilisateur.
+
+Actuellement:
+- All Programs (weekly plans)
+- All Cycles (cycles multi-week)
+
+Fonctionnalités:
+- Consultation des plans indépendamment du cycle actif
+- Statut (draft / published)
+- Source (manual, AI à terme)
+
+Note:
+- La librairie weekly plan affiche une seule version visible par plan:
+  - version publiée si disponible
+  - sinon version draft
+
+- Les cycles sont gérés séparément dans leur propre vue
 
 ==================================================
 VOCABULAIRE PRODUIT CANONIQUE
@@ -206,60 +330,171 @@ VOCABULAIRE PRODUIT CANONIQUE
 ==================================================
 ARCHITECTURE TECHNIQUE
 ==================================================
+
+Stack principale:
+
 - Frontend: React
 - Backend: Node.js + Express
-- Base de données: PostgreSQL hébergée sur Neon
-- ORM: Prisma v7
+- Base de données principale: PostgreSQL (Neon)
+- ORM principal: Prisma v7
+
+Principes clés:
+
 - Le frontend n’est jamais la source de vérité
-- Toute logique métier vit côté backend
-- Les validations métier critiques doivent être centralisées côté backend
-- Les seeds et imports de données doivent être validés avant toute écriture
+- Toute la logique métier est centralisée côté backend
+- Les validations métier critiques sont exécutées côté backend
+- Le backend est responsable de la cohérence des données et des contraintes
+- Les seeds et imports de données sont validés avant toute écriture en base
+
+État technique actuel:
+
+- Prisma + PostgreSQL constitue la source principale de vérité
+- Certaines parties legacy (Sequelize / SQLite) sont encore présentes dans le repo
+- Ces éléments legacy ne représentent pas le cœur du système actuel et sont en cours de transition / nettoyage
 
 Déploiement:
+
 - Frontend: Vercel
 - Backend: Render
-- Database: Neon
+- Base de données: Neon
 
 ==================================================
 API PRINCIPALE
 ==================================================
 
-Endpoints actuellement disponibles:
+L’API est structurée autour de plusieurs domaines métier:
 
-POST /api/users
+- users
+- weekly plans
+- cycles
+- exercises
+- scheduled sessions
+
+--------------------------------------------------
+USERS
+--------------------------------------------------
+
+POST /api/users  
 PUT /api/users/:userId/profile
 
-POST /api/cycles
-POST /api/cycles/:cycleId/plans
-GET /api/cycles/:cycleId/full
+--------------------------------------------------
+WEEKLY PLANS
+--------------------------------------------------
 
-POST /api/scheduled-sessions
-GET /api/scheduled-sessions
+Endpoints principaux liés aux templates hebdomadaires:
 
-GET /api/exercises
-- Supporte actuellement:
-  - q
-  - limit
-  - bodyParts
-  - muscleFocus
-  - equipmentCategory
-  - trainingType
-  - difficulty
+- Création de draft
+- Mise à jour de draft
+- Publication d’un plan
+- Récupération de la librairie de plans
+- Récupération d’un plan complet
+
+Note:
+- Les weekly plans sont versionnés (draft / published)
+- Une seule version visible par plan est exposée dans la librairie
+
+--------------------------------------------------
+CYCLES (MULTI-WEEK)
+--------------------------------------------------
+
+Endpoints principaux:
+
+POST /api/cycles  
+POST /api/cycles/:cycleId/plans  
+GET /api/cycles/:cycleId/full  
+
+Fonctionnalités associées:
+- Création d’un cycle à partir d’un weekly plan
+- Gestion de draft pour édition
+- Publication d’un cycle
+- Récupération d’un cycle complet (structure + métadonnées)
+
+--------------------------------------------------
+SCHEDULED SESSIONS
+--------------------------------------------------
+
+POST /api/scheduled-sessions  
+GET /api/scheduled-sessions  
+
+Note:
+- Les scheduled sessions existent côté backend
+- Le système actuel repose encore majoritairement sur un calendrier dérivé du cycle
+
+--------------------------------------------------
+EXERCISES
+--------------------------------------------------
+
+GET /api/exercises  
+
+Supporte:
+- q (recherche texte)
+- limit
+- bodyParts
+- muscleFocus
+- equipmentCategory
+- trainingType
+- difficulty
+
+Règles:
 - Les filtres multi-valeurs utilisent des valeurs CSV
 - Le backend applique le filtrage structuré réel
-- Le frontend garde un ranking local après la réponse backend
-- La recherche reste bornée:
-  - limit 50 en recherche texte normale
-  - limit 150 en filtre structuré sans texte
-- Cette recherche reste bornée, donc non exhaustive
+- Le frontend applique un ranking local après réponse
+
+Limites:
+- limit 50 en recherche texte
+- limit 150 en filtre structuré sans texte
+- Résultats non exhaustifs (recherche bornée)
 
 ==================================================
 LIMITES CONNUES ACTUELLES
 ==================================================
-- ManualBuilderMulti.jsx reste partiellement placeholder pour la vraie logique multiweek
-- Les week tabs et weekly volume bars du multiweek ne doivent pas encore être traités comme une source métier finale
-- La recherche d’exercices est filtrée réellement côté backend mais reste bornée par un limit, donc non exhaustive
-- muscleFocus est déjà persisté côté draft mais son exploitation détaillée dans les analytics UI reste une prochaine étape
+
+--------------------------------------------------
+FONCTIONNALITÉS PARTIELLES OU NON FINALISÉES
+--------------------------------------------------
+
+- Le multi-week builder est fonctionnel mais encore en évolution:
+  - certaines logiques avancées ne sont pas encore stabilisées
+  - les éléments visuels (week tabs, volume bars) ne doivent pas être considérés comme des sources métier finales
+
+- Le wizard utilisateur est défini au niveau produit mais n’est pas encore connecté au backend
+
+- Les pages Train, Progress et AI Coach sont présentes mais encore partiellement implémentées (UI principalement)
+
+--------------------------------------------------
+DONNÉES ET SYSTÈME
+--------------------------------------------------
+
+- Pas d’authentification réelle:
+  - utilisation d’un userId local côté frontend
+  - pas de gestion multi-utilisateur complète
+
+- Le calendrier reste principalement dérivé du cycle (voir MODÈLE PRODUIT)
+
+- La recherche d’exercices est volontairement bornée:
+  - résultats limités (limit 50 / 150)
+  - non exhaustive
+
+- muscleFocus est persisté mais encore peu exploité dans les analytics UI
+
+--------------------------------------------------
+LOGIQUE PRODUIT
+--------------------------------------------------
+
+- Le mode Coach IA n’est pas encore implémenté:
+  - aucune génération automatique réelle
+  - aucun ajustement dynamique en fonction des performances
+
+- Le suivi des performances (logs, progression) est encore partiel:
+  - structures prévues mais non exploitées pleinement
+
+--------------------------------------------------
+DETTE TECHNIQUE
+--------------------------------------------------
+
+- Présence de code legacy (Sequelize / SQLite) dans le backend
+- Non utilisé comme source principale mais encore présent dans le repo
+- En cours de transition vers une architecture 100% Prisma
 
 ==================================================
 ÉTAT ACTUEL DE LA BASE DE DONNÉES
@@ -294,82 +529,102 @@ RÈGLES DE DÉVELOPPEMENT
 ==================================================
 PRIORITÉS ACTUELLES
 ==================================================
-Phase 1: Fondations
-- Base d’exercices fiable
-- Intégration de la librairie d’exercices en base PostgreSQL
-- Schéma coeur de programmation en base
-- Endpoints backend minimum pour users, profiles, cycles, plans et calendrier (implémentés)
-- Validation end-to-end du flow backend principal (terminé)
-- Connexion du frontend avec les endpoints backend réels pour la librairie d’exercices (déjà en place pour le manual builder et le workout editor, à poursuivre pour les autres surfaces)- Structured filtering de /api/exercises en place pour la recherche d’exercices
-- Analytics frontend dynamiques en place pour le workout editor et le template week builder
-- Modèle de séance stabilisé
-- Modèle de cycle et de plan stabilisé
-- Modèle de blocs d’exercices stabilisé
-- Calcul du volume par muscle
-- Gestion simple de la surcharge progressive
-- Planning calendrier pour le cycle actif
 
-Phase 2: Suivi
-- Enregistrement des performances
+--------------------------------------------------
+PHASE 1: FONDATIONS (MAJORITAIREMENT COMPLÉTÉE)
+--------------------------------------------------
+
+Objectif:
+Mettre en place une base solide côté backend, données et édition de plans.
+
+Éléments en place:
+
+- Base d’exercices fiable et validée
+- Intégration complète de la librairie dans PostgreSQL (Prisma)
+- Schéma principal de programmation modélisé en base
+- Endpoints backend pour users, profiles, weekly plans, cycles et exercises
+- Flow principal validé:
+  - création weekly plan (draft)
+  - publication
+  - conversion en cycle
+  - édition multi-week via draft
+  - publication
+
+- Connexion frontend/backend:
+  - recherche d’exercices connectée
+  - manual builder fonctionnel
+  - workout editor fonctionnel
+
+- Analytics frontend (voir section ANALYTICS FRONTEND ACTUELLES):
+  - exerciseCount
+  - setCount
+  - durée estimée
+  - distribution musculaire
+
+- Modèles stabilisés (globalement):
+  - structure des workouts
+  - blocs d’exercices
+  - logique de sets et supersets
+
+Points encore en évolution dans la phase 1:
+- multi-week builder (améliorations en cours)
+- cohérence complète du calendrier vs scheduled sessions
+- certaines validations et contraintes avancées
+
+--------------------------------------------------
+PRIORITÉS COURT TERME (FOCUS ACTUEL)
+--------------------------------------------------
+
+- Finaliser et stabiliser le multi-week builder
+- Clarifier et solidifier la logique de calendrier:
+  - alignement entre structure du cycle et scheduled sessions
+
+- Brancher le wizard au backend:
+  - création initiale de weekly plan + cycle
+
+- Améliorer la cohérence globale frontend/backend:
+  - éliminer les zones encore partiellement mockées
+
+- Nettoyage technique:
+  - retirer progressivement le code legacy (Sequelize / SQLite)
+
+--------------------------------------------------
+PHASE 2: SUIVI
+--------------------------------------------------
+
+Objectif:
+Introduire le tracking réel des performances utilisateur.
+
+- Enregistrement des performances par séance
 - Historique par exercice
 - Analyse de progression basique
 - Volume par muscle dans le temps
 
-Phase 3: IA
-- Assistance à la génération
+--------------------------------------------------
+PHASE 3: IA
+--------------------------------------------------
+
+Objectif:
+Rendre le système adaptatif et intelligent.
+
+- Assistance à la génération de programmes
 - Justification des choix
 - Ajustements intelligents dans le cycle
-- Check-in et régénération de cycle
-- Historique des versions (IA et utilisateur)
+- Check-in utilisateur et régénération de cycle
+- Historique des versions enrichi (IA + utilisateur)
 
 ==================================================
 ÉTAT ACTUEL FRONTEND MANUAL BUILDER
 ==================================================
-Le frontend manual builder a déjà une base fonctionnelle locale connectée à /api/exercises.
+- Création et édition de workouts fonctionnelle
+- Recherche d’exercices connectée au backend
+- Support des supersets
+- Analytics dynamiques
+- Contraintes et validations déjà en place
 
-Pages principales actuellement en place:
-- ManualBuilder.jsx
-- ManualWorkoutEditor.jsx
-- ManualBuilderMulti.jsx (encore partiellement placeholder pour la logique multiweek réelle)
-
-Ce qui est déjà fonctionnel:
-- Création et édition manuelle de workouts
-- Ajout d’exercices via recherche connectée à /api/exercises
-- Recherche textuelle avec ranking frontend
-- Filtres structurés réels pour la recherche d’exercices, appliqués côté backend via /api/exercises, avec ranking frontend après fetch:
-  - Muscle via bodyParts
-  - Focus via muscleFocus avec dépendance aux muscles sélectionnés
-  - Equipment via equipmentCategory avec mappings canoniques
-  - Type via trainingType
-  - Difficulty via difficulty
-- Support des supersets avec sélection ciblée du slot A2
-- Notification visuelle et warning pour superset incomplet
-- Conversion d’un single block en superset
-- Normalisation des supersets:
-  - le parent possède la valeur canonique de sets
-  - A1 et A2 ont toujours le même nombre de rows
-  - le nombre de sets d’un superset est contrôlé uniquement au niveau du parent
-- Inputs UX de prescription:
-  - RIR cyclique compact
-  - reps bornées
-  - tempo en saisie numérique normalisée
-  - rest via stepper compact
-- Analytics dynamiques dans le workout editor
-- Analytics dynamiques dans ManualBuilder.jsx
-- La recherche d’exercices reste bornée:
-  - texte présent => limit 50
-  - texte vide + filtre structuré => limit 150
-  - texte vide + aucun filtre => limit 50
-- Le filtrage est réel côté backend mais reste non exhaustif à cause du limit
-
-- UX actuelle des filtres de recherche:
-  - filtres multi-sélection
-  - Focus visible seulement si au moins un Muscle est sélectionné
-  - Focus dépend des muscles sélectionnés
-  - label d’un filtre:
-    - 0 sélection => label simple
-    - 1 sélection => valeur affichée
-    - 2+ sélections => Label (N)
+Voir sections:
+- RÈGLES CANONIQUES DU MANUAL BUILDER
+- ANALYTICS FRONTEND ACTUELLES
 
 ==================================================
 RÈGLES CANONIQUES DU MANUAL BUILDER
@@ -647,7 +902,7 @@ Navigation produit recommandée:
 ==================================================
 CONTRAINTES POUR L’AGENT IA
 ==================================================
-- Projet local uniquement
+- Le projet est développé principalement en local mais déployé (Vercel / Render / Neon)
 - Créer un fichier cursorrules adapté à ce projet
 - Fournir un script unique pour lancer frontend + backend
 - Gérer les commits et pushs GitHub
