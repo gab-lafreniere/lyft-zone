@@ -14,6 +14,7 @@ const {
   publishCycleDraft,
   rescheduleUpcomingCycle,
   updateCycleDraft,
+  updateUpcomingDraftTimeline,
 } = require('../services/cyclesService');
 
 const DEFAULT_INTERNAL_ERROR = {
@@ -158,6 +159,22 @@ async function updateCycleDraftHandler(req, res) {
   }
 }
 
+async function updateUpcomingDraftTimelineHandler(req, res) {
+  try {
+    const response = await updateUpcomingDraftTimeline(
+      req.params.cycleId,
+      req.params.planId,
+      req.body || {}
+    );
+    return res.status(200).json(response);
+  } catch (error) {
+    return handleError(req, res, error, 'update_upcoming_draft_timeline', {
+      code: 'CYCLE_TIMELINE_SAVE_INTERNAL',
+      message: 'An unexpected error occurred while saving this cycle timeline.',
+    });
+  }
+}
+
 async function publishCycleDraftHandler(req, res) {
   try {
     const response = await publishCycleDraft(req.params.cycleId, req.body || {});
@@ -221,4 +238,5 @@ module.exports = {
   publishCycleDraftHandler,
   rescheduleUpcomingCycleHandler,
   updateCycleDraftHandler,
+  updateUpcomingDraftTimelineHandler,
 };

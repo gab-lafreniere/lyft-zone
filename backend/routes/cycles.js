@@ -14,6 +14,7 @@ const {
   publishCycleDraftHandler,
   rescheduleUpcomingCycleHandler,
   updateCycleDraftHandler,
+  updateUpcomingDraftTimelineHandler,
 } = require('../controllers/cyclesController');
 
 const router = express.Router();
@@ -28,6 +29,7 @@ router.get('/:cycleId/full', getCycleFullHandler);
 router.get('/:cycleId', getCycleDetailsHandler);
 router.post('/:cycleId/edit-draft', openOrCreateCycleEditDraftHandler);
 router.patch('/:cycleId/drafts/:planId', updateCycleDraftHandler);
+router.patch('/:cycleId/drafts/:planId/timeline', updateUpcomingDraftTimelineHandler);
 router.post('/:cycleId/publish', publishCycleDraftHandler);
 router.post('/:cycleId/reschedule', rescheduleUpcomingCycleHandler);
 router.post('/:cycleId/draft-extension', extendCycleDraftHandler);

@@ -10,7 +10,7 @@ import {
   deleteCycle,
   openOrCreateCycleEditDraft,
   publishCycleDraft,
-  rescheduleUpcomingCycle,
+  updateUpcomingDraftTimeline,
 } from "../services/api";
 import {
   aggregateWorkoutMetrics,
@@ -29,6 +29,7 @@ const WEEKDAY_ROWS = [
 const WEEKDAY_INDEX = new Map(
   WEEKDAY_ROWS.map((entry, index) => [entry.day, index])
 );
+const MAX_CYCLE_DURATION_WEEKS = 8;
 
 function formatDate(value) {
   if (!value) {
@@ -252,6 +253,7 @@ export default function ManualBuilderMulti() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsStartDate, setSettingsStartDate] = useState("");
   const [settingsDurationWeeks, setSettingsDurationWeeks] = useState(1);
+  const [settingsSourceWeekNumber, setSettingsSourceWeekNumber] = useState(null);
   const [settingsError, setSettingsError] = useState("");
   const [isSettingsWeekPickerOpen, setIsSettingsWeekPickerOpen] = useState(false);
   const [settingsWeekPickerMonth, setSettingsWeekPickerMonth] = useState(() =>
@@ -264,7 +266,10 @@ export default function ManualBuilderMulti() {
 
   const todayDate = getTodayDateInput();
   const minSettingsStartDate = useMemo(() => getNextMondayDateValue(todayDate), [todayDate]);
-  const maxDurationWeeks = Math.max(1, programDraft.weeks.length || programDraft.programLength || 1);
+  const currentDraftWeekCount = Math.max(
+    1,
+    programDraft.weeks.length || programDraft.programLength || 1
+  );
   const isUpcomingCycle = draftMetadata.temporalStatus === "upcoming";
   const isTimelineEditable = isUpcomingCycle;
   const activePlanId = planId || draftMetadata.cyclePlanId || null;
@@ -568,10 +573,36 @@ export default function ManualBuilderMulti() {
     () => formatMonthHeading(settingsWeekPickerMonth),
     [settingsWeekPickerMonth]
   );
+  const isSettingsExtension = settingsDurationWeeks > currentDraftWeekCount;
+  const settingsSourceWeekOptions = useMemo(
+    () =>
+      (programDraft.weeks || []).map((week) => {
+        const weekStartDate = programDraft.startDate
+          ? addDays(programDraft.startDate, Math.max(0, (week.weekNumber - 1) * 7))
+          : null;
+
+        return {
+          value: week.weekNumber,
+          label: `W${week.weekNumber}`,
+          detail: weekStartDate ? formatWeekRange(weekStartDate) : week.label || `Week ${week.weekNumber}`,
+        };
+      }),
+    [programDraft.startDate, programDraft.weeks]
+  );
+  const hasValidSettingsSourceWeek = useMemo(
+    () =>
+      settingsSourceWeekOptions.some(
+        (option) => Number(option.value) === Number(settingsSourceWeekNumber)
+      ),
+    [settingsSourceWeekNumber, settingsSourceWeekOptions]
+  );
 
   const openSettingsPanel = () => {
     setSettingsStartDate(programDraft.startDate || todayDate);
-    setSettingsDurationWeeks(programDraft.programLength || maxDurationWeeks);
+    setSettingsDurationWeeks(programDraft.programLength || currentDraftWeekCount);
+    setSettingsSourceWeekNumber(
+      programDraft.selectedWeek || programDraft.weeks[0]?.weekNumber || 1
+    );
     setSettingsError("");
     setIsSettingsWeekPickerOpen(false);
     setShowDeleteConfirm(false);
@@ -597,8 +628,17 @@ export default function ManualBuilderMulti() {
       return;
     }
 
-    const safeDuration = Math.max(1, Math.trunc(parsed));
+    const safeDuration = Math.max(
+      1,
+      Math.min(MAX_CYCLE_DURATION_WEEKS, Math.trunc(parsed))
+    );
     setSettingsDurationWeeks(safeDuration);
+    if (
+      safeDuration > currentDraftWeekCount &&
+      !hasValidSettingsSourceWeek
+    ) {
+      setSettingsSourceWeekNumber(programDraft.selectedWeek || programDraft.weeks[0]?.weekNumber || 1);
+    }
     setSettingsError("");
   };
 
@@ -607,11 +647,13 @@ export default function ManualBuilderMulti() {
   };
 
   const incrementSettingsDuration = () => {
-    handleSettingsDurationChange(Math.min(8, settingsDurationWeeks + 1));
+    handleSettingsDurationChange(
+      Math.min(MAX_CYCLE_DURATION_WEEKS, settingsDurationWeeks + 1)
+    );
   };
 
   const handleSaveSettings = async () => {
-    if (!cycleId) {
+    if (!cycleId || !activePlanId) {
       return;
     }
 
@@ -637,8 +679,13 @@ export default function ManualBuilderMulti() {
       return;
     }
 
-    if (settingsDurationWeeks > maxDurationWeeks) {
-      setSettingsError("Extending a cycle beyond its current structure isn't supported yet.");
+    if (settingsDurationWeeks < 1 || settingsDurationWeeks > MAX_CYCLE_DURATION_WEEKS) {
+      setSettingsError("Duration must stay between 1 and 8 weeks.");
+      return;
+    }
+
+    if (isSettingsExtension && !hasValidSettingsSourceWeek) {
+      setSettingsError("Choose one existing source week for the added weeks.");
       return;
     }
 
@@ -646,10 +693,14 @@ export default function ManualBuilderMulti() {
     setPublishError(null);
 
     try {
-      const response = await rescheduleUpcomingCycle(cycleId, {
+      const response = await updateUpcomingDraftTimeline(cycleId, activePlanId, {
         newStartDate: settingsStartDate,
         durationWeeks: settingsDurationWeeks,
+        ...(isSettingsExtension
+          ? { sourceWeekNumber: Number(settingsSourceWeekNumber) }
+          : {}),
       });
+      setPlanId(response?.planId || activePlanId);
       hydrateProgramDraft(response);
       closeSettingsPanel();
     } catch (saveError) {
@@ -1331,7 +1382,7 @@ export default function ManualBuilderMulti() {
                     Duration In Weeks
                   </label>
                   <p className="mt-1 text-xs text-slate-400">
-                    You can shorten this cycle. Extending beyond {maxDurationWeeks} weeks is not supported yet.
+                    Trim removes weeks from the end. Extend adds weeks at the end. Changes stay in draft until you publish.
                   </p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -1358,7 +1409,7 @@ export default function ManualBuilderMulti() {
                     <button
                       type="button"
                       onClick={incrementSettingsDuration}
-                      disabled={!isTimelineEditable || settingsDurationWeeks >= 8}
+                      disabled={!isTimelineEditable || settingsDurationWeeks >= MAX_CYCLE_DURATION_WEEKS}
                       className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                       aria-label="Increase duration in weeks"
                     >
@@ -1367,6 +1418,52 @@ export default function ManualBuilderMulti() {
                   </div>
                 </div>
               </section>
+
+              {isSettingsExtension && (
+                <section className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Source Week For Added Weeks
+                    </label>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Every added week will duplicate this one existing week.
+                    </p>
+                  </div>
+                  <div
+                    className="grid rounded-lg bg-slate-100 p-1"
+                    style={{
+                      gridTemplateColumns: `repeat(${Math.max(
+                        1,
+                        settingsSourceWeekOptions.length || 1
+                      )}, minmax(0, 1fr))`,
+                    }}
+                  >
+                    {settingsSourceWeekOptions.map((option) => {
+                      const isSelected =
+                        Number(option.value) === Number(settingsSourceWeekNumber);
+
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => {
+                            setSettingsSourceWeekNumber(option.value);
+                            setSettingsError("");
+                          }}
+                          className={[
+                            "w-full rounded-md px-2 py-2 text-[10px] font-bold transition-all",
+                            isSelected
+                              ? "bg-white text-slate-900 shadow-sm"
+                              : "text-slate-500 hover:text-slate-700",
+                          ].join(" ")}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
 
               {!isTimelineEditable && (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">

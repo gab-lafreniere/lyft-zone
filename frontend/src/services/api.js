@@ -398,6 +398,24 @@ export async function updateCycleDraft(cycleId, planId, payload) {
   return readJsonResponse(response);
 }
 
+export async function updateUpcomingDraftTimeline(cycleId, planId, payload) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/cycles/${cycleId}/drafts/${planId}/timeline`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...payload,
+        userId,
+        timezone: payload.timezone || getLocalTimezone(),
+      }),
+    }
+  );
+
+  return readJsonResponse(response);
+}
+
 export async function publishCycleDraft(cycleId, options = {}) {
   const userId = await ensureCurrentUserId();
   const response = await fetch(`${BACKEND_URL}/api/cycles/${cycleId}/publish`, {

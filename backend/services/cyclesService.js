@@ -22,6 +22,7 @@ const CYCLE_STATUSES = new Set(['PLANNED', 'ACTIVE', 'COMPLETED', 'ARCHIVED']);
 const TRAINING_MODES = new Set(['FIXED', 'AI_COACH']);
 const PLAN_SOURCE_TYPES = new Set(['SYSTEM', 'USER', 'AI']);
 const PLAN_STATUSES = new Set(['DRAFT', 'PUBLISHED', 'SUPERSEDED']);
+const MAX_CYCLE_DURATION_WEEKS = 8;
 const DAY_OF_WEEK = new Set([
   'MONDAY',
   'TUESDAY',
@@ -138,6 +139,14 @@ function normalizeCanonicalMultiWeekDateRange(
     throw new ApiError(400, 'VALIDATION_ERROR', 'durationWeeks must be at least 1');
   }
 
+  if (durationWeeks > MAX_CYCLE_DURATION_WEEKS) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      `durationWeeks must be at most ${MAX_CYCLE_DURATION_WEEKS}`
+    );
+  }
+
   const endDateKey = addDays(startDateKey, durationWeeks * 7 - 1);
   const finalWeekStartDateKey = addDays(startDateKey, (durationWeeks - 1) * 7);
   if (endDateKey !== getEndOfMondayWeek(finalWeekStartDateKey)) {
@@ -174,6 +183,115 @@ function trimDocumentWeeks(document, targetWeekCount) {
         label: week.label || `Week ${index + 1}`,
       })),
   };
+}
+
+function cloneWeekDocument(week, weekNumber) {
+  return {
+    weekNumber,
+    orderIndex: weekNumber,
+    label: `Week ${weekNumber}`,
+    notes: week.notes ?? null,
+    workouts: (week.workouts || []).map((workout) => ({
+      name: workout.name,
+      orderIndex: workout.orderIndex,
+      scheduledDay: workout.scheduledDay || null,
+      estimatedDurationMinutes: workout.estimatedDurationMinutes ?? null,
+      notes: workout.notes ?? null,
+      blocks: (workout.blocks || []).map((block) => ({
+        orderIndex: block.orderIndex,
+        blockType: block.blockType,
+        label: block.label ?? null,
+        roundCount: block.roundCount ?? null,
+        restStrategy: block.restStrategy ?? null,
+        restSeconds: block.restSeconds ?? null,
+        notes: block.notes ?? null,
+        exercises: (block.exercises || []).map((exercise) => ({
+          exerciseId: exercise.exerciseId,
+          exerciseName: exercise.exerciseName,
+          bodyParts: Array.isArray(exercise.bodyParts) ? [...exercise.bodyParts] : [],
+          muscleFocus: Array.isArray(exercise.muscleFocus) ? [...exercise.muscleFocus] : [],
+          orderIndex: exercise.orderIndex,
+          executionNotes: exercise.executionNotes ?? null,
+          defaultTempo: exercise.defaultTempo ?? null,
+          defaultRestSeconds: exercise.defaultRestSeconds ?? null,
+          defaultTargetRir: exercise.defaultTargetRir ?? null,
+          defaultTargetRpe: exercise.defaultTargetRpe ?? null,
+          intensificationMethod: exercise.intensificationMethod ?? null,
+          notes: exercise.notes ?? null,
+          setTemplates: (exercise.setTemplates || []).map((setTemplate) => ({
+            setIndex: setTemplate.setIndex,
+            setType: setTemplate.setType ?? null,
+            targetReps: setTemplate.targetReps ?? null,
+            minReps: setTemplate.minReps ?? null,
+            maxReps: setTemplate.maxReps ?? null,
+            targetSeconds: setTemplate.targetSeconds ?? null,
+            targetRir: setTemplate.targetRir ?? null,
+            targetRpe: setTemplate.targetRpe ?? null,
+            tempo: setTemplate.tempo ?? null,
+            restSeconds: setTemplate.restSeconds ?? null,
+            notes: setTemplate.notes ?? null,
+          })),
+        })),
+      })),
+    })),
+  };
+}
+
+function extendDocumentWeeks(document, targetWeekCount, sourceWeekNumber) {
+  const safeWeekCount = Math.max(1, normalizeInt(targetWeekCount, 1));
+  const normalizedSourceWeekNumber = normalizeInt(sourceWeekNumber, null);
+  const existingWeeks = Array.isArray(document.weeks) ? document.weeks : [];
+  const sourceWeek = existingWeeks.find((week) => week.weekNumber === normalizedSourceWeekNumber);
+
+  if (!normalizedSourceWeekNumber || !sourceWeek) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'sourceWeekNumber must reference an existing draft week when extending'
+    );
+  }
+
+  const nextWeeks = existingWeeks.map((week, index) => ({
+    ...week,
+    weekNumber: index + 1,
+    orderIndex: index + 1,
+    label: week.label || `Week ${index + 1}`,
+  }));
+
+  while (nextWeeks.length < safeWeekCount) {
+    const nextWeekNumber = nextWeeks.length + 1;
+    nextWeeks.push(cloneWeekDocument(sourceWeek, nextWeekNumber));
+  }
+
+  return {
+    ...document,
+    weeks: nextWeeks,
+  };
+}
+
+function getTimelineDraftStartDate(changeSummary) {
+  if (!changeSummary || typeof changeSummary !== 'object' || Array.isArray(changeSummary)) {
+    return null;
+  }
+
+  return toDateKey(changeSummary.timelineDraft?.startDate);
+}
+
+function setTimelineDraftStartDate(changeSummary, startDateKey) {
+  const nextChangeSummary =
+    changeSummary && typeof changeSummary === 'object' && !Array.isArray(changeSummary)
+      ? { ...changeSummary }
+      : {};
+  const nextTimelineDraft =
+    nextChangeSummary.timelineDraft &&
+    typeof nextChangeSummary.timelineDraft === 'object' &&
+    !Array.isArray(nextChangeSummary.timelineDraft)
+      ? { ...nextChangeSummary.timelineDraft }
+      : {};
+
+  nextTimelineDraft.startDate = startDateKey;
+  nextChangeSummary.timelineDraft = nextTimelineDraft;
+  return nextChangeSummary;
 }
 
 function assertEnumValue(value, allowedValues, fieldName) {
@@ -670,15 +788,34 @@ function toBuilderWorkout(workout) {
   };
 }
 
-function buildCycleBuilderPayload(cycle, plan) {
+function resolveBuilderTimeline(cycle, plan, options = {}) {
+  const useDraftTimeline = Boolean(options.useDraftTimeline);
+  const cycleStartDateKey = toDateKey(cycle.startDate);
+  const cycleDurationWeeks = Math.max(1, Number(cycle.durationWeeks) || 1);
+  const planWeekCount = Array.isArray(plan?.weeks) ? plan.weeks.length : 0;
+  const draftStartDateKey = getTimelineDraftStartDate(plan?.changeSummary);
+  const startDateKey =
+    useDraftTimeline && draftStartDateKey ? draftStartDateKey : cycleStartDateKey;
+  const durationWeeks =
+    useDraftTimeline && planWeekCount > 0 ? planWeekCount : cycleDurationWeeks;
+
+  return {
+    startDateKey,
+    endDateKey: addDays(startDateKey, durationWeeks * 7 - 1),
+    durationWeeks,
+  };
+}
+
+function buildCycleBuilderPayload(cycle, plan, options = {}) {
   const serializedPlan = serializePlan(plan);
+  const timeline = resolveBuilderTimeline(cycle, plan, options);
 
   return {
     programName: serializedPlan?.name || cycle.name,
     sessionsPerWeek: getWeekSessionsPerWeek(serializedPlan?.weeks?.[0]),
-    programLength: cycle.durationWeeks,
-    startDate: toDateKey(cycle.startDate),
-    endDate: toDateKey(cycle.endDate),
+    programLength: timeline.durationWeeks,
+    startDate: timeline.startDateKey,
+    endDate: timeline.endDateKey,
     isMultiWeek: true,
     selectedWeek: 1,
     weeks: (serializedPlan?.weeks || []).map((week) => ({
@@ -1784,6 +1921,20 @@ async function openOrCreateCycleEditDraft(cycleId, payload = {}) {
         }
       }
 
+      if (temporalStatus === 'upcoming' && !getTimelineDraftStartDate(draftPlan?.changeSummary)) {
+        phase = 'initialize_upcoming_timeline_draft';
+        draftPlan = await tx.plan.update({
+          where: { id: draftPlan.id },
+          data: {
+            changeSummary: setTimelineDraftStartDate(
+              draftPlan.changeSummary,
+              toDateKey(cycle.startDate)
+            ),
+          },
+          include: fullPlanInclude,
+        });
+      }
+
       phase = 'return_builder_payload';
       logCycleServiceEvent('open_cycle_edit_draft', phase, {
         cycleId,
@@ -1806,7 +1957,9 @@ async function openOrCreateCycleEditDraft(cycleId, payload = {}) {
           endDate: toDateKey(cycle.endDate),
           durationWeeks: cycle.durationWeeks,
         },
-        builderPayload: buildCycleBuilderPayload(cycle, draftPlan),
+        builderPayload: buildCycleBuilderPayload(cycle, draftPlan, {
+          useDraftTimeline: temporalStatus === 'upcoming',
+        }),
         draftState: {
           state,
           effectiveTimezone,
@@ -1950,7 +2103,9 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
         status: updatedPlan.status,
         temporalStatus,
         timezone: effectiveTimezone,
-        builderPayload: buildCycleBuilderPayload(cycle, updatedPlan),
+        builderPayload: buildCycleBuilderPayload(cycle, updatedPlan, {
+          useDraftTimeline: temporalStatus === 'upcoming',
+        }),
         draftState: {
           state: 'reused',
           effectiveTimezone,
@@ -2003,6 +2158,117 @@ function mergePublishedAndDraftWorkouts(cycle, publishedPlan, draftPlan, timeZon
   };
 }
 
+async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
+  const prisma = getPrisma();
+  const userId = normalizeOptionalString(payload.userId);
+  await assertUserExists(userId);
+  let phase = 'start';
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      phase = 'load_cycle';
+      const cycle = await loadCycleForUser(tx, cycleId, userId);
+      const effectiveTimezone = resolveEffectiveTimezone(cycle.timezone, payload.timezone, DEFAULT_TIMEZONE);
+      const temporalStatus = deriveTemporalStatus(cycle, effectiveTimezone);
+
+      if (temporalStatus !== 'upcoming') {
+        throw new ApiError(400, 'VALIDATION_ERROR', 'Only upcoming cycles can edit timeline settings');
+      }
+
+      phase = 'resolve_current_draft';
+      const draftPlan = await normalizeSingleDraft(tx, cycleId);
+      if (!draftPlan || draftPlan.id !== planId) {
+        throw new ApiError(400, 'VALIDATION_ERROR', 'This draft is not the current editable version');
+      }
+
+      phase = 'normalize_next_timeline';
+      const todayDateKey = getTodayDateKey(effectiveTimezone);
+      const { startDateKey, endDateKey, durationWeeks } = normalizeCanonicalMultiWeekDateRange(
+        payload.newStartDate,
+        payload.durationWeeks,
+        payload.newEndDate || payload.endDate,
+        'newStartDate',
+        'newEndDate'
+      );
+
+      ensureNotPastDate(startDateKey, todayDateKey, 'startDate');
+      ensureNotPastDate(endDateKey, todayDateKey, 'endDate');
+
+      phase = 'validate_overlap';
+      const existingCycles = await tx.trainingCycle.findMany({
+        where: { userId },
+        select: { id: true, startDate: true, endDate: true },
+      });
+      validateNoOverlap(existingCycles, startDateKey, endDateKey, cycle.id);
+
+      phase = 'build_next_document';
+      const currentDocument = validateCycleDocument(clonePlanDocument(draftPlan), 'draft');
+      const currentWeekCount = currentDocument.weeks.length;
+      const nextDocument =
+        durationWeeks > currentWeekCount
+          ? extendDocumentWeeks(currentDocument, durationWeeks, payload.sourceWeekNumber)
+          : trimDocumentWeeks(currentDocument, durationWeeks);
+
+      phase = 'replace_draft_weeks';
+      await tx.workout.deleteMany({
+        where: {
+          planWeek: {
+            planId: draftPlan.id,
+          },
+        },
+      });
+
+      await tx.planWeek.deleteMany({
+        where: {
+          planId: draftPlan.id,
+        },
+      });
+
+      phase = 'update_draft_plan';
+      const updatedPlan = await tx.plan.update({
+        where: { id: draftPlan.id },
+        data: {
+          name: nextDocument.name,
+          changeSummary: setTimelineDraftStartDate(draftPlan.changeSummary, startDateKey),
+          weeks: {
+            create: buildPlanCreateWeeksInput(nextDocument.weeks),
+          },
+        },
+        include: fullPlanInclude,
+      });
+
+      return {
+        cycleId,
+        planId: updatedPlan.id,
+        status: updatedPlan.status,
+        temporalStatus,
+        timezone: effectiveTimezone,
+        cycle: {
+          id: cycle.id,
+          name: cycle.name,
+          startDate: toDateKey(cycle.startDate),
+          endDate: toDateKey(cycle.endDate),
+          durationWeeks: cycle.durationWeeks,
+        },
+        builderPayload: buildCycleBuilderPayload(cycle, updatedPlan, {
+          useDraftTimeline: true,
+        }),
+        draftState: {
+          state: 'reused',
+          effectiveTimezone,
+          localDate: getTodayDateKey(effectiveTimezone),
+          isGraceWindow: false,
+          canExtendDraft: false,
+        },
+        updatedAt: updatedPlan.updatedAt,
+      };
+    });
+  } catch (error) {
+    logCycleServiceError('update_upcoming_draft_timeline', phase, { cycleId, planId, userId }, error);
+    throw error;
+  }
+}
+
 async function publishCycleDraft(cycleId, payload = {}) {
   const prisma = getPrisma();
   const userId = normalizeOptionalString(payload.userId);
@@ -2046,10 +2312,26 @@ async function publishCycleDraft(cycleId, payload = {}) {
           temporalStatus === 'active' && publishedPlan
             ? mergePublishedAndDraftWorkouts(cycle, publishedPlan, draftPlan, effectiveTimezone)
             : clonePlanDocument(draftPlan);
+        const nextTimeline =
+          temporalStatus === 'upcoming'
+            ? resolveBuilderTimeline(cycle, draftPlan, { useDraftTimeline: true })
+            : resolveBuilderTimeline(cycle, draftPlan);
 
         phase = 'validate_publish_document';
         validateCycleDocument(sourceDocument, 'publish');
         await assertKnownExerciseIds(collectExerciseIdsFromWeeks(sourceDocument.weeks));
+
+        if (temporalStatus === 'upcoming') {
+          phase = 'validate_publish_overlap';
+          const todayDateKey = getTodayDateKey(effectiveTimezone);
+          ensureNotPastDate(nextTimeline.startDateKey, todayDateKey, 'startDate');
+          ensureNotPastDate(nextTimeline.endDateKey, todayDateKey, 'endDate');
+          const existingCycles = await tx.trainingCycle.findMany({
+            where: { userId },
+            select: { id: true, startDate: true, endDate: true },
+          });
+          validateNoOverlap(existingCycles, nextTimeline.startDateKey, nextTimeline.endDateKey, cycle.id);
+        }
 
         if (publishedPlan) {
           phase = 'supersede_previous_published_plan';
@@ -2079,11 +2361,18 @@ async function publishCycleDraft(cycleId, payload = {}) {
           include: fullPlanInclude,
         });
 
-        phase = 'update_cycle_name';
-        await tx.trainingCycle.update({
+        phase = 'update_cycle_metadata';
+        const updatedCycle = await tx.trainingCycle.update({
           where: { id: cycle.id },
           data: {
             name: sourceDocument.name,
+            ...(temporalStatus === 'upcoming'
+              ? {
+                  startDate: parseDateInput(nextTimeline.startDateKey),
+                  endDate: parseDateInput(nextTimeline.endDateKey),
+                  durationWeeks: nextTimeline.durationWeeks,
+                }
+              : {}),
           },
         });
 
@@ -2100,19 +2389,19 @@ async function publishCycleDraft(cycleId, payload = {}) {
         });
 
         return {
-          cycleId: cycle.id,
+          cycleId: updatedCycle.id,
           publishedPlanId: newPublishedPlan.id,
           status: 'PUBLISHED',
-          temporalStatus,
+          temporalStatus: deriveTemporalStatus(updatedCycle, effectiveTimezone),
           timezone: effectiveTimezone,
           cycle: {
-            id: cycle.id,
+            id: updatedCycle.id,
             name: sourceDocument.name,
-            startDate: toDateKey(cycle.startDate),
-            endDate: toDateKey(cycle.endDate),
-            durationWeeks: cycle.durationWeeks,
+            startDate: toDateKey(updatedCycle.startDate),
+            endDate: toDateKey(updatedCycle.endDate),
+            durationWeeks: updatedCycle.durationWeeks,
           },
-          builderPayload: buildCycleBuilderPayload(cycle, newPublishedPlan),
+          builderPayload: buildCycleBuilderPayload(updatedCycle, newPublishedPlan),
           updatedAt: newPublishedPlan.updatedAt,
         };
       },
@@ -2451,4 +2740,5 @@ module.exports = {
   publishCycleDraft,
   rescheduleUpcomingCycle,
   updateCycleDraft,
+  updateUpcomingDraftTimeline,
 };
