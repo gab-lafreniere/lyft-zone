@@ -1326,9 +1326,6 @@ export default function ManualBuilderMulti() {
                     </div>
                   </div>
                 )}
-                <p className="text-xs text-slate-400">
-                  Start dates must fall on a Monday.
-                </p>
               </section>
 
               <section className="space-y-3">
@@ -1338,9 +1335,6 @@ export default function ManualBuilderMulti() {
                 <div className="flex h-12 items-center rounded-xl border border-slate-200 bg-slate-50 px-4 font-medium text-slate-600">
                   {formatDate(settingsEndDate)}
                 </div>
-                <p className="text-xs text-slate-400">
-                  End date is derived automatically from the Monday start date and duration.
-                </p>
               </section>
 
               <section className="space-y-3">
@@ -1421,41 +1415,42 @@ export default function ManualBuilderMulti() {
                 </button>
               </div>
 
-              <section className="rounded-2xl border border-red-100 bg-red-50/60 p-4">
-                <h3 className="text-sm font-bold text-red-700">Delete Cycle</h3>
-                <p className="mt-1 text-sm text-red-600">
-                  Delete this multi-week cycle and all of its versions. This action can&apos;t be undone.
-                </p>
-
+              <section className="space-y-3">
                 {!showDeleteConfirm ? (
                   <button
                     type="button"
                     onClick={() => setShowDeleteConfirm(true)}
-                    className="mt-3 w-full rounded-xl border border-red-200 bg-white py-3 font-semibold text-red-500 transition-colors hover:bg-red-50"
+                    className="w-full rounded-xl border border-red-200 bg-white py-3 font-semibold text-red-500 transition-colors hover:bg-red-50"
                   >
                     Delete Cycle
                   </button>
                 ) : (
-                  <div className="mt-3 space-y-3">
-                    <p className="text-sm text-red-600">
-                      Confirm deletion of this cycle?
+                  <div className="rounded-2xl border border-red-100 bg-red-50/60 p-4">
+                    <h3 className="text-sm font-bold text-red-700">Delete Cycle</h3>
+                    <p className="mt-1 text-sm text-red-600">
+                      Delete this multi-week cycle and all of its versions. This action can&apos;t be undone.
                     </p>
-                    <div className="flex gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setShowDeleteConfirm(false)}
-                        className="flex-1 rounded-xl border border-slate-200 bg-white py-3 font-semibold text-slate-600 transition-colors hover:bg-slate-50"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleDeleteCycle}
-                        disabled={isDeletingCycle}
-                        className="flex-1 rounded-xl bg-red-500 py-3 font-semibold text-white transition-colors hover:bg-red-600 disabled:opacity-60"
-                      >
-                        {isDeletingCycle ? "Deleting..." : "Delete Cycle"}
-                      </button>
+                    <div className="mt-3 space-y-3">
+                      <p className="text-sm text-red-600">
+                        Confirm deletion of this cycle?
+                      </p>
+                      <div className="flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setShowDeleteConfirm(false)}
+                          className="flex-1 rounded-xl border border-slate-200 bg-white py-3 font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDeleteCycle}
+                          disabled={isDeletingCycle}
+                          className="flex-1 rounded-xl bg-red-500 py-3 font-semibold text-white transition-colors hover:bg-red-600 disabled:opacity-60"
+                        >
+                          {isDeletingCycle ? "Deleting..." : "Delete Cycle"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
