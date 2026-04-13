@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMultiWeekProgram } from "../context/MultiWeekProgramContext";
 import {
@@ -130,6 +130,13 @@ function formatShortDateRange(startDateValue, endDateValue) {
   return `${startLabel} to ${endLabel}`;
 }
 
+function buildUiError(error, fallbackMessage) {
+  return {
+    message: error?.message || fallbackMessage,
+    code: error?.code || null,
+  };
+}
+
 export default function ManualBuilderMulti() {
   const navigate = useNavigate();
   const { cycleId } = useParams();
@@ -147,7 +154,8 @@ export default function ManualBuilderMulti() {
   const [isPublishing, setIsPublishing] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isDeletingCycle, setIsDeletingCycle] = useState(false);
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState(null);
+  const [publishError, setPublishError] = useState(null);
   const [showMuscleDistribution, setShowMuscleDistribution] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsStartDate, setSettingsStartDate] = useState("");
@@ -156,32 +164,43 @@ export default function ManualBuilderMulti() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [selectedWorkoutOrderIndex, setSelectedWorkoutOrderIndex] = useState(null);
+  const [planId, setPlanId] = useState(null);
+  const hasFetchedDraftRef = useRef(false);
 
   const todayDate = getTodayDateInput();
   const minSettingsStartDate = useMemo(() => getNextMondayDateValue(todayDate), [todayDate]);
   const maxDurationWeeks = Math.max(1, programDraft.weeks.length || programDraft.programLength || 1);
   const isUpcomingCycle = draftMetadata.temporalStatus === "upcoming";
   const isTimelineEditable = isUpcomingCycle;
+  const activePlanId = planId || draftMetadata.cyclePlanId || null;
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadDraft() {
-      if (!cycleId) {
+      if (!cycleId || hasFetchedDraftRef.current) {
         return;
       }
 
+      hasFetchedDraftRef.current = true;
       setIsLoading(true);
-      setError("");
+      setLoadError(null);
 
       try {
         const response = await openOrCreateCycleEditDraft(cycleId);
+        const activePlanId = response?.planId || null;
         if (isMounted) {
+          setPlanId(activePlanId);
+          console.log("ACTIVE PLAN ID:", activePlanId);
           hydrateProgramDraft(response);
+          updateDraftMetadata({ cyclePlanId: activePlanId });
+          setLoadError(null);
         }
       } catch (loadError) {
         if (isMounted) {
-          setError(loadError.message || "Unable to load cycle draft.");
+          setLoadError(
+            buildUiError(loadError, "Unable to load cycle draft.")
+          );
         }
       } finally {
         if (isMounted) {
@@ -195,7 +214,7 @@ export default function ManualBuilderMulti() {
     return () => {
       isMounted = false;
     };
-  }, [cycleId, hydrateProgramDraft]);
+  }, [cycleId, hydrateProgramDraft, updateDraftMetadata]);
 
   useEffect(() => {
     if (
@@ -408,6 +427,20 @@ export default function ManualBuilderMulti() {
 
     return "Draft";
   }, [draftMetadata.lastSavedAt, draftMetadata.saveState]);
+  const autosaveError = useMemo(() => {
+    if (draftMetadata.saveState !== "error") {
+      return null;
+    }
+
+    return {
+      message: draftMetadata.lastSaveErrorMessage || "Unable to autosave this draft.",
+      code: draftMetadata.lastSaveErrorCode || null,
+    };
+  }, [
+    draftMetadata.lastSaveErrorCode,
+    draftMetadata.lastSaveErrorMessage,
+    draftMetadata.saveState,
+  ]);
 
   const settingsFinalWeekEndDate = useMemo(
     () =>
@@ -491,7 +524,7 @@ export default function ManualBuilderMulti() {
     }
 
     setIsSavingSettings(true);
-    setError("");
+    setPublishError(null);
 
     try {
       const response = await rescheduleUpcomingCycle(cycleId, {
@@ -514,7 +547,7 @@ export default function ManualBuilderMulti() {
     }
 
     setIsDeletingCycle(true);
-    setError("");
+    setPublishError(null);
 
     try {
       await deleteCycle(cycleId);
@@ -526,12 +559,12 @@ export default function ManualBuilderMulti() {
   };
 
   const handlePublish = async () => {
-    if (!cycleId || !draftMetadata.cyclePlanId) {
+    if (!cycleId || !activePlanId) {
       return;
     }
 
     setIsPublishing(true);
-    setError("");
+    setPublishError(null);
 
     try {
       const response = await publishCycleDraft(cycleId, {
@@ -540,7 +573,9 @@ export default function ManualBuilderMulti() {
       hydrateProgramDraft(response);
       navigate(getCycleDetailsPath(cycleId), { replace: true });
     } catch (publishError) {
-      setError(publishError.message || "Unable to publish cycle.");
+      setPublishError(
+        buildUiError(publishError, "Unable to publish cycle.")
+      );
     } finally {
       setIsPublishing(false);
     }
@@ -623,8 +658,19 @@ export default function ManualBuilderMulti() {
     return <div className="px-4 py-8 text-sm text-slate-500">Loading cycle builder...</div>;
   }
 
-  if (error && !programDraft.weeks.length) {
-    return <div className="px-4 py-8 text-sm text-red-500">{error}</div>;
+  if (loadError && !programDraft.weeks.length) {
+    return (
+      <div className="px-4 py-8">
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          <p>{loadError.message}</p>
+          {loadError.code && (
+            <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-red-400">
+              {loadError.code}
+            </p>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -670,6 +716,18 @@ export default function ManualBuilderMulti() {
       </header>
 
       <main className="mx-auto max-w-md space-y-4 px-4 pb-28 pt-4">
+        {autosaveError && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            <p className="font-semibold">Autosave failed</p>
+            <p className="mt-1">{autosaveError.message}</p>
+            {autosaveError.code && (
+              <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-amber-500">
+                {autosaveError.code}
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="relative flex flex-col gap-3 overflow-hidden rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
           <div className="absolute -right-16 -top-16 h-32 w-32 rounded-full bg-primary/5" />
 
@@ -956,22 +1014,29 @@ export default function ManualBuilderMulti() {
         </div>
         </div>
 
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-            {error}
-          </div>
-        )}
       </main>
 
       <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-100 bg-white/80 p-4 backdrop-blur-md">
         <div className="mx-auto max-w-md">
+          {publishError && (
+            <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+              <p className="font-semibold">Publish failed</p>
+              <p className="mt-1">{publishError.message}</p>
+              {publishError.code && (
+                <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-red-400">
+                  {publishError.code}
+                </p>
+              )}
+            </div>
+          )}
+
           <button
             type="button"
-            disabled={isPublishing || !draftMetadata.cyclePlanId}
+            disabled={isPublishing || !activePlanId}
             onClick={handlePublish}
             className={[
               "flex w-full items-center justify-center rounded-xl py-4 font-bold transition-colors",
-              !isPublishing && draftMetadata.cyclePlanId
+              !isPublishing && activePlanId
                 ? "bg-primary text-white"
                 : "cursor-not-allowed bg-slate-300 text-white/60",
             ].join(" ")}

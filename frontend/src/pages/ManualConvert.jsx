@@ -157,6 +157,10 @@ function buildWeekOptionsForMonth(monthDate, minStartDateValue, selectedStartDat
   return options;
 }
 
+function hasAllowedWeeksInMonth(monthDate, minStartDateValue) {
+  return buildWeekOptionsForMonth(monthDate, minStartDateValue).length > 0;
+}
+
 function isMondayDateInput(value) {
   if (!value) {
     return false;
@@ -302,8 +306,8 @@ export default function ManualConvert() {
     [minStartDate, startDate, weekPickerMonth]
   );
   const canGoToPreviousMonth = useMemo(
-    () => buildWeekOptionsForMonth(addMonths(weekPickerMonth, -1), minStartDate, startDate).length > 0,
-    [minStartDate, startDate, weekPickerMonth]
+    () => hasAllowedWeeksInMonth(addMonths(weekPickerMonth, -1), minStartDate),
+    [minStartDate, weekPickerMonth]
   );
   const weekPickerMonthLabel = useMemo(
     () => formatMonthHeading(weekPickerMonth),
@@ -436,24 +440,24 @@ export default function ManualConvert() {
                 Start Date
               </label>
 
-              <div className="relative flex items-center">
-                <button
-                  type="button"
-                  onClick={openWeekPicker}
-                  className="flex h-14 w-full items-center rounded-xl border border-slate-200 bg-white pl-12 pr-12 text-left outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
-                  aria-label="Select start week"
-                >
-                  <span className="truncate text-sm font-medium text-slate-900">
-                    {selectedStartDateLabel}
-                  </span>
-                </button>
-                <span className="material-symbols-outlined absolute left-4 text-primary">
+              <button
+                type="button"
+                onClick={openWeekPicker}
+                className="flex h-14 w-full items-center rounded-xl border border-slate-200 bg-white pl-4 pr-4 text-left outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
+                aria-label="Select start week"
+              >
+                <span className="material-symbols-outlined shrink-0 text-primary">
                   calendar_today
                 </span>
-                <span className="material-symbols-outlined absolute right-4 text-slate-400">
+
+                <span className="min-w-0 flex-1 px-3 text-sm font-medium text-slate-900">
+                  {selectedStartDateLabel}
+                </span>
+
+                <span className="material-symbols-outlined shrink-0 text-slate-400">
                   expand_more
                 </span>
-              </div>
+              </button>
               <p className="text-xs text-slate-400">
                 Choose a start week. The selected start date remains the Monday of that week.
               </p>
@@ -626,10 +630,10 @@ export default function ManualConvert() {
               onClick={closeWeekPicker}
             />
 
-            <div className="relative w-full rounded-t-3xl bg-white p-5 shadow-2xl">
+            <div className="relative flex h-[70vh] max-h-[70vh] w-full flex-col rounded-t-3xl bg-white p-5 shadow-2xl">
               <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-slate-200" />
 
-              <div className="mb-5 flex items-center justify-between">
+              <div className="mb-5 flex shrink-0 items-center justify-between">
                 <div>
                   <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">
                     Start Date
@@ -648,7 +652,7 @@ export default function ManualConvert() {
                 </button>
               </div>
 
-              <div className="mb-4 flex items-center justify-between rounded-2xl bg-slate-50 px-2 py-2">
+              <div className="mb-4 flex shrink-0 items-center justify-between rounded-2xl bg-slate-50 px-2 py-2">
                 <button
                   type="button"
                   onClick={() => setWeekPickerMonth((prev) => addMonths(prev, -1))}
@@ -671,7 +675,7 @@ export default function ManualConvert() {
                 </button>
               </div>
 
-              <div className="max-h-[52vh] space-y-2 overflow-y-auto pb-2">
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-2">
                 {visibleWeekOptions.map((option) => {
                   const isSelected = option.value === startDate;
 

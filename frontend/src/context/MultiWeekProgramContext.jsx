@@ -200,6 +200,8 @@ function createInitialDraftMetadata() {
     lastPersistedSignature: "",
     draftState: null,
     allowCrossDayDraft: false,
+    lastSaveErrorMessage: null,
+    lastSaveErrorCode: null,
   };
 }
 
@@ -263,10 +265,11 @@ export function MultiWeekProgramProvider({ children }) {
 
   const persistDraftNow = useCallback(async (overrideDraft = null) => {
     const currentMetadata = draftMetadataRef.current;
+    const currentPlanId = currentMetadata?.cyclePlanId || null;
     if (
       !currentMetadata.loadedFromBackend ||
       !currentMetadata.cycleId ||
-      !currentMetadata.cyclePlanId
+      !currentPlanId
     ) {
       return null;
     }
@@ -289,11 +292,12 @@ export function MultiWeekProgramProvider({ children }) {
     ));
 
     try {
-      const response = await updateCycleDraft(currentMetadata.cycleId, currentMetadata.cyclePlanId, {
+      const response = await updateCycleDraft(currentMetadata.cycleId, currentPlanId, {
         ...payload,
         allowCrossDayDraft: currentMetadata.allowCrossDayDraft,
       });
 
+      const activePlanId = response?.planId || null;
       const nextState = mapCycleBuilderPayload(response);
       setMultiWeekDraft((prev) => ({
         ...nextState.programDraft,
@@ -303,9 +307,11 @@ export function MultiWeekProgramProvider({ children }) {
         ...prev,
         ...nextState.metadata,
         cycleId: nextState.metadata.cycleId,
-        cyclePlanId: nextState.metadata.cyclePlanId,
+        cyclePlanId: activePlanId || nextState.metadata.cyclePlanId,
         lastSavedAt: response.updatedAt || new Date().toISOString(),
         saveState: "saved",
+        lastSaveErrorMessage: null,
+        lastSaveErrorCode: null,
       }));
 
       return response;
@@ -316,6 +322,8 @@ export function MultiWeekProgramProvider({ children }) {
           : {
               ...prev,
               saveState: "error",
+              lastSaveErrorMessage: error?.message || "Unable to autosave this draft.",
+              lastSaveErrorCode: error?.code || null,
             }
       ));
       throw error;
@@ -344,7 +352,14 @@ export function MultiWeekProgramProvider({ children }) {
     });
 
     const timeoutId = window.setTimeout(() => {
-      persistDraftNow(multiWeekDraft).catch(() => {});
+      persistDraftNow(multiWeekDraft).catch((error) => {
+        console.error("[MultiWeekProgramContext] autosave failed", {
+          cycleId: draftMetadataRef.current?.cycleId || null,
+          cyclePlanId: draftMetadataRef.current?.cyclePlanId || null,
+          errorCode: error?.code || null,
+          errorMessage: error?.message || null,
+        });
+      });
     }, 700);
 
     return () => window.clearTimeout(timeoutId);
