@@ -546,12 +546,8 @@ export default function ManualBuilderMulti() {
     [settingsDurationWeeks, settingsStartDate, todayDate]
   );
   const settingsEndDate = settingsFinalWeekEndDate;
-  const selectedSettingsStartDateLabel = useMemo(
-    () => (settingsStartDate ? formatDate(settingsStartDate) : "--"),
-    [settingsStartDate]
-  );
   const selectedSettingsWeekRangeLabel = useMemo(
-    () => (settingsStartDate ? formatWeekRange(settingsStartDate) : ""),
+    () => (settingsStartDate ? formatWeekRange(settingsStartDate) : "Select a week"),
     [settingsStartDate]
   );
   const settingsVisibleWeekOptions = useMemo(
@@ -577,12 +573,14 @@ export default function ManualBuilderMulti() {
     setSettingsStartDate(programDraft.startDate || todayDate);
     setSettingsDurationWeeks(programDraft.programLength || maxDurationWeeks);
     setSettingsError("");
+    setIsSettingsWeekPickerOpen(false);
     setShowDeleteConfirm(false);
     setIsSettingsOpen(true);
   };
 
   const closeSettingsPanel = () => {
     setSettingsError("");
+    setIsSettingsWeekPickerOpen(false);
     setShowDeleteConfirm(false);
     setIsSettingsOpen(false);
   };
@@ -1208,45 +1206,33 @@ export default function ManualBuilderMulti() {
                     Timeline edits are available for upcoming cycles only.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!isTimelineEditable) {
-                      return;
-                    }
+                {!isSettingsWeekPickerOpen ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isTimelineEditable) {
+                        return;
+                      }
 
-                    if (!isSettingsWeekPickerOpen) {
                       setSettingsWeekPickerMonth(
                         getStartOfMonthDate(settingsStartDate || minSettingsStartDate)
                       );
-                    }
-
-                    setIsSettingsWeekPickerOpen((previous) => !previous);
-                  }}
-                  disabled={!isTimelineEditable}
-                  aria-expanded={isSettingsWeekPickerOpen}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-left transition-all duration-150 focus:border-transparent focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-slate-900">
-                        {selectedSettingsStartDateLabel}
+                      setIsSettingsWeekPickerOpen(true);
+                    }}
+                    disabled={!isTimelineEditable}
+                    aria-expanded={false}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-left transition-all duration-150 focus:border-transparent focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0 text-sm font-medium text-slate-900">
+                        {selectedSettingsWeekRangeLabel}
                       </div>
-                      <div className="mt-1 text-xs text-slate-500">
-                        {selectedSettingsWeekRangeLabel || "Select a Monday-based week"}
-                      </div>
+                      <span className="material-symbols-outlined text-slate-400">
+                        expand_more
+                      </span>
                     </div>
-                    <span
-                      className={[
-                        "material-symbols-outlined text-slate-400 transition-transform",
-                        isSettingsWeekPickerOpen ? "rotate-180" : "",
-                      ].join(" ")}
-                    >
-                      expand_more
-                    </span>
-                  </div>
-                </button>
-                {isSettingsWeekPickerOpen && (
+                  </button>
+                ) : (
                   <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50/70 transition-all duration-150">
                     <div className="flex items-center justify-between border-b border-slate-200/80 bg-white/80 px-2.5 py-2">
                       <button
@@ -1309,7 +1295,9 @@ export default function ManualBuilderMulti() {
                                   </div>
                                   {(option.isCurrentWeek || option.isSelectedOutsideMonth) && (
                                     <div className="mt-0.5 text-[11px] text-slate-500">
-                                      {option.isCurrentWeek ? "Earliest available" : "Selected outside this month"}
+                                      {option.isCurrentWeek
+                                        ? "Earliest available"
+                                        : "Selected outside this month"}
                                     </div>
                                   )}
                                 </div>
@@ -1426,14 +1414,11 @@ export default function ManualBuilderMulti() {
                   </button>
                 ) : (
                   <div className="rounded-2xl border border-red-100 bg-red-50/60 p-4">
-                    <h3 className="text-sm font-bold text-red-700">Delete Cycle</h3>
+                    <h3 className="text-sm font-bold text-red-700">Confirm deletion of this cycle?</h3>
                     <p className="mt-1 text-sm text-red-600">
                       Delete this multi-week cycle and all of its versions. This action can&apos;t be undone.
                     </p>
                     <div className="mt-3 space-y-3">
-                      <p className="text-sm text-red-600">
-                        Confirm deletion of this cycle?
-                      </p>
                       <div className="flex gap-3">
                         <button
                           type="button"
