@@ -15,7 +15,7 @@ function formatDisplayDate(dateKey) {
     return "";
   }
 
-  return new Date(`${dateKey}T00:00:00Z`).toLocaleDateString("en-US", {
+  return new Date(`${dateKey}T00:00:00`).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
   });
@@ -38,6 +38,26 @@ function isActiveOnDate(item, todayDateKey) {
   }
 
   return item.startDate <= todayDateKey && item.endDate >= todayDateKey;
+}
+
+function getMondayWeekStart(dateKey) {
+  if (!dateKey) {
+    return null;
+  }
+
+  const date = new Date(`${dateKey}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const day = date.getDay();
+  const daysFromMonday = day === 0 ? 6 : day - 1;
+  date.setDate(date.getDate() - daysFromMonday);
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const dayOfMonth = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${dayOfMonth}`;
 }
 
 function getTimelineFillWidth(rowSlots, progressWeekNumber) {
@@ -104,6 +124,14 @@ function getTimelineNodeClasses(slot) {
 
   if (slot.status === "deload") {
     return "h-8 w-8 rounded-full bg-slate-50 border-2 border-dashed border-slate-300 text-slate-500";
+  }
+
+  if (slot.isInActiveCycleRange) {
+    return "w-8 h-8 rounded-full bg-white border-2 border-primary/40 text-primary";
+  }
+  
+  if (slot.isInUpcomingCycleRange) {
+    return "w-8 h-8 rounded-full bg-white border-2 border-slate-400 text-slate-900";
   }
 
   if (slot.status === "neutral") {
@@ -237,15 +265,21 @@ export default function Program() {
   const cycleStructure = programOverview?.cycleStructure || null;
   const upcomingPrograms = programOverview?.upcomingPrograms || EMPTY_ARRAY;
   const pastPrograms = programOverview?.pastPrograms || EMPTY_ARRAY;
-  const hasActiveCycle = Boolean(activeProgramCard);
-  const hasUpcomingCycle = upcomingPrograms.length > 0;
-  const programState = hasActiveCycle ? "active" : hasUpcomingCycle ? "upcoming_only" : "empty";
-  const isCombinedEmptyState =
-    programState === "empty" && visibleWeeklyPlans.length === 0;
+  
   const todayDateKey = useMemo(
     () => getLocalDateKey(programOverview?.timezone || "America/Toronto"),
     [programOverview?.timezone]
   );
+  
+  const hasActiveCycle = useMemo(
+    () => isActiveOnDate(activeProgramCard, todayDateKey),
+    [activeProgramCard, todayDateKey]
+  );
+  
+  const hasUpcomingCycle = upcomingPrograms.length > 0;
+  const programState = hasActiveCycle ? "active" : hasUpcomingCycle ? "upcoming_only" : "empty";
+  const isCombinedEmptyState =
+    programState === "empty" && visibleWeeklyPlans.length === 0;
   const displayedActiveCycle = useMemo(() => {
     const cycleCandidates = [
       activeProgramCard,
@@ -279,7 +313,60 @@ export default function Program() {
       endSlotIndex: Number(cycleStructure.totalWeeks),
     };
   }, [activeProgramCard, cycleStructure]);
+  const nextUpcomingProgram = upcomingPrograms[0] || null;
+  const upcomingCycleRanges = useMemo(() => {
+    if (programState !== "upcoming_only") {
+      return [];
+    }
+
+    const startOfCurrentWeek = getMondayWeekStart(todayDateKey);
+    if (!startOfCurrentWeek) {
+      return [];
+    }
+
+    const millisecondsPerWeek = 7 * 24 * 60 * 60 * 1000;
+
+    return upcomingPrograms
+      .map((program) => {
+        const durationWeeks = Number(program?.durationWeeks || 0);
+        const startOfCycleWeek = getMondayWeekStart(program?.startDate || null);
+
+        if (
+          !Number.isFinite(durationWeeks) ||
+          durationWeeks < 1 ||
+          !startOfCycleWeek
+        ) {
+          return null;
+        }
+
+        const weeksUntilStart = Math.max(
+          0,
+          Math.round(
+            (new Date(`${startOfCycleWeek}T00:00:00`) - new Date(`${startOfCurrentWeek}T00:00:00`)) /
+              millisecondsPerWeek
+          )
+        );
+        const startSlotIndex = 1 + weeksUntilStart;
+        const endSlotIndex = startSlotIndex + durationWeeks - 1;
+
+        if (endSlotIndex < 1 || startSlotIndex > 12) {
+          return null;
+        }
+
+        return {
+          cycleId: program.cycleId,
+          startSlotIndex,
+          endSlotIndex,
+        };
+      })
+      .filter(Boolean);
+  }, [programState, todayDateKey, upcomingPrograms]);
+  const firstUpcomingCycleRange = upcomingCycleRanges[0] || null;
   const nextCycleRange = useMemo(() => {
+    if (programState === "upcoming_only") {
+      return firstUpcomingCycleRange;
+    }
+
     if (!activeProgramCard) {
       return null;
     }
@@ -295,7 +382,7 @@ export default function Program() {
       startSlotIndex: nextCycleStartSlot,
       endSlotIndex: nextCycleStartSlot + nextCycleDuration - 1,
     };
-  }, [activeProgramCard, timelineSlots, upcomingPrograms]);
+  }, [activeProgramCard, firstUpcomingCycleRange, programState, timelineSlots, upcomingPrograms]);
   const activeProgramWeekLabel = useMemo(() => {
     if (!activeProgramCard) {
       return "";
@@ -310,7 +397,6 @@ export default function Program() {
 
     return `Week ${currentWeekNumber} of ${totalWeeks}`;
   }, [activeProgramCard, cycleStructure]);
-  const nextUpcomingProgram = upcomingPrograms[0] || null;
 
   return (
     <div className="-mx-6 bg-background-light text-slate-900 antialiased font-display">
@@ -386,11 +472,11 @@ export default function Program() {
           <div className="relative overflow-hidden rounded-xl bg-white shadow-sm border border-slate-200/50 p-5">
             <div className="flex justify-between items-start mb-4">
               <div>
-                {programState !== "empty" ? (
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-primary">
-                    Active Program
-                  </span>
-                ) : null}
+                {programState === "active" ? (
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-primary">
+                      Active Program
+                    </span>
+                  ) : null}
                 <h2 className="text-xl font-bold mt-1">
                   {programState === "active"
                     ? displayedActiveCycle?.name || featuredWeeklyPlan?.name || "No weekly plan yet"
@@ -434,10 +520,13 @@ export default function Program() {
                 ) : programState === "upcoming_only" ? (
                   <>
                     <span>Your next cycle is already planned.</span>
-                    <span className="text-right">
-                      {nextUpcomingProgram?.startDate
-                        ? `Starts ${formatDisplayDate(nextUpcomingProgram.startDate)}`
-                        : ""}
+                    <span className="flex flex-col items-end text-right">
+                      <span>Starts</span>
+                      <span>
+                        {nextUpcomingProgram?.startDate
+                          ? formatDisplayDate(nextUpcomingProgram.startDate)
+                          : ""}
+                      </span>
                     </span>
                   </>
                 ) : (
@@ -516,24 +605,44 @@ export default function Program() {
                   );
                 })()}
 
-                {(() => {
-                  const nextSegmentStyle = getTimelineSegmentStyle(
-                    row,
-                    nextCycleRange?.startSlotIndex,
-                    nextCycleRange?.endSlotIndex
-                  );
+                {programState === "upcoming_only"
+                  ? upcomingCycleRanges.map((range) => {
+                      const nextSegmentStyle = getTimelineSegmentStyle(
+                        row,
+                        range.startSlotIndex,
+                        range.endSlotIndex
+                      );
 
-                  if (!nextSegmentStyle) {
-                    return null;
-                  }
+                      if (!nextSegmentStyle) {
+                        return null;
+                      }
 
-                  return (
-                    <div
-                      className={`absolute ${rowIndex === 0 ? "top-4" : "top-12"} h-1 rounded-full bg-slate-900/30 z-[1]`}
-                      style={nextSegmentStyle}
-                    />
-                  );
-                })()}
+                      return (
+                        <div
+                          key={`${range.cycleId}-${rowIndex}`}
+                          className={`absolute ${rowIndex === 0 ? "top-4" : "top-12"} h-1 rounded-full bg-slate-900/30 z-[1]`}
+                          style={nextSegmentStyle}
+                        />
+                      );
+                    })
+                  : (() => {
+                      const nextSegmentStyle = getTimelineSegmentStyle(
+                        row,
+                        nextCycleRange?.startSlotIndex,
+                        nextCycleRange?.endSlotIndex
+                      );
+
+                      if (!nextSegmentStyle) {
+                        return null;
+                      }
+
+                      return (
+                        <div
+                          className={`absolute ${rowIndex === 0 ? "top-4" : "top-12"} h-1 rounded-full bg-slate-900/30 z-[1]`}
+                          style={nextSegmentStyle}
+                        />
+                      );
+                    })()}
 
                 <div
                   className={`absolute ${rowIndex === 0 ? "top-4" : "top-12"} left-0 h-1 bg-primary z-10 transition-all`}
@@ -545,9 +654,45 @@ export default function Program() {
                   }}
                 />
 
-                {row.map((slot) => (
+                {row.map((slot) => {
+                  const isInActiveCycleRange =
+                    programState === "active" &&
+                    Number(slot.slotIndex) >= Number(activeCycleRange?.startSlotIndex) &&
+                    Number(slot.slotIndex) <= Number(activeCycleRange?.endSlotIndex);
+                  const isInUpcomingCycleRange =
+                    (programState === "upcoming_only" &&
+                      upcomingCycleRanges.some(
+                        (range) =>
+                          Number(slot.slotIndex) >= Number(range.startSlotIndex) &&
+                          Number(slot.slotIndex) <= Number(range.endSlotIndex)
+                      )) ||
+                    (programState === "active" &&
+                      Number(slot.slotIndex) >= Number(nextCycleRange?.startSlotIndex) &&
+                      Number(slot.slotIndex) <= Number(nextCycleRange?.endSlotIndex));
+                  const isUpcomingNextCycleStart =
+                    programState === "upcoming_only" &&
+                    Number(slot.slotIndex) === Number(firstUpcomingCycleRange?.startSlotIndex);
+                  const displaySlot =
+                    programState === "upcoming_only"
+                      ? {
+                          ...slot,
+                          status: isUpcomingNextCycleStart ? "next_cycle" : "neutral",
+                          showNextCycleHint: isUpcomingNextCycleStart,
+                          isCurrent: false,
+                          isCompleted: false,
+                          showNowLabel: false,
+                          isInActiveCycleRange: false,
+                          isInUpcomingCycleRange,
+                        }
+                      : {
+                          ...slot,
+                          isInActiveCycleRange,
+                          isInUpcomingCycleRange,
+                        };
+
+                  return (
                   <div key={slot.slotIndex} className="relative z-20 flex flex-col items-center">
-                    {slot.showNextCycleHint && (
+                    {displaySlot.showNextCycleHint && (
                       <span className="absolute -top-7 text-[8px] font-bold tracking-wider uppercase whitespace-nowrap text-slate-900">
                         Next Cycle
                       </span>
@@ -556,17 +701,17 @@ export default function Program() {
                     <div
                       className={[
                         "relative flex items-center justify-center shadow-sm",
-                        getTimelineNodeClasses(slot),
+                        getTimelineNodeClasses(displaySlot),
                       ].join(" ")}
                     >
-                      {slot.isCurrent ? (
+                      {displaySlot.isCurrent ? (
                         <span className="pointer-events-none absolute inset-[-3px] rounded-full border-4 border-white shadow-lg shadow-primary/40" />
                       ) : null}
-                      {slot.isCompleted ? (
+                      {displaySlot.isCompleted ? (
                         <span className="material-symbols-outlined text-sm transition-opacity duration-200">check</span>
                       ) : (
                         <span className="text-[10px] font-bold">
-                          {slot.isCurrent ? slot.label : slot.slotIndex}
+                          {displaySlot.isCurrent ? displaySlot.label : displaySlot.slotIndex}
                         </span>
                       )}
                     </div>
@@ -574,13 +719,13 @@ export default function Program() {
                     <span
                       className={[
                         "absolute -bottom-6 text-[10px] font-bold",
-                        getTimelineLabelClasses(slot),
+                        getTimelineLabelClasses(displaySlot),
                       ].join(" ")}
                     >
-                      {slot.showNowLabel ? "NOW" : slot.label}
+                      {displaySlot.showNowLabel ? "NOW" : displaySlot.label}
                     </span>
                   </div>
-                ))}
+                )})}
               </div>
             ))}
           </div>

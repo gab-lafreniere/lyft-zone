@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMultiWeekProgram } from "../context/MultiWeekProgramContext";
 import {
@@ -35,7 +35,7 @@ function formatDate(value) {
     return "";
   }
 
-  return new Date(`${value}T00:00:00Z`).toLocaleDateString("en-US", {
+  return new Date(`${value}T00:00:00`).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -165,7 +165,6 @@ export default function ManualBuilderMulti() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [selectedWorkoutOrderIndex, setSelectedWorkoutOrderIndex] = useState(null);
   const [planId, setPlanId] = useState(null);
-  const hasFetchedDraftRef = useRef(false);
 
   const todayDate = getTodayDateInput();
   const minSettingsStartDate = useMemo(() => getNextMondayDateValue(todayDate), [todayDate]);
@@ -175,35 +174,35 @@ export default function ManualBuilderMulti() {
   const activePlanId = planId || draftMetadata.cyclePlanId || null;
 
   useEffect(() => {
-    let isMounted = true;
+    if (!cycleId) {
+      setIsLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
 
     async function loadDraft() {
-      if (!cycleId || hasFetchedDraftRef.current) {
-        return;
-      }
-
-      hasFetchedDraftRef.current = true;
       setIsLoading(true);
       setLoadError(null);
 
       try {
         const response = await openOrCreateCycleEditDraft(cycleId);
         const activePlanId = response?.planId || null;
-        if (isMounted) {
-          setPlanId(activePlanId);
-          console.log("ACTIVE PLAN ID:", activePlanId);
-          hydrateProgramDraft(response);
-          updateDraftMetadata({ cyclePlanId: activePlanId });
-          setLoadError(null);
+        if (cancelled) {
+          return;
         }
+
+        setPlanId(activePlanId);
+        console.log("ACTIVE PLAN ID:", activePlanId);
+        hydrateProgramDraft(response);
+        updateDraftMetadata({ cyclePlanId: activePlanId });
+        setLoadError(null);
       } catch (loadError) {
-        if (isMounted) {
-          setLoadError(
-            buildUiError(loadError, "Unable to load cycle draft.")
-          );
+        if (!cancelled) {
+          setLoadError(buildUiError(loadError, "Unable to load cycle draft."));
         }
       } finally {
-        if (isMounted) {
+        if (!cancelled) {
           setIsLoading(false);
         }
       }
@@ -212,7 +211,7 @@ export default function ManualBuilderMulti() {
     loadDraft();
 
     return () => {
-      isMounted = false;
+      cancelled = true;
     };
   }, [cycleId, hydrateProgramDraft, updateDraftMetadata]);
 

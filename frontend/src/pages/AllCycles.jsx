@@ -19,7 +19,9 @@ function formatDateRange(startDate, endDate) {
       year: "numeric",
     });
 
-    return `${formatter.format(new Date(startDate))} - ${formatter.format(new Date(endDate))}`;
+    return `${formatter.format(new Date(`${startDate}T00:00:00`))} - ${formatter.format(
+      new Date(`${endDate}T00:00:00`)
+    )}`;
   } catch {
     return `${startDate} - ${endDate}`;
   }

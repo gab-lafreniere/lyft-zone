@@ -16,7 +16,7 @@ function formatDate(value) {
     return "";
   }
 
-  return new Date(`${value}T00:00:00Z`).toLocaleDateString("en-US", {
+  return new Date(`${value}T00:00:00`).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
