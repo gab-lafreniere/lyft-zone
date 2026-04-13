@@ -66,12 +66,104 @@ function formatDateInput(date) {
   return `${year}-${month}-${day}`;
 }
 
+function parseDateInput(value) {
+  return new Date(`${value}T00:00:00`);
+}
+
 function getNextMondayDateValue(dateValue = getTodayDateInput()) {
   const date = new Date(`${dateValue}T00:00:00`);
   const day = date.getDay();
   const daysUntilMonday = day === 1 ? 0 : day === 0 ? 1 : 8 - day;
   date.setDate(date.getDate() + daysUntilMonday);
   return formatDateInput(date);
+}
+
+function getStartOfMonthDate(dateValue) {
+  const date = dateValue instanceof Date ? new Date(dateValue) : parseDateInput(dateValue);
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addMonths(dateValue, months) {
+  const date = dateValue instanceof Date ? new Date(dateValue) : parseDateInput(dateValue);
+  return new Date(date.getFullYear(), date.getMonth() + months, 1);
+}
+
+function formatMonthHeading(dateValue) {
+  return dateValue.toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function formatWeekRange(startDateValue) {
+  const startDate = parseDateInput(startDateValue);
+  const endDate = parseDateInput(addDays(startDateValue, 6));
+  const sameMonth = startDate.getMonth() === endDate.getMonth();
+  const sameYear = startDate.getFullYear() === endDate.getFullYear();
+
+  const startLabel = startDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+  const endLabel = endDate.toLocaleDateString("en-US", {
+    month: sameMonth ? undefined : "short",
+    day: "numeric",
+    year: sameYear ? undefined : "numeric",
+  });
+
+  return `${startLabel} to ${endLabel}`;
+}
+
+function buildWeekOptionsForMonth(monthDate, minStartDateValue, selectedStartDateValue = null) {
+  const monthStart = getStartOfMonthDate(monthDate);
+  const monthEnd = addDays(formatDateInput(addMonths(monthStart, 1)), -1);
+  const firstWeekStart = parseDateInput(
+    getNextMondayDateValue(addDays(formatDateInput(monthStart), -1))
+  );
+  const monthIndex = monthStart.getMonth();
+  const year = monthStart.getFullYear();
+  const normalizedSelectedValue =
+    selectedStartDateValue && isMondayDateInput(selectedStartDateValue)
+      ? selectedStartDateValue
+      : null;
+  const options = [];
+
+  for (let cursor = firstWeekStart; formatDateInput(cursor) <= monthEnd; ) {
+    const optionValue = formatDateInput(cursor);
+    const mondayBelongsToDisplayedMonth =
+      cursor.getMonth() === monthIndex && cursor.getFullYear() === year;
+    const isSelected = optionValue === normalizedSelectedValue;
+
+    if (optionValue >= minStartDateValue && (mondayBelongsToDisplayedMonth || isSelected)) {
+      options.push({
+        value: optionValue,
+        label: formatWeekRange(optionValue),
+        isCurrentWeek: optionValue === minStartDateValue,
+        isSelectedOutsideMonth: isSelected && !mondayBelongsToDisplayedMonth,
+      });
+    }
+
+    cursor = parseDateInput(addDays(optionValue, 7));
+  }
+
+  if (
+    normalizedSelectedValue &&
+    !options.some((option) => option.value === normalizedSelectedValue) &&
+    normalizedSelectedValue >= minStartDateValue
+  ) {
+    options.unshift({
+      value: normalizedSelectedValue,
+      label: formatWeekRange(normalizedSelectedValue),
+      isCurrentWeek: normalizedSelectedValue === minStartDateValue,
+      isSelectedOutsideMonth: true,
+    });
+  }
+
+  return options;
+}
+
+function hasAllowedWeeksInMonth(monthDate, minStartDateValue) {
+  return buildWeekOptionsForMonth(monthDate, minStartDateValue).length > 0;
 }
 
 function isMondayDateInput(value) {
@@ -161,6 +253,10 @@ export default function ManualBuilderMulti() {
   const [settingsStartDate, setSettingsStartDate] = useState("");
   const [settingsDurationWeeks, setSettingsDurationWeeks] = useState(1);
   const [settingsError, setSettingsError] = useState("");
+  const [isSettingsWeekPickerOpen, setIsSettingsWeekPickerOpen] = useState(false);
+  const [settingsWeekPickerMonth, setSettingsWeekPickerMonth] = useState(() =>
+    getStartOfMonthDate(getTodayDateInput())
+  );
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [selectedWorkoutOrderIndex, setSelectedWorkoutOrderIndex] = useState(null);
@@ -450,6 +546,32 @@ export default function ManualBuilderMulti() {
     [settingsDurationWeeks, settingsStartDate, todayDate]
   );
   const settingsEndDate = settingsFinalWeekEndDate;
+  const selectedSettingsStartDateLabel = useMemo(
+    () => (settingsStartDate ? formatDate(settingsStartDate) : "--"),
+    [settingsStartDate]
+  );
+  const selectedSettingsWeekRangeLabel = useMemo(
+    () => (settingsStartDate ? formatWeekRange(settingsStartDate) : ""),
+    [settingsStartDate]
+  );
+  const settingsVisibleWeekOptions = useMemo(
+    () =>
+      buildWeekOptionsForMonth(
+        settingsWeekPickerMonth,
+        minSettingsStartDate,
+        settingsStartDate
+      ),
+    [minSettingsStartDate, settingsStartDate, settingsWeekPickerMonth]
+  );
+  const canGoToPreviousSettingsMonth = useMemo(
+    () =>
+      hasAllowedWeeksInMonth(addMonths(settingsWeekPickerMonth, -1), minSettingsStartDate),
+    [minSettingsStartDate, settingsWeekPickerMonth]
+  );
+  const settingsWeekPickerMonthLabel = useMemo(
+    () => formatMonthHeading(settingsWeekPickerMonth),
+    [settingsWeekPickerMonth]
+  );
 
   const openSettingsPanel = () => {
     setSettingsStartDate(programDraft.startDate || todayDate);
@@ -1086,15 +1208,124 @@ export default function ManualBuilderMulti() {
                     Timeline edits are available for upcoming cycles only.
                   </p>
                 </div>
-                <input
-                  type="date"
-                  value={settingsStartDate}
-                  min={minSettingsStartDate}
-                  step={7}
-                  onChange={(event) => handleSettingsStartDateChange(event.target.value)}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isTimelineEditable) {
+                      return;
+                    }
+
+                    if (!isSettingsWeekPickerOpen) {
+                      setSettingsWeekPickerMonth(
+                        getStartOfMonthDate(settingsStartDate || minSettingsStartDate)
+                      );
+                    }
+
+                    setIsSettingsWeekPickerOpen((previous) => !previous);
+                  }}
                   disabled={!isTimelineEditable}
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 font-medium outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary disabled:bg-slate-100 disabled:text-slate-400"
-                />
+                  aria-expanded={isSettingsWeekPickerOpen}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-left transition-all duration-150 focus:border-transparent focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-slate-900">
+                        {selectedSettingsStartDateLabel}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {selectedSettingsWeekRangeLabel || "Select a Monday-based week"}
+                      </div>
+                    </div>
+                    <span
+                      className={[
+                        "material-symbols-outlined text-slate-400 transition-transform",
+                        isSettingsWeekPickerOpen ? "rotate-180" : "",
+                      ].join(" ")}
+                    >
+                      expand_more
+                    </span>
+                  </div>
+                </button>
+                {isSettingsWeekPickerOpen && (
+                  <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50/70 transition-all duration-150">
+                    <div className="flex items-center justify-between border-b border-slate-200/80 bg-white/80 px-2.5 py-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          canGoToPreviousSettingsMonth &&
+                          setSettingsWeekPickerMonth((currentMonth) =>
+                            addMonths(currentMonth, -1)
+                          )
+                        }
+                        disabled={!canGoToPreviousSettingsMonth}
+                        className="flex size-8 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-300"
+                        aria-label="Previous month"
+                      >
+                        <span className="material-symbols-outlined">chevron_left</span>
+                      </button>
+
+                      <p className="text-[13px] font-semibold text-slate-900">
+                        {settingsWeekPickerMonthLabel}
+                      </p>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSettingsWeekPickerMonth((currentMonth) =>
+                            addMonths(currentMonth, 1)
+                          )
+                        }
+                        className="flex size-8 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100"
+                        aria-label="Next month"
+                      >
+                        <span className="material-symbols-outlined">chevron_right</span>
+                      </button>
+                    </div>
+
+                    <div className="max-h-48 overflow-y-auto p-1.5">
+                      <div className="space-y-1.5">
+                        {settingsVisibleWeekOptions.map((option) => {
+                          const isSelected = option.value === settingsStartDate;
+
+                          return (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => {
+                                handleSettingsStartDateChange(option.value);
+                                setIsSettingsWeekPickerOpen(false);
+                              }}
+                              className={[
+                                "w-full rounded-lg border px-3 py-2.5 text-left transition-all",
+                                isSelected
+                                  ? "border-primary/40 bg-primary/5"
+                                  : "border-slate-200/90 bg-white hover:border-primary/30 hover:bg-white",
+                              ].join(" ")}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-slate-900">
+                                    {option.label}
+                                  </div>
+                                  {(option.isCurrentWeek || option.isSelectedOutsideMonth) && (
+                                    <div className="mt-0.5 text-[11px] text-slate-500">
+                                      {option.isCurrentWeek ? "Earliest available" : "Selected outside this month"}
+                                    </div>
+                                  )}
+                                </div>
+                                {isSelected && (
+                                  <span className="material-symbols-outlined text-[20px] text-primary">
+                                    check_circle
+                                  </span>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <p className="text-xs text-slate-400">
                   Start dates must fall on a Monday.
                 </p>
