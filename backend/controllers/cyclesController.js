@@ -5,6 +5,7 @@ const {
   createPlanForCycle,
   deleteCycle,
   extendCycleDraft,
+  getCanonicalHomeDashboard,
   getCycleDetails,
   getCycleFull,
   getHomeDashboard,
@@ -122,6 +123,19 @@ async function getHomeDashboardHandler(req, res) {
   }
 }
 
+async function getCanonicalHomeDashboardHandler(req, res) {
+  try {
+    const response = await getCanonicalHomeDashboard(
+      req.query.userId,
+      req.query.timezone,
+      req.query.selectedDate
+    );
+    return res.status(200).json(response);
+  } catch (error) {
+    return handleError(req, res, error, 'get_canonical_home_dashboard');
+  }
+}
+
 async function getCycleDetailsHandler(req, res) {
   try {
     const response = await getCycleDetails(
@@ -229,6 +243,7 @@ module.exports = {
   createPlanForCycleHandler,
   deleteCycleHandler,
   extendCycleDraftHandler,
+  getCanonicalHomeDashboardHandler,
   getCycleDetailsHandler,
   getCycleFullHandler,
   getHomeDashboardHandler,

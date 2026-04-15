@@ -1,8 +1,8 @@
 const express = require('express');
-const { getHomeDashboardHandler } = require('../controllers/cyclesController');
+const { getCanonicalHomeDashboardHandler } = require('../controllers/cyclesController');
 
 const router = express.Router();
 
-router.get('/dashboard', getHomeDashboardHandler);
+router.get('/dashboard', getCanonicalHomeDashboardHandler);
 
 module.exports = router;

@@ -31,6 +31,7 @@ export default function CycleProgramDetails() {
   const [isLoading, setIsLoading] = useState(true);
   const [isOpeningDraft, setIsOpeningDraft] = useState(false);
   const [isDeletingCycle, setIsDeletingCycle] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -90,14 +91,6 @@ export default function CycleProgramDetails() {
   };
 
   const handleDelete = async () => {
-    const confirmed = window.confirm(
-      "Delete this multi-week cycle? This cannot be undone."
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
     setIsDeletingCycle(true);
     setError("");
 
@@ -186,14 +179,42 @@ export default function CycleProgramDetails() {
             {isOpeningDraft ? "Opening draft..." : cycle.temporalStatus === "past" ? "Past program" : "Edit program"}
           </button>
 
-          <button
-            type="button"
-            onClick={handleDelete}
-            disabled={isDeletingCycle}
-            className="mt-3 w-full rounded-xl border border-red-200 bg-white py-3 font-bold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-60"
-          >
-            {isDeletingCycle ? "Deleting..." : "Delete cycle"}
-          </button>
+          {!showDeleteConfirm && (
+            <button
+              type="button"
+              onClick={() => setShowDeleteConfirm(true)}
+              disabled={isDeletingCycle}
+              className="mt-3 w-full rounded-xl border border-red-200 bg-white py-3 font-bold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-60"
+            >
+              {isDeletingCycle ? "Deleting..." : "Delete cycle"}
+            </button>
+          )}
+
+          {showDeleteConfirm && (
+            <div className="mt-3 rounded-2xl border border-red-100 bg-red-50/60 p-4">
+              <h3 className="text-sm font-bold text-red-700">Confirm deletion of this cycle?</h3>
+              <p className="mt-1 text-sm text-red-600">
+                Delete this multi-week cycle and all of its versions. This action can&apos;t be undone.
+              </p>
+              <div className="mt-3 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="flex-1 rounded-xl border border-slate-200 bg-white py-3 font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={isDeletingCycle}
+                  className="flex-1 rounded-xl bg-red-500 py-3 font-semibold text-white transition-colors hover:bg-red-600 disabled:opacity-60"
+                >
+                  {isDeletingCycle ? "Deleting..." : "Delete Cycle"}
+                </button>
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

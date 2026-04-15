@@ -764,7 +764,7 @@ export function MultiWeekProgramProvider({ children }) {
     );
   }, []);
 
-  const duplicateSelectedWeekWorkout = useCallback((orderIndex) => {
+  const duplicateSelectedWeekWorkout = useCallback((orderIndex, targetScheduledDay = null) => {
     setMultiWeekDraft((prev) =>
       updateSelectedWeekDraft(prev, (week) => {
         const workouts = week.workouts || [];
@@ -786,7 +786,10 @@ export function MultiWeekProgramProvider({ children }) {
         const nextEmptyBefore = DAY_OF_WEEK.find(
           (day, index) => index < sourceDayIndex && !occupiedDays.has(day)
         );
-        const targetDay = nextEmptyAfter || nextEmptyBefore || null;
+        const targetDay =
+          DAY_OF_WEEK.includes(targetScheduledDay) && !occupiedDays.has(targetScheduledDay)
+            ? targetScheduledDay
+            : nextEmptyAfter || nextEmptyBefore || null;
 
         if (!targetDay) {
           return week;

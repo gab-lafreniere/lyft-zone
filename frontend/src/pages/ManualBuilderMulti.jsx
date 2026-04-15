@@ -43,6 +43,42 @@ function formatDate(value) {
   });
 }
 
+function getDateKeyInTimeZone(timeZone = "America/Toronto") {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${map.year}-${map.month}-${map.day}`;
+}
+
+function compareDateKeys(left, right) {
+  if (!left || !right) {
+    return 0;
+  }
+
+  return left.localeCompare(right);
+}
+
+function getRowDateState(calendarDate, todayDateKey) {
+  if (!calendarDate || !todayDateKey) {
+    return "unknown";
+  }
+
+  const comparison = compareDateKeys(calendarDate, todayDateKey);
+  if (comparison < 0) {
+    return "past";
+  }
+
+  if (comparison > 0) {
+    return "future";
+  }
+
+  return "today";
+}
+
 function getTodayDateInput() {
   const today = new Date();
   const year = today.getFullYear();
@@ -271,8 +307,15 @@ export default function ManualBuilderMulti() {
     programDraft.weeks.length || programDraft.programLength || 1
   );
   const isUpcomingCycle = draftMetadata.temporalStatus === "upcoming";
+  const isActiveCycle = draftMetadata.temporalStatus === "active";
   const isTimelineEditable = isUpcomingCycle;
   const activePlanId = planId || draftMetadata.cyclePlanId || null;
+  const editTodayDateKey =
+    draftMetadata.draftState?.localDate ||
+    getDateKeyInTimeZone(
+      draftMetadata.timezone || programDraft.timezone || "America/Toronto"
+    );
+  const isActiveEditMode = isEditMode && isActiveCycle;
 
   useEffect(() => {
     if (!cycleId) {
@@ -439,11 +482,19 @@ export default function ManualBuilderMulti() {
               (WEEKDAY_INDEX.get(row.day) || 0)
           )
         : null;
+      const dateState = getRowDateState(calendarDate, editTodayDateKey);
+      const isPastOccurrence = dateState === "past";
+      const isTodayOccurrence = dateState === "today";
+      const isFutureOccurrence = dateState === "future";
       const workout = row.workout;
       if (!workout) {
         return {
           ...row,
           calendarDate,
+          dateState,
+          isPastOccurrence,
+          isTodayOccurrence,
+          isFutureOccurrence,
           meta: null,
           canMoveUp: false,
           canMoveDown: false,
@@ -457,6 +508,10 @@ export default function ManualBuilderMulti() {
       return {
         ...row,
         calendarDate,
+        dateState,
+        isPastOccurrence,
+        isTodayOccurrence,
+        isFutureOccurrence,
         workout: {
           ...workout,
           meta: `${metrics.exerciseCount} exercises • ${metrics.setCount} sets • ~${metrics.estimatedDurationMinutes} min • ${metrics.totalTUTMinutes}m TUT`,
@@ -465,7 +520,7 @@ export default function ManualBuilderMulti() {
         targetDayDown: index < WEEKDAY_ROWS.length - 1 ? WEEKDAY_ROWS[index + 1].day : null,
       };
     });
-  }, [programDraft.selectedWeek, programDraft.startDate, selectedWeek]);
+  }, [editTodayDateKey, programDraft.selectedWeek, programDraft.startDate, selectedWeek]);
 
   const selectedWeekRangeLabel = useMemo(() => {
     if (!programDraft.startDate) {
@@ -487,11 +542,122 @@ export default function ManualBuilderMulti() {
       ) || null,
     [selectedWorkoutOrderIndex, weekdayRows]
   );
+  const selectedWorkoutRowIndex = useMemo(
+    () =>
+      weekdayRows.findIndex(
+        (row) =>
+          row.workout &&
+          Number(row.workout.orderIndex) === Number(selectedWorkoutOrderIndex)
+      ),
+    [selectedWorkoutOrderIndex, weekdayRows]
+  );
+  const previousSelectedRow = useMemo(
+    () =>
+      selectedWorkoutRowIndex > 0 ? weekdayRows[selectedWorkoutRowIndex - 1] || null : null,
+    [selectedWorkoutRowIndex, weekdayRows]
+  );
+  const nextSelectedRow = useMemo(
+    () =>
+      selectedWorkoutRowIndex >= 0 &&
+      selectedWorkoutRowIndex < weekdayRows.length - 1
+        ? weekdayRows[selectedWorkoutRowIndex + 1] || null
+        : null,
+    [selectedWorkoutRowIndex, weekdayRows]
+  );
 
   const hasEmptyWeekdaySlot = useMemo(
     () => weekdayRows.some((row) => !row.workout),
     [weekdayRows]
   );
+  const selectedWeekIsFullyPast = useMemo(
+    () =>
+      Boolean(weekdayRows.length) &&
+      weekdayRows.every(
+        (row) =>
+          row.calendarDate && compareDateKeys(row.calendarDate, editTodayDateKey) < 0
+      ),
+    [editTodayDateKey, weekdayRows]
+  );
+  const firstAvailableDuplicateRow = useMemo(() => {
+    if (!isActiveEditMode) {
+      return null;
+    }
+
+    return (
+      weekdayRows.find(
+        (row) =>
+          !row.workout &&
+          row.calendarDate &&
+          compareDateKeys(row.calendarDate, editTodayDateKey) >= 0
+      ) || null
+    );
+  }, [editTodayDateKey, isActiveEditMode, weekdayRows]);
+  const canMoveSelectedPrevious = useMemo(() => {
+    if (!selectedWorkoutRow?.workout) {
+      return false;
+    }
+
+    if (!isActiveEditMode) {
+      return Boolean(selectedWorkoutRow.targetDayUp);
+    }
+
+    if (selectedWeekIsFullyPast || selectedWorkoutRow.isPastOccurrence) {
+      return false;
+    }
+
+    return Boolean(previousSelectedRow && !previousSelectedRow.isPastOccurrence);
+  }, [isActiveEditMode, previousSelectedRow, selectedWeekIsFullyPast, selectedWorkoutRow]);
+  const canMoveSelectedNext = useMemo(() => {
+    if (!selectedWorkoutRow?.workout) {
+      return false;
+    }
+
+    if (!isActiveEditMode) {
+      return Boolean(selectedWorkoutRow.targetDayDown);
+    }
+
+    if (selectedWeekIsFullyPast || selectedWorkoutRow.isPastOccurrence) {
+      return false;
+    }
+
+    return Boolean(nextSelectedRow && !nextSelectedRow.isPastOccurrence);
+  }, [isActiveEditMode, nextSelectedRow, selectedWeekIsFullyPast, selectedWorkoutRow]);
+  const canDeleteSelectedWorkout = useMemo(() => {
+    if (!selectedWorkoutRow?.workout) {
+      return false;
+    }
+
+    if (!isActiveEditMode) {
+      return true;
+    }
+
+    if (selectedWeekIsFullyPast) {
+      return false;
+    }
+
+    return !selectedWorkoutRow.isPastOccurrence;
+  }, [isActiveEditMode, selectedWeekIsFullyPast, selectedWorkoutRow]);
+  const canDuplicateSelectedWorkout = useMemo(() => {
+    if (!selectedWorkoutRow?.workout) {
+      return false;
+    }
+
+    if (!isActiveEditMode) {
+      return hasEmptyWeekdaySlot;
+    }
+
+    if (selectedWeekIsFullyPast) {
+      return false;
+    }
+
+    return Boolean(firstAvailableDuplicateRow);
+  }, [
+    firstAvailableDuplicateRow,
+    hasEmptyWeekdaySlot,
+    isActiveEditMode,
+    selectedWeekIsFullyPast,
+    selectedWorkoutRow,
+  ]);
 
   useEffect(() => {
     setSelectedWorkoutOrderIndex(null);
@@ -787,31 +953,34 @@ export default function ManualBuilderMulti() {
       return;
     }
 
-    const targetDay =
-      direction === "previous"
-        ? selectedWorkoutRow.targetDayUp
-        : selectedWorkoutRow.targetDayDown;
+    const canMove =
+      direction === "previous" ? canMoveSelectedPrevious : canMoveSelectedNext;
+    const targetRow =
+      direction === "previous" ? previousSelectedRow : nextSelectedRow;
 
-    if (!targetDay) {
+    if (!canMove || !targetRow?.day) {
       return;
     }
 
     moveSelectedWeekWorkoutToScheduledDay(
       selectedWorkoutRow.workout.orderIndex,
-      targetDay
+      targetRow.day
     );
   };
 
   const handleDuplicateSelectedWorkout = () => {
-    if (!selectedWorkoutRow?.workout || !hasEmptyWeekdaySlot) {
+    if (!selectedWorkoutRow?.workout || !canDuplicateSelectedWorkout) {
       return;
     }
 
-    duplicateSelectedWeekWorkout(selectedWorkoutRow.workout.orderIndex);
+    duplicateSelectedWeekWorkout(
+      selectedWorkoutRow.workout.orderIndex,
+      isActiveEditMode ? firstAvailableDuplicateRow?.day || null : null
+    );
   };
 
   const handleDeleteSelectedWorkout = () => {
-    if (!selectedWorkoutRow?.workout) {
+    if (!canDeleteSelectedWorkout) {
       return;
     }
 
@@ -1074,7 +1243,7 @@ export default function ManualBuilderMulti() {
               <button
                 type="button"
                 onClick={() => handleMoveSelectedWorkout("previous")}
-                disabled={!selectedWorkoutRow?.targetDayUp}
+                disabled={!canMoveSelectedPrevious}
                 className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                 aria-label="Move workout to previous day"
                 title="Move to previous day"
@@ -1084,7 +1253,7 @@ export default function ManualBuilderMulti() {
               <button
                 type="button"
                 onClick={() => handleMoveSelectedWorkout("next")}
-                disabled={!selectedWorkoutRow?.targetDayDown}
+                disabled={!canMoveSelectedNext}
                 className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                 aria-label="Move workout to next day"
                 title="Move to next day"
@@ -1094,7 +1263,7 @@ export default function ManualBuilderMulti() {
               <button
                 type="button"
                 onClick={handleDuplicateSelectedWorkout}
-                disabled={!selectedWorkoutRow?.workout || !hasEmptyWeekdaySlot}
+                disabled={!canDuplicateSelectedWorkout}
                 className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                 aria-label="Duplicate workout in this week"
                 title="Duplicate"
@@ -1104,7 +1273,7 @@ export default function ManualBuilderMulti() {
               <button
                 type="button"
                 onClick={handleDeleteSelectedWorkout}
-                disabled={!selectedWorkoutRow?.workout}
+                disabled={!canDeleteSelectedWorkout}
                 className="flex size-9 items-center justify-center rounded-full border border-red-200 text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
                 aria-label="Delete workout from this week"
                 title="Delete"
