@@ -183,6 +183,79 @@ function trimDocumentWeeks(document, targetWeekCount) {
   };
 }
 
+function getCurrentCycleWeekNumber(cycle, timeZone, now = new Date()) {
+  const todayDateKey = getTodayDateKey(timeZone, now);
+  const startDateKey = toDateKey(cycle.startDate);
+  const totalWeeks = Math.max(1, normalizeInt(cycle.durationWeeks, 1));
+
+  return Math.min(
+    totalWeeks,
+    Math.max(1, Math.floor((diffDateKeys(startDateKey, todayDateKey) || 0) / 7) + 1)
+  );
+}
+
+async function replacePlanWeeks(tx, planId, weeks) {
+  await tx.exerciseSetTemplate.deleteMany({
+    where: {
+      blockExercise: {
+        workoutBlock: {
+          workout: {
+            planWeek: {
+              planId,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  await tx.blockExercise.deleteMany({
+    where: {
+      workoutBlock: {
+        workout: {
+          planWeek: {
+            planId,
+          },
+        },
+      },
+    },
+  });
+
+  await tx.workoutBlock.deleteMany({
+    where: {
+      workout: {
+        planWeek: {
+          planId,
+        },
+      },
+    },
+  });
+
+  await tx.workout.deleteMany({
+    where: {
+      planWeek: {
+        planId,
+      },
+    },
+  });
+
+  await tx.planWeek.deleteMany({
+    where: {
+      planId,
+    },
+  });
+
+  return tx.plan.update({
+    where: { id: planId },
+    data: {
+      weeks: {
+        create: buildPlanCreateWeeksInput(weeks),
+      },
+    },
+    include: fullPlanInclude,
+  });
+}
+
 function assertEnumValue(value, allowedValues, fieldName) {
   if (value == null) {
     return;
@@ -280,58 +353,58 @@ function normalizeWorkoutDayAssignments(assignments, sourceVersion) {
 function normalizeWorkoutsInput(workouts = []) {
   return Array.isArray(workouts)
     ? workouts.map((workout, workoutIndex) => ({
-        id: workout.id,
-        name: String(workout.name || '').trim(),
-        orderIndex: normalizeInt(workout.orderIndex, workoutIndex + 1),
-        scheduledDay: workout.scheduledDay ?? null,
-        estimatedDurationMinutes: normalizeInt(workout.estimatedDurationMinutes, null),
-        notes: normalizeOptionalString(workout.notes),
-        blocks: Array.isArray(workout.blocks)
-          ? workout.blocks.map((block, blockIndex) => ({
-              id: block.id,
-              orderIndex: normalizeInt(block.orderIndex, blockIndex + 1),
-              blockType: block.blockType,
-              label: normalizeOptionalString(block.label),
-              roundCount: normalizeInt(block.roundCount, null),
-              restStrategy: block.restStrategy ?? null,
-              restSeconds: normalizeInt(block.restSeconds, null),
-              notes: normalizeOptionalString(block.notes),
-              exercises: Array.isArray(block.exercises)
-                ? block.exercises.map((exercise, exerciseIndex) => ({
-                    id: exercise.id,
-                    exerciseId: normalizeOptionalString(exercise.exerciseId),
-                    exerciseName: String(exercise.exerciseName || '').trim(),
-                    bodyParts: Array.isArray(exercise.bodyParts) ? exercise.bodyParts : [],
-                    muscleFocus: Array.isArray(exercise.muscleFocus) ? exercise.muscleFocus : [],
-                    orderIndex: normalizeInt(exercise.orderIndex, exerciseIndex + 1),
-                    executionNotes: normalizeOptionalString(exercise.executionNotes),
-                    defaultTempo: normalizeOptionalString(exercise.defaultTempo),
-                    defaultRestSeconds: normalizeInt(exercise.defaultRestSeconds, null),
-                    defaultTargetRir: normalizeNumeric(exercise.defaultTargetRir),
-                    defaultTargetRpe: normalizeNumeric(exercise.defaultTargetRpe),
-                    intensificationMethod: exercise.intensificationMethod ?? 'NONE',
-                    notes: normalizeOptionalString(exercise.notes),
-                    setTemplates: Array.isArray(exercise.setTemplates)
-                      ? exercise.setTemplates.map((setTemplate, setIndex) => ({
-                          id: setTemplate.id,
-                          setIndex: normalizeInt(setTemplate.setIndex, setIndex + 1),
-                          setType: setTemplate.setType ?? 'WORKING',
-                          targetReps: normalizeInt(setTemplate.targetReps, null),
-                          minReps: normalizeInt(setTemplate.minReps, null),
-                          maxReps: normalizeInt(setTemplate.maxReps, null),
-                          targetSeconds: normalizeInt(setTemplate.targetSeconds, null),
-                          targetRir: normalizeNumeric(setTemplate.targetRir),
-                          targetRpe: normalizeNumeric(setTemplate.targetRpe),
-                          tempo: normalizeOptionalString(setTemplate.tempo),
-                          restSeconds: normalizeInt(setTemplate.restSeconds, null),
-                          notes: normalizeOptionalString(setTemplate.notes),
-                        }))
-                      : [],
-                  }))
+      id: workout.id,
+      name: String(workout.name || '').trim(),
+      orderIndex: normalizeInt(workout.orderIndex, workoutIndex + 1),
+      scheduledDay: workout.scheduledDay ?? null,
+      estimatedDurationMinutes: normalizeInt(workout.estimatedDurationMinutes, null),
+      notes: normalizeOptionalString(workout.notes),
+      blocks: Array.isArray(workout.blocks)
+        ? workout.blocks.map((block, blockIndex) => ({
+          id: block.id,
+          orderIndex: normalizeInt(block.orderIndex, blockIndex + 1),
+          blockType: block.blockType,
+          label: normalizeOptionalString(block.label),
+          roundCount: normalizeInt(block.roundCount, null),
+          restStrategy: block.restStrategy ?? null,
+          restSeconds: normalizeInt(block.restSeconds, null),
+          notes: normalizeOptionalString(block.notes),
+          exercises: Array.isArray(block.exercises)
+            ? block.exercises.map((exercise, exerciseIndex) => ({
+              id: exercise.id,
+              exerciseId: normalizeOptionalString(exercise.exerciseId),
+              exerciseName: String(exercise.exerciseName || '').trim(),
+              bodyParts: Array.isArray(exercise.bodyParts) ? exercise.bodyParts : [],
+              muscleFocus: Array.isArray(exercise.muscleFocus) ? exercise.muscleFocus : [],
+              orderIndex: normalizeInt(exercise.orderIndex, exerciseIndex + 1),
+              executionNotes: normalizeOptionalString(exercise.executionNotes),
+              defaultTempo: normalizeOptionalString(exercise.defaultTempo),
+              defaultRestSeconds: normalizeInt(exercise.defaultRestSeconds, null),
+              defaultTargetRir: normalizeNumeric(exercise.defaultTargetRir),
+              defaultTargetRpe: normalizeNumeric(exercise.defaultTargetRpe),
+              intensificationMethod: exercise.intensificationMethod ?? 'NONE',
+              notes: normalizeOptionalString(exercise.notes),
+              setTemplates: Array.isArray(exercise.setTemplates)
+                ? exercise.setTemplates.map((setTemplate, setIndex) => ({
+                  id: setTemplate.id,
+                  setIndex: normalizeInt(setTemplate.setIndex, setIndex + 1),
+                  setType: setTemplate.setType ?? 'WORKING',
+                  targetReps: normalizeInt(setTemplate.targetReps, null),
+                  minReps: normalizeInt(setTemplate.minReps, null),
+                  maxReps: normalizeInt(setTemplate.maxReps, null),
+                  targetSeconds: normalizeInt(setTemplate.targetSeconds, null),
+                  targetRir: normalizeNumeric(setTemplate.targetRir),
+                  targetRpe: normalizeNumeric(setTemplate.targetRpe),
+                  tempo: normalizeOptionalString(setTemplate.tempo),
+                  restSeconds: normalizeInt(setTemplate.restSeconds, null),
+                  notes: normalizeOptionalString(setTemplate.notes),
+                }))
                 : [],
             }))
-          : [],
-      }))
+            : [],
+        }))
+        : [],
+    }))
     : [];
 }
 
@@ -641,14 +714,14 @@ function toBuilderBlock(block) {
     rest: `${block.restSeconds || singleExercise?.defaultRestSeconds || 120}s`,
     sets: Array.isArray(singleExercise?.setTemplates)
       ? singleExercise.setTemplates.map((setTemplate) => ({
-          id: setTemplate.id,
-          reps:
-            setTemplate.targetReps ??
-            setTemplate.maxReps ??
-            setTemplate.minReps ??
-            8,
-          rpe: Number(setTemplate.targetRir ?? 2),
-        }))
+        id: setTemplate.id,
+        reps:
+          setTemplate.targetReps ??
+          setTemplate.maxReps ??
+          setTemplate.minReps ??
+          8,
+        rpe: Number(setTemplate.targetRir ?? 2),
+      }))
       : [],
     notes: block.notes || singleExercise?.notes || '',
   };
@@ -688,8 +761,23 @@ function buildCycleBuilderPayload(cycle, plan) {
   };
 }
 
-function getOccurrenceDateKey(startDateKey, weekNumber, workoutOrderIndex) {
-  return addDays(startDateKey, (weekNumber - 1) * 7 + (workoutOrderIndex - 1));
+function getOccurrenceDateKey(startDateKey, weekNumber, workout) {
+  const dayOffsets = {
+    MONDAY: 0,
+    TUESDAY: 1,
+    WEDNESDAY: 2,
+    THURSDAY: 3,
+    FRIDAY: 4,
+    SATURDAY: 5,
+    SUNDAY: 6,
+  };
+
+  const scheduledOffset =
+    workout?.scheduledDay && dayOffsets[workout.scheduledDay] != null
+      ? dayOffsets[workout.scheduledDay]
+      : Math.max(0, (workout.orderIndex || 1) - 1);
+
+  return addDays(startDateKey, (weekNumber - 1) * 7 + scheduledOffset);
 }
 
 function logCycleServiceEvent(operation, phase, context = {}) {
@@ -1464,9 +1552,9 @@ function buildCycleStructure(activeCard, nextUpcomingCard, timezone, todayDateKe
   const totalWeeks = Number(anchorCard.durationWeeks) || 0;
   const currentWeekNumber = activeCard
     ? Math.min(
-        Math.max(1, Math.floor((diffDateKeys(anchorWeekStart, getStartOfMondayWeek(todayDateKey)) || 0) / 7) + 1),
-        Math.max(1, totalWeeks)
-      )
+      Math.max(1, Math.floor((diffDateKeys(anchorWeekStart, getStartOfMondayWeek(todayDateKey)) || 0) / 7) + 1),
+      Math.max(1, totalWeeks)
+    )
     : null;
   const progressWeekNumber = activeCard ? currentWeekNumber : null;
   const activeWeeksByNumber = new Map(
@@ -1841,7 +1929,7 @@ async function openOrCreateCycleEditDraft(cycleId, payload = {}) {
                 throw error;
               }
             }
-        }
+          }
           state = 'fresh';
         }
       }
@@ -1982,6 +2070,42 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
       }
 
       phase = 'replace_draft_weeks';
+      await tx.exerciseSetTemplate.deleteMany({
+        where: {
+          blockExercise: {
+            workoutBlock: {
+              workout: {
+                planWeek: {
+                  planId: draftPlan.id,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      await tx.blockExercise.deleteMany({
+        where: {
+          workoutBlock: {
+            workout: {
+              planWeek: {
+                planId: draftPlan.id,
+              },
+            },
+          },
+        },
+      });
+
+      await tx.workoutBlock.deleteMany({
+        where: {
+          workout: {
+            planWeek: {
+              planId: draftPlan.id,
+            },
+          },
+        },
+      });
+
       await tx.workout.deleteMany({
         where: {
           planWeek: {
@@ -2061,14 +2185,21 @@ function mergePublishedAndDraftWorkouts(cycle, publishedPlan, draftPlan, timeZon
           const occurrenceDateKey = getOccurrenceDateKey(
             cycleStartDateKey,
             week.weekNumber,
-            workout.orderIndex
+            workout
           );
 
           if (compareDateKeys(occurrenceDateKey, todayDateKey) < 0) {
-            return (
-              publishedWeek?.workouts.find((entry) => entry.orderIndex === workout.orderIndex) ||
-              workout
-            );
+            const matched = publishedWeek?.workouts.find((entry) => {
+              const publishedDate = getOccurrenceDateKey(
+                cycleStartDateKey,
+                week.weekNumber,
+                entry
+              );
+
+              return publishedDate === occurrenceDateKey;
+            });
+
+            return matched || workout; // fallback IMPORTANT
           }
 
           return workout;
@@ -2226,6 +2357,194 @@ async function publishCycleDraft(cycleId, payload = {}) {
     logCycleServiceError('publish_cycle_draft', phase, { cycleId, userId }, error);
     throw error;
   }
+}
+
+async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
+  const prisma = getPrisma();
+  const userId = normalizeOptionalString(payload.userId);
+  await assertUserExists(userId);
+
+  return prisma.$transaction(async (tx) => {
+    const cycle = await loadCycleForUser(tx, cycleId, userId);
+    const effectiveTimezone = resolveEffectiveTimezone(cycle.timezone, payload.timezone, DEFAULT_TIMEZONE);
+    const temporalStatus = deriveTemporalStatus(cycle, effectiveTimezone);
+    const todayDateKey = getTodayDateKey(effectiveTimezone);
+    const currentStartDateKey = toDateKey(cycle.startDate);
+    const currentWeekNumber =
+      temporalStatus === 'active' ? getCurrentCycleWeekNumber(cycle, effectiveTimezone) : null;
+
+    if (temporalStatus === 'past') {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'Past cycles cannot be edited');
+    }
+
+    if (!['upcoming', 'active'].includes(temporalStatus)) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'This cycle timeline cannot be edited');
+    }
+
+    const {
+      startDateKey: normalizedStartDateKey,
+      endDateKey: nextEndDateKey,
+      durationWeeks: nextDurationWeeks,
+    } = normalizeCanonicalMultiWeekDateRange(
+      payload.newStartDate,
+      payload.durationWeeks,
+      payload.newEndDate || payload.endDate,
+      'newStartDate',
+      'newEndDate'
+    );
+
+    if (temporalStatus === 'upcoming') {
+      ensureNotPastDate(normalizedStartDateKey, todayDateKey, 'startDate');
+      ensureNotPastDate(nextEndDateKey, todayDateKey, 'endDate');
+
+      if (nextDurationWeeks > cycle.durationWeeks) {
+        throw new ApiError(
+          400,
+          'VALIDATION_ERROR',
+          'Extending a cycle beyond its current structure is not supported yet'
+        );
+      }
+
+      const existingCycles = await tx.trainingCycle.findMany({
+        where: { userId },
+        select: { id: true, startDate: true, endDate: true },
+      });
+      validateNoOverlap(existingCycles, normalizedStartDateKey, nextEndDateKey, cycle.id);
+    } else {
+      if (normalizedStartDateKey !== currentStartDateKey) {
+        throw new ApiError(
+          400,
+          'VALIDATION_ERROR',
+          'Active cycles cannot change their start date'
+        );
+      }
+
+      if (nextDurationWeeks > cycle.durationWeeks) {
+        throw new ApiError(
+          400,
+          'VALIDATION_ERROR',
+          'Active cycles can only be shortened'
+        );
+      }
+
+      if (nextDurationWeeks < currentWeekNumber) {
+        throw new ApiError(
+          400,
+          'VALIDATION_ERROR',
+          `durationWeeks cannot be shorter than the current week (${currentWeekNumber})`
+        );
+      }
+    }
+
+    let draftPlan = await normalizeSingleDraft(tx, cycle.id);
+    const publishedPlan = pickLatestPublished(cycle.plans);
+
+    if (!draftPlan && publishedPlan) {
+      const sourceDocument = clonePlanDocument(publishedPlan);
+      const latestPlan = cycle.plans[0];
+
+      draftPlan = await tx.plan.create({
+        data: {
+          trainingCycleId: cycle.id,
+          parentPlanId: publishedPlan.id,
+          name: sourceDocument.name,
+          versionNumber: (latestPlan?.versionNumber ?? 0) + 1,
+          sourceType: publishedPlan.sourceType || 'USER',
+          status: 'DRAFT',
+          weeks: {
+            create: buildPlanCreateWeeksInput(sourceDocument.weeks),
+          },
+        },
+        include: fullPlanInclude,
+      });
+    }
+
+    if (!draftPlan || draftPlan.id !== planId) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'This draft is not the current editable version');
+    }
+
+    const trimmedDocument = trimDocumentWeeks(
+      validateCycleDocument(clonePlanDocument(draftPlan), 'draft'),
+      nextDurationWeeks
+    );
+
+    draftPlan = await replacePlanWeeks(tx, draftPlan.id, trimmedDocument.weeks);
+
+    const sessionCandidates = await tx.scheduledSession.findMany({
+      where: {
+        workout: {
+          planWeek: {
+            plan: {
+              trainingCycleId: cycle.id,
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+        scheduledStartAt: true,
+      },
+    });
+    const scheduledSessionIdsToDelete = sessionCandidates
+      .filter(
+        (session) =>
+          getLocalDateTimeParts(session.scheduledStartAt, effectiveTimezone).dateKey > nextEndDateKey
+      )
+      .map((session) => session.id);
+
+    if (scheduledSessionIdsToDelete.length > 0) {
+      await tx.scheduledSession.deleteMany({
+        where: {
+          id: {
+            in: scheduledSessionIdsToDelete,
+          },
+        },
+      });
+    }
+
+    const updatedCycle = await tx.trainingCycle.update({
+      where: { id: cycle.id },
+      data: {
+        startDate: parseDateInput(normalizedStartDateKey),
+        endDate: parseDateInput(nextEndDateKey),
+        durationWeeks: nextDurationWeeks,
+      },
+      include: {
+        plans: {
+          orderBy: { versionNumber: 'desc' },
+          include: fullPlanInclude,
+        },
+      },
+    });
+
+    const nextDraftPlan = pickLatestDraft(updatedCycle.plans);
+    const visiblePlan = nextDraftPlan || pickLatestPublished(updatedCycle.plans);
+
+    return {
+      cycleId: updatedCycle.id,
+      planId: nextDraftPlan?.id || draftPlan.id,
+      cycle: {
+        id: updatedCycle.id,
+        startDate: toDateKey(updatedCycle.startDate),
+        endDate: toDateKey(updatedCycle.endDate),
+        durationWeeks: updatedCycle.durationWeeks,
+        timezone: effectiveTimezone,
+        temporalStatus: deriveTemporalStatus(updatedCycle, effectiveTimezone),
+      },
+      visiblePlanId: visiblePlan?.id || null,
+      status: nextDraftPlan?.status || visiblePlan?.status || 'DRAFT',
+      builderPayload: visiblePlan ? buildCycleBuilderPayload(updatedCycle, visiblePlan) : null,
+      temporalStatus: deriveTemporalStatus(updatedCycle, effectiveTimezone),
+      timezone: effectiveTimezone,
+      draftState: {
+        effectiveTimezone,
+        localDate: todayDateKey,
+        isGraceWindow: temporalStatus === 'active' && isWithinGraceWindow(effectiveTimezone),
+        canExtendDraft: temporalStatus === 'active' && isWithinGraceWindow(effectiveTimezone),
+      },
+      currentWeekNumber,
+    };
+  });
 }
 
 async function rescheduleUpcomingCycle(cycleId, payload = {}) {
@@ -2442,7 +2761,7 @@ function createCalendarRowsForWeek(startDateKey, cycleCard, visiblePlan, weekSta
   const serializedPlan = serializePlan(visiblePlan);
   (serializedPlan?.weeks || []).forEach((week) => {
     week.workouts.forEach((workout) => {
-      const occurrenceDateKey = getOccurrenceDateKey(startDateKey, week.weekNumber, workout.orderIndex);
+      const occurrenceDateKey = getOccurrenceDateKey(startDateKey, week.weekNumber, workout);
       workoutsByDate.set(occurrenceDateKey, {
         id: workout.id,
         name: workout.name,
@@ -2861,4 +3180,5 @@ module.exports = {
   publishCycleDraft,
   rescheduleUpcomingCycle,
   updateCycleDraft,
+  updateUpcomingDraftTimeline,
 };

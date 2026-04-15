@@ -7,8 +7,12 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  getDateKeyInTimeZone,
+  resolveOccurrenceTemporalState,
+} from "../features/multiWeek/occurrence";
 import { mapCycleBuilderPayload, mapMultiWeekDraftToApi } from "../features/multiWeek/mappers";
-import { updateCycleDraft } from "../services/api";
+import { openOrCreateCycleEditDraft, updateCycleDraft } from "../services/api";
 
 const MultiWeekProgramContext = createContext(null);
 export const MAX_BLOCK_SET_COUNT = 10;
@@ -202,6 +206,8 @@ function createInitialDraftMetadata() {
     allowCrossDayDraft: false,
     lastSaveErrorMessage: null,
     lastSaveErrorCode: null,
+    isRecoveringDraft: false,
+    recoveryMessage: null,
   };
 }
 
@@ -235,11 +241,50 @@ function resolvePreservedSelectedWeek(currentSelectedWeek, nextDraft) {
   return nextDraft?.weeks?.[0]?.weekNumber || 1;
 }
 
+function getWorkoutFallbackWeekdayIndex(workout) {
+  const orderIndex = Number(workout?.orderIndex);
+  if (!Number.isInteger(orderIndex) || orderIndex < 1) {
+    return null;
+  }
+
+  return Math.max(0, orderIndex - 1);
+}
+
+function getMultiWeekTodayDateKey(metadata, draft) {
+  return (
+    metadata?.draftState?.localDate ||
+    getDateKeyInTimeZone(metadata?.timezone || draft?.timezone || "America/Toronto")
+  );
+}
+
+function isLockedActiveCycleWorkoutOccurrence({
+  draft,
+  metadata,
+  weekNumber,
+  workout,
+  scheduledDay = undefined,
+  weekdayIndex = undefined,
+}) {
+  if (metadata?.temporalStatus !== "active" || !draft?.startDate || !workout) {
+    return false;
+  }
+
+  return resolveOccurrenceTemporalState({
+    cycleStartDate: draft.startDate,
+    weekNumber,
+    scheduledDay: scheduledDay === undefined ? workout.scheduledDay || null : scheduledDay,
+    weekdayIndex:
+      weekdayIndex === undefined ? getWorkoutFallbackWeekdayIndex(workout) : weekdayIndex,
+    todayDateKey: getMultiWeekTodayDateKey(metadata, draft),
+  }).isPastOccurrence;
+}
+
 export function MultiWeekProgramProvider({ children }) {
   const [multiWeekDraft, setMultiWeekDraft] = useState(createInitialDraft);
   const [draftMetadata, setDraftMetadata] = useState(createInitialDraftMetadata);
   const multiWeekDraftRef = useRef(multiWeekDraft);
   const draftMetadataRef = useRef(draftMetadata);
+  const draftRecoveryPromiseRef = useRef(null);
 
   useEffect(() => {
     multiWeekDraftRef.current = multiWeekDraft;
@@ -263,9 +308,88 @@ export function MultiWeekProgramProvider({ children }) {
     [multiWeekDraft, selectedWeek]
   );
 
+  const hydrateProgramDraft = useCallback((response) => {
+    const nextState = mapCycleBuilderPayload(response);
+    setMultiWeekDraft((prev) => ({
+      ...nextState.programDraft,
+      selectedWeek: resolvePreservedSelectedWeek(prev.selectedWeek, nextState.programDraft),
+    }));
+    setDraftMetadata({
+      ...createInitialDraftMetadata(),
+      ...nextState.metadata,
+    });
+  }, []);
+
+  const handleDraftExpired = useCallback(async (error, cycleIdOverride = null) => {
+    if (error?.code !== "DRAFT_EXPIRED") {
+      return false;
+    }
+
+    if (draftRecoveryPromiseRef.current) {
+      await draftRecoveryPromiseRef.current;
+      return true;
+    }
+
+    const currentMetadata = draftMetadataRef.current;
+    const resolvedCycleId = cycleIdOverride || currentMetadata?.cycleId || null;
+    const recoveryFailureMessage = "Unable to recover draft. Please refresh the page.";
+
+    if (!resolvedCycleId) {
+      setDraftMetadata((prev) => ({
+        ...prev,
+        isRecoveringDraft: false,
+        recoveryMessage: recoveryFailureMessage,
+        saveState: "error",
+        lastSaveErrorMessage: recoveryFailureMessage,
+        lastSaveErrorCode: error?.code || "DRAFT_EXPIRED",
+      }));
+      return true;
+    }
+
+    const recoveryPromise = (async () => {
+      setDraftMetadata((prev) => ({
+        ...prev,
+        isRecoveringDraft: true,
+        recoveryMessage: "Your draft expired. Reloading latest version...",
+        saveState: "idle",
+        lastSaveErrorMessage: null,
+        lastSaveErrorCode: "DRAFT_EXPIRED",
+      }));
+
+      try {
+        const response = await openOrCreateCycleEditDraft(resolvedCycleId, {
+          timezone: currentMetadata?.timezone,
+          allowCrossDayDraft: currentMetadata?.allowCrossDayDraft,
+        });
+        hydrateProgramDraft(response);
+        return response;
+      } catch (recoveryError) {
+        setDraftMetadata((prev) => ({
+          ...prev,
+          isRecoveringDraft: false,
+          recoveryMessage: recoveryFailureMessage,
+          saveState: "error",
+          lastSaveErrorMessage: recoveryFailureMessage,
+          lastSaveErrorCode: recoveryError?.code || null,
+        }));
+        return null;
+      } finally {
+        draftRecoveryPromiseRef.current = null;
+      }
+    })();
+
+    draftRecoveryPromiseRef.current = recoveryPromise;
+    await recoveryPromise;
+    return true;
+  }, [hydrateProgramDraft]);
+
   const persistDraftNow = useCallback(async (overrideDraft = null) => {
     const currentMetadata = draftMetadataRef.current;
     const currentPlanId = currentMetadata?.cyclePlanId || null;
+    if (currentMetadata?.isRecoveringDraft) {
+      return null;
+    }
+
     if (
       !currentMetadata.loadedFromBackend ||
       !currentMetadata.cycleId ||
@@ -316,6 +440,11 @@ export function MultiWeekProgramProvider({ children }) {
 
       return response;
     } catch (error) {
+      const didRecoverDraft = await handleDraftExpired(error, currentMetadata?.cycleId || null);
+      if (didRecoverDraft) {
+        return null;
+      }
+
       setDraftMetadata((prev) => (
         prev.saveState === "error"
           ? prev
@@ -328,10 +457,15 @@ export function MultiWeekProgramProvider({ children }) {
       ));
       throw error;
     }
-  }, []);
+  }, [handleDraftExpired]);
 
   useEffect(() => {
-    if (!draftMetadata.loadedFromBackend || !draftMetadata.cycleId || !draftMetadata.cyclePlanId) {
+    if (
+      draftMetadata.isRecoveringDraft ||
+      !draftMetadata.loadedFromBackend ||
+      !draftMetadata.cycleId ||
+      !draftMetadata.cyclePlanId
+    ) {
       return undefined;
     }
 
@@ -366,23 +500,12 @@ export function MultiWeekProgramProvider({ children }) {
   }, [
     draftMetadata.cycleId,
     draftMetadata.cyclePlanId,
+    draftMetadata.isRecoveringDraft,
     draftMetadata.lastPersistedSignature,
     draftMetadata.loadedFromBackend,
     multiWeekDraft,
     persistDraftNow,
   ]);
-
-  const hydrateProgramDraft = useCallback((response) => {
-    const nextState = mapCycleBuilderPayload(response);
-    setMultiWeekDraft((prev) => ({
-      ...nextState.programDraft,
-      selectedWeek: resolvePreservedSelectedWeek(prev.selectedWeek, nextState.programDraft),
-    }));
-    setDraftMetadata({
-      ...createInitialDraftMetadata(),
-      ...nextState.metadata,
-    });
-  }, []);
 
   const updateProgramMeta = useCallback((updates = {}) => {
     setMultiWeekDraft((prev) => ({ ...prev, ...updates }));
@@ -394,12 +517,26 @@ export function MultiWeekProgramProvider({ children }) {
 
   const updateWorkoutName = useCallback((workoutId, name) => {
     setMultiWeekDraft((prev) =>
-      updateSelectedWeekDraft(prev, (week) => ({
-        ...week,
-        workouts: week.workouts.map((workout) =>
-          workout.id === workoutId ? { ...workout, name } : workout
-        ),
-      }))
+      updateSelectedWeekDraft(prev, (week) => {
+        const targetWorkout = week.workouts.find((workout) => workout.id === workoutId);
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: targetWorkout,
+          })
+        ) {
+          return week;
+        }
+
+        return {
+          ...week,
+          workouts: week.workouts.map((workout) =>
+            workout.id === workoutId ? { ...workout, name } : workout
+          ),
+        };
+      })
     );
   }, []);
 
@@ -501,48 +638,76 @@ export function MultiWeekProgramProvider({ children }) {
 
   const updateBlock = useCallback((workoutId, blockId, updates) => {
     setMultiWeekDraft((prev) =>
-      updateSelectedWeekDraft(prev, (week) => ({
-        ...week,
-        workouts: week.workouts.map((workout) =>
-          workout.id === workoutId
-            ? {
-                ...workout,
-                blocks: workout.blocks.map((block) =>
-                  block.id === blockId ? { ...block, ...updates } : block
-                ),
-              }
-            : workout
-        ),
-      }))
+      updateSelectedWeekDraft(prev, (week) => {
+        const targetWorkout = week.workouts.find((workout) => workout.id === workoutId);
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: targetWorkout,
+          })
+        ) {
+          return week;
+        }
+
+        return {
+          ...week,
+          workouts: week.workouts.map((workout) =>
+            workout.id === workoutId
+              ? {
+                  ...workout,
+                  blocks: workout.blocks.map((block) =>
+                    block.id === blockId ? { ...block, ...updates } : block
+                  ),
+                }
+              : workout
+          ),
+        };
+      })
     );
   }, []);
 
   const updateSupersetExercise = useCallback((workoutId, blockId, exerciseIndex, updates) => {
     setMultiWeekDraft((prev) =>
-      updateSelectedWeekDraft(prev, (week) => ({
-        ...week,
-        workouts: week.workouts.map((workout) => {
-          if (workout.id !== workoutId) {
-            return workout;
-          }
+      updateSelectedWeekDraft(prev, (week) => {
+        const targetWorkout = week.workouts.find((workout) => workout.id === workoutId);
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: targetWorkout,
+          })
+        ) {
+          return week;
+        }
 
-          return {
-            ...workout,
-            blocks: workout.blocks.map((block) => {
-              if (block.id !== blockId || block.type !== "superset") {
-                return block;
-              }
+        return {
+          ...week,
+          workouts: week.workouts.map((workout) => {
+            if (workout.id !== workoutId) {
+              return workout;
+            }
 
-              return normalizeSupersetBlock({
-                ...block,
-                exercises: block.exercises.map((exercise, index) =>
-                  index === exerciseIndex ? { ...exercise, ...updates } : exercise
-                ),
-              });
-            }),
-          };
-        }),
-      }))
+            return {
+              ...workout,
+              blocks: workout.blocks.map((block) => {
+                if (block.id !== blockId || block.type !== "superset") {
+                  return block;
+                }
+
+                return normalizeSupersetBlock({
+                  ...block,
+                  exercises: block.exercises.map((exercise, index) =>
+                    index === exerciseIndex ? { ...exercise, ...updates } : exercise
+                  ),
+                });
+              }),
+            };
+          }),
+        };
+      })
     );
   }, []);
 
@@ -550,128 +715,184 @@ export function MultiWeekProgramProvider({ children }) {
     const safeCount = clampNumber(nextCount || 1, 1, MAX_BLOCK_SET_COUNT);
 
     setMultiWeekDraft((prev) =>
-      updateSelectedWeekDraft(prev, (week) => ({
-        ...week,
-        workouts: week.workouts.map((workout) => {
-          if (workout.id !== workoutId) {
-            return workout;
-          }
+      updateSelectedWeekDraft(prev, (week) => {
+        const targetWorkout = week.workouts.find((workout) => workout.id === workoutId);
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: targetWorkout,
+          })
+        ) {
+          return week;
+        }
 
-          return {
-            ...workout,
-            blocks: workout.blocks.map((block) => {
-              if (block.id !== blockId || block.type !== "superset") {
-                return block;
-              }
+        return {
+          ...week,
+          workouts: week.workouts.map((workout) => {
+            if (workout.id !== workoutId) {
+              return workout;
+            }
 
-              return normalizeSupersetBlock({
-                ...block,
-                sets: safeCount,
-              });
-            }),
-          };
-        }),
-      }))
+            return {
+              ...workout,
+              blocks: workout.blocks.map((block) => {
+                if (block.id !== blockId || block.type !== "superset") {
+                  return block;
+                }
+
+                return normalizeSupersetBlock({
+                  ...block,
+                  sets: safeCount,
+                });
+              }),
+            };
+          }),
+        };
+      })
     );
   }, []);
 
   const removeBlock = useCallback((workoutId, blockId) => {
     setMultiWeekDraft((prev) =>
-      updateSelectedWeekDraft(prev, (week) => ({
-        ...week,
-        workouts: week.workouts.map((workout) =>
-          workout.id === workoutId
-            ? {
-                ...workout,
-                blocks: workout.blocks.filter((block) => block.id !== blockId),
-              }
-            : workout
-        ),
-      }))
+      updateSelectedWeekDraft(prev, (week) => {
+        const targetWorkout = week.workouts.find((workout) => workout.id === workoutId);
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: targetWorkout,
+          })
+        ) {
+          return week;
+        }
+
+        return {
+          ...week,
+          workouts: week.workouts.map((workout) =>
+            workout.id === workoutId
+              ? {
+                  ...workout,
+                  blocks: workout.blocks.filter((block) => block.id !== blockId),
+                }
+              : workout
+          ),
+        };
+      })
     );
   }, []);
 
   const addSet = useCallback((workoutId, blockId, exerciseIndex = null) => {
     setMultiWeekDraft((prev) =>
-      updateSelectedWeekDraft(prev, (week) => ({
-        ...week,
-        workouts: week.workouts.map((workout) => {
-          if (workout.id !== workoutId) {
-            return workout;
-          }
+      updateSelectedWeekDraft(prev, (week) => {
+        const targetWorkout = week.workouts.find((workout) => workout.id === workoutId);
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: targetWorkout,
+          })
+        ) {
+          return week;
+        }
 
-          return {
-            ...workout,
-            blocks: workout.blocks.map((block) => {
-              if (block.id !== blockId) {
-                return block;
-              }
+        return {
+          ...week,
+          workouts: week.workouts.map((workout) => {
+            if (workout.id !== workoutId) {
+              return workout;
+            }
 
-              if (block.type === "single") {
-                if (block.sets.length >= MAX_BLOCK_SET_COUNT) {
+            return {
+              ...workout,
+              blocks: workout.blocks.map((block) => {
+                if (block.id !== blockId) {
                   return block;
                 }
 
-                return {
+                if (block.type === "single") {
+                  if (block.sets.length >= MAX_BLOCK_SET_COUNT) {
+                    return block;
+                  }
+
+                  return {
+                    ...block,
+                    sets: [...block.sets, createSingleSetRow()],
+                  };
+                }
+
+                if ((block.sets || 1) >= MAX_BLOCK_SET_COUNT) {
+                  return block;
+                }
+
+                return normalizeSupersetBlock({
                   ...block,
-                  sets: [...block.sets, createSingleSetRow()],
-                };
-              }
-
-              if ((block.sets || 1) >= MAX_BLOCK_SET_COUNT) {
-                return block;
-              }
-
-              return normalizeSupersetBlock({
-                ...block,
-                sets: (block.sets || 1) + 1,
-              });
-            }),
-          };
-        }),
-      }))
+                  sets: (block.sets || 1) + 1,
+                });
+              }),
+            };
+          }),
+        };
+      })
     );
   }, []);
 
   const removeSet = useCallback((workoutId, blockId, setIndex, exerciseIndex = null) => {
     setMultiWeekDraft((prev) =>
-      updateSelectedWeekDraft(prev, (week) => ({
-        ...week,
-        workouts: week.workouts.map((workout) => {
-          if (workout.id !== workoutId) {
-            return workout;
-          }
+      updateSelectedWeekDraft(prev, (week) => {
+        const targetWorkout = week.workouts.find((workout) => workout.id === workoutId);
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: targetWorkout,
+          })
+        ) {
+          return week;
+        }
 
-          return {
-            ...workout,
-            blocks: workout.blocks.map((block) => {
-              if (block.id !== blockId) {
-                return block;
-              }
+        return {
+          ...week,
+          workouts: week.workouts.map((workout) => {
+            if (workout.id !== workoutId) {
+              return workout;
+            }
 
-              if (block.type === "single") {
-                if (block.sets.length <= 1) {
+            return {
+              ...workout,
+              blocks: workout.blocks.map((block) => {
+                if (block.id !== blockId) {
                   return block;
                 }
 
-                return {
+                if (block.type === "single") {
+                  if (block.sets.length <= 1) {
+                    return block;
+                  }
+
+                  return {
+                    ...block,
+                    sets: block.sets.filter((_, index) => index !== setIndex),
+                  };
+                }
+
+                if ((block.sets || 1) <= 1) {
+                  return block;
+                }
+
+                return normalizeSupersetBlock({
                   ...block,
-                  sets: block.sets.filter((_, index) => index !== setIndex),
-                };
-              }
-
-              if ((block.sets || 1) <= 1) {
-                return block;
-              }
-
-              return normalizeSupersetBlock({
-                ...block,
-                sets: (block.sets || 1) - 1,
-              });
-            }),
-          };
-        }),
-      }))
+                  sets: (block.sets || 1) - 1,
+                });
+              }),
+            };
+          }),
+        };
+      })
     );
   }, []);
 
@@ -685,6 +906,24 @@ export function MultiWeekProgramProvider({ children }) {
         const workouts = week.workouts || [];
         const movingWorkout = workouts.find((workout) => workout.id === workoutId);
         if (!movingWorkout) {
+          return week;
+        }
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: movingWorkout,
+          }) ||
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: movingWorkout,
+            scheduledDay: nextScheduledDay,
+            weekdayIndex: getDayIndex(nextScheduledDay),
+          })
+        ) {
           return week;
         }
 
@@ -730,6 +969,24 @@ export function MultiWeekProgramProvider({ children }) {
           (workout) => Number(workout.orderIndex) === Number(orderIndex)
         );
         if (!movingWorkout) {
+          return week;
+        }
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: movingWorkout,
+          }) ||
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: movingWorkout,
+            scheduledDay: nextScheduledDay,
+            weekdayIndex: getDayIndex(nextScheduledDay),
+          })
+        ) {
           return week;
         }
 
@@ -794,6 +1051,18 @@ export function MultiWeekProgramProvider({ children }) {
         if (!targetDay) {
           return week;
         }
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: sourceWorkout,
+            scheduledDay: targetDay,
+            weekdayIndex: getDayIndex(targetDay),
+          })
+        ) {
+          return week;
+        }
 
         const maxOrderIndex = workouts.reduce(
           (maxValue, workout) => Math.max(maxValue, Number(workout.orderIndex) || 0),
@@ -818,12 +1087,28 @@ export function MultiWeekProgramProvider({ children }) {
 
   const deleteSelectedWeekWorkout = useCallback((orderIndex) => {
     setMultiWeekDraft((prev) =>
-      updateSelectedWeekDraft(prev, (week) => ({
-        ...week,
-        workouts: (week.workouts || []).filter(
-          (workout) => Number(workout.orderIndex) !== Number(orderIndex)
-        ),
-      }))
+      updateSelectedWeekDraft(prev, (week) => {
+        const targetWorkout = (week.workouts || []).find(
+          (workout) => Number(workout.orderIndex) === Number(orderIndex)
+        );
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: targetWorkout,
+          })
+        ) {
+          return week;
+        }
+
+        return {
+          ...week,
+          workouts: (week.workouts || []).filter(
+            (workout) => Number(workout.orderIndex) !== Number(orderIndex)
+          ),
+        };
+      })
     );
   }, []);
 
@@ -831,52 +1116,66 @@ export function MultiWeekProgramProvider({ children }) {
     const normalizedUpdates = normalizeSetUpdates(updates);
 
     setMultiWeekDraft((prev) =>
-      updateSelectedWeekDraft(prev, (week) => ({
-        ...week,
-        workouts: week.workouts.map((workout) => {
-          if (workout.id !== workoutId) {
-            return workout;
-          }
+      updateSelectedWeekDraft(prev, (week) => {
+        const targetWorkout = week.workouts.find((workout) => workout.id === workoutId);
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: targetWorkout,
+          })
+        ) {
+          return week;
+        }
 
-          return {
-            ...workout,
-            blocks: workout.blocks.map((block) => {
-              if (block.id !== blockId) {
-                return block;
-              }
+        return {
+          ...week,
+          workouts: week.workouts.map((workout) => {
+            if (workout.id !== workoutId) {
+              return workout;
+            }
 
-              if (block.type === "single") {
-                return {
+            return {
+              ...workout,
+              blocks: workout.blocks.map((block) => {
+                if (block.id !== blockId) {
+                  return block;
+                }
+
+                if (block.type === "single") {
+                  return {
+                    ...block,
+                    sets: block.sets.map((set, index) =>
+                      index === setIndex ? { ...set, ...normalizedUpdates } : set
+                    ),
+                  };
+                }
+
+                if (typeof exerciseIndex !== "number" || !block.exercises[exerciseIndex]) {
+                  return block;
+                }
+
+                const nextExercises = block.exercises.map((exercise, index) =>
+                  index === exerciseIndex
+                    ? {
+                        ...exercise,
+                        sets: exercise.sets.map((set, idx) =>
+                          idx === setIndex ? { ...set, ...normalizedUpdates } : set
+                        ),
+                      }
+                    : exercise
+                );
+
+                return normalizeSupersetBlock({
                   ...block,
-                  sets: block.sets.map((set, index) =>
-                    index === setIndex ? { ...set, ...normalizedUpdates } : set
-                  ),
-                };
-              }
-
-              if (typeof exerciseIndex !== "number" || !block.exercises[exerciseIndex]) {
-                return block;
-              }
-
-              const nextExercises = block.exercises.map((exercise, index) =>
-                index === exerciseIndex
-                  ? {
-                      ...exercise,
-                      sets: exercise.sets.map((set, idx) =>
-                        idx === setIndex ? { ...set, ...normalizedUpdates } : set
-                      ),
-                    }
-                  : exercise
-              );
-
-              return normalizeSupersetBlock({
-                ...block,
-                exercises: nextExercises,
-              });
-            }),
-          };
-        }),
-      }))
+                  exercises: nextExercises,
+                });
+              }),
+            };
+          }),
+        };
+      })
     );
   }, []);
 
@@ -899,56 +1198,84 @@ export function MultiWeekProgramProvider({ children }) {
     };
 
     setMultiWeekDraft((prev) =>
-      updateSelectedWeekDraft(prev, (week) => ({
-        ...week,
-        workouts: week.workouts.map((workout) =>
-          workout.id === workoutId
-            ? { ...workout, blocks: [...workout.blocks, block] }
-            : workout
-        ),
-      }))
+      updateSelectedWeekDraft(prev, (week) => {
+        const targetWorkout = week.workouts.find((workout) => workout.id === workoutId);
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: targetWorkout,
+          })
+        ) {
+          return week;
+        }
+
+        return {
+          ...week,
+          workouts: week.workouts.map((workout) =>
+            workout.id === workoutId
+              ? { ...workout, blocks: [...workout.blocks, block] }
+              : workout
+          ),
+        };
+      })
     );
   }, []);
 
   const convertSingleBlockToSuperset = useCallback((workoutId, blockId) => {
     setMultiWeekDraft((prev) =>
-      updateSelectedWeekDraft(prev, (week) => ({
-        ...week,
-        workouts: week.workouts.map((workout) => {
-          if (workout.id !== workoutId) {
-            return workout;
-          }
+      updateSelectedWeekDraft(prev, (week) => {
+        const targetWorkout = week.workouts.find((workout) => workout.id === workoutId);
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: targetWorkout,
+          })
+        ) {
+          return week;
+        }
 
-          return {
-            ...workout,
-            blocks: workout.blocks.map((block) => {
-              if (block.id !== blockId || block.type !== "single") {
-                return block;
-              }
+        return {
+          ...week,
+          workouts: week.workouts.map((workout) => {
+            if (workout.id !== workoutId) {
+              return workout;
+            }
 
-              return {
-                id: block.id,
-                type: "superset",
-                sets: Math.max(1, block.sets.length || 1),
-                rest: block.rest,
-                exercises: [
-                  {
-                    label: "A1",
-                    name: block.exercise,
-                    exerciseId: block.exerciseId ?? null,
-                    bodyParts: Array.isArray(block.bodyParts) ? block.bodyParts : [],
-                    muscleFocus: Array.isArray(block.muscleFocus) ? block.muscleFocus : [],
-                    tempo: block.tempo,
-                    sets: block.sets,
-                    notes: block.notes,
-                  },
-                  createEmptySupersetExercise("A2", Math.max(1, block.sets.length || 1)),
-                ],
-              };
-            }),
-          };
-        }),
-      }))
+            return {
+              ...workout,
+              blocks: workout.blocks.map((block) => {
+                if (block.id !== blockId || block.type !== "single") {
+                  return block;
+                }
+
+                return {
+                  id: block.id,
+                  type: "superset",
+                  sets: Math.max(1, block.sets.length || 1),
+                  rest: block.rest,
+                  exercises: [
+                    {
+                      label: "A1",
+                      name: block.exercise,
+                      exerciseId: block.exerciseId ?? null,
+                      bodyParts: Array.isArray(block.bodyParts) ? block.bodyParts : [],
+                      muscleFocus: Array.isArray(block.muscleFocus) ? block.muscleFocus : [],
+                      tempo: block.tempo,
+                      sets: block.sets,
+                      notes: block.notes,
+                    },
+                    createEmptySupersetExercise("A2", Math.max(1, block.sets.length || 1)),
+                  ],
+                };
+              }),
+            };
+          }),
+        };
+      })
     );
   }, []);
 
@@ -958,38 +1285,52 @@ export function MultiWeekProgramProvider({ children }) {
     }
 
     setMultiWeekDraft((prev) =>
-      updateSelectedWeekDraft(prev, (week) => ({
-        ...week,
-        workouts: week.workouts.map((workout) => {
-          if (workout.id !== workoutId) {
-            return workout;
-          }
+      updateSelectedWeekDraft(prev, (week) => {
+        const targetWorkout = week.workouts.find((workout) => workout.id === workoutId);
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: targetWorkout,
+          })
+        ) {
+          return week;
+        }
 
-          return {
-            ...workout,
-            blocks: workout.blocks.map((block) => {
-              if (block.id !== blockId || block.type !== "superset") {
-                return block;
-              }
+        return {
+          ...week,
+          workouts: week.workouts.map((workout) => {
+            if (workout.id !== workoutId) {
+              return workout;
+            }
 
-              return {
-                ...block,
-                exercises: block.exercises.map((entry, index) =>
-                  index === exerciseIndex
-                    ? {
-                        ...entry,
-                        name: exercise.name,
-                        exerciseId: exercise.exerciseId,
-                        bodyParts: Array.isArray(exercise.bodyParts) ? exercise.bodyParts : [],
-                        muscleFocus: Array.isArray(exercise.muscleFocus) ? exercise.muscleFocus : [],
-                      }
-                    : entry
-                ),
-              };
-            }),
-          };
-        }),
-      }))
+            return {
+              ...workout,
+              blocks: workout.blocks.map((block) => {
+                if (block.id !== blockId || block.type !== "superset") {
+                  return block;
+                }
+
+                return {
+                  ...block,
+                  exercises: block.exercises.map((entry, index) =>
+                    index === exerciseIndex
+                      ? {
+                          ...entry,
+                          name: exercise.name,
+                          exerciseId: exercise.exerciseId,
+                          bodyParts: Array.isArray(exercise.bodyParts) ? exercise.bodyParts : [],
+                          muscleFocus: Array.isArray(exercise.muscleFocus) ? exercise.muscleFocus : [],
+                        }
+                      : entry
+                  ),
+                };
+              }),
+            };
+          }),
+        };
+      })
     );
   }, []);
 
@@ -1016,7 +1357,10 @@ export function MultiWeekProgramProvider({ children }) {
       programDraft,
       draftMetadata,
       hydrateProgramDraft,
+      handleDraftExpired,
       persistDraftNow,
+      getMultiWeekTodayDateKey: () =>
+        getMultiWeekTodayDateKey(draftMetadataRef.current, multiWeekDraftRef.current),
       updateProgramMeta,
       setSelectedWeek,
       updateWorkoutName,
@@ -1045,6 +1389,7 @@ export function MultiWeekProgramProvider({ children }) {
       programDraft,
       draftMetadata,
       hydrateProgramDraft,
+      handleDraftExpired,
       persistDraftNow,
       updateProgramMeta,
       setSelectedWeek,

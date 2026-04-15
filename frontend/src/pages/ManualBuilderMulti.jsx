@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMultiWeekProgram } from "../context/MultiWeekProgramContext";
 import {
+  addDays,
+  getDateKeyInTimeZone,
+  resolveOccurrenceTemporalState,
+} from "../features/multiWeek/occurrence";
+import {
   getCycleDetailsPath,
   getCyclesLibraryPath,
   getCycleWorkoutEditorPath,
@@ -43,56 +48,11 @@ function formatDate(value) {
   });
 }
 
-function getDateKeyInTimeZone(timeZone = "America/Toronto") {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${map.year}-${map.month}-${map.day}`;
-}
-
-function compareDateKeys(left, right) {
-  if (!left || !right) {
-    return 0;
-  }
-
-  return left.localeCompare(right);
-}
-
-function getRowDateState(calendarDate, todayDateKey) {
-  if (!calendarDate || !todayDateKey) {
-    return "unknown";
-  }
-
-  const comparison = compareDateKeys(calendarDate, todayDateKey);
-  if (comparison < 0) {
-    return "past";
-  }
-
-  if (comparison > 0) {
-    return "future";
-  }
-
-  return "today";
-}
-
 function getTodayDateInput() {
   const today = new Date();
   const year = today.getFullYear();
   const month = String(today.getMonth() + 1).padStart(2, "0");
   const day = String(today.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function addDays(dateValue, days) {
-  const next = new Date(`${dateValue}T00:00:00`);
-  next.setDate(next.getDate() + days);
-  const year = next.getFullYear();
-  const month = String(next.getMonth() + 1).padStart(2, "0");
-  const day = String(next.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
@@ -273,6 +233,7 @@ export default function ManualBuilderMulti() {
     programDraft,
     draftMetadata,
     hydrateProgramDraft,
+    handleDraftExpired,
     setSelectedWeek,
     updateDraftMetadata,
     moveSelectedWeekWorkoutToScheduledDay,
@@ -296,6 +257,7 @@ export default function ManualBuilderMulti() {
     getStartOfMonthDate(getTodayDateInput())
   );
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDeleteWorkoutConfirm, setShowDeleteWorkoutConfirm] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [selectedWorkoutOrderIndex, setSelectedWorkoutOrderIndex] = useState(null);
   const [planId, setPlanId] = useState(null);
@@ -308,14 +270,40 @@ export default function ManualBuilderMulti() {
   );
   const isUpcomingCycle = draftMetadata.temporalStatus === "upcoming";
   const isActiveCycle = draftMetadata.temporalStatus === "active";
-  const isTimelineEditable = isUpcomingCycle;
-  const activePlanId = planId || draftMetadata.cyclePlanId || null;
+  const canEditTimelineSettings = isUpcomingCycle || isActiveCycle;
+  const isStartDateEditable = isUpcomingCycle;
+  const isDurationEditable = isUpcomingCycle || isActiveCycle;
+  const isRecoveringDraft = draftMetadata.isRecoveringDraft;
+  const activePlanId = draftMetadata.cyclePlanId || planId || null;
   const editTodayDateKey =
     draftMetadata.draftState?.localDate ||
     getDateKeyInTimeZone(
       draftMetadata.timezone || programDraft.timezone || "America/Toronto"
     );
   const isActiveEditMode = isEditMode && isActiveCycle;
+  const currentActiveWeekNumber = useMemo(() => {
+    if (!isActiveCycle || !programDraft.startDate || !editTodayDateKey) {
+      return 1;
+    }
+
+    const startDate = parseDateInput(programDraft.startDate);
+    const today = parseDateInput(editTodayDateKey);
+    const diffMs = today.getTime() - startDate.getTime();
+    const diffDays = Number.isFinite(diffMs) ? Math.floor(diffMs / 86400000) : 0;
+
+    return Math.min(
+      currentDraftWeekCount,
+      Math.max(1, Math.floor(diffDays / 7) + 1)
+    );
+  }, [currentDraftWeekCount, editTodayDateKey, isActiveCycle, programDraft.startDate]);
+  const settingsMinDurationWeeks = isActiveCycle ? currentActiveWeekNumber : 1;
+  const settingsMaxDurationWeeks = isActiveCycle
+    ? currentDraftWeekCount
+    : MAX_CYCLE_DURATION_WEEKS;
+
+  useEffect(() => {
+    setPlanId(draftMetadata.cyclePlanId || null);
+  }, [draftMetadata.cyclePlanId]);
 
   useEffect(() => {
     if (!cycleId) {
@@ -475,17 +463,20 @@ export default function ManualBuilderMulti() {
     });
 
     return rows.map((row, index) => {
-      const calendarDate = programDraft.startDate
-        ? addDays(
-            programDraft.startDate,
-            Math.max(0, ((selectedWeek?.weekNumber || programDraft.selectedWeek || 1) - 1) * 7) +
-              (WEEKDAY_INDEX.get(row.day) || 0)
-          )
-        : null;
-      const dateState = getRowDateState(calendarDate, editTodayDateKey);
-      const isPastOccurrence = dateState === "past";
-      const isTodayOccurrence = dateState === "today";
-      const isFutureOccurrence = dateState === "future";
+      const occurrenceState = resolveOccurrenceTemporalState({
+        cycleStartDate: programDraft.startDate,
+        weekNumber: selectedWeek?.weekNumber || programDraft.selectedWeek || 1,
+        scheduledDay: row.day,
+        weekdayIndex: WEEKDAY_INDEX.get(row.day) || 0,
+        todayDateKey: editTodayDateKey,
+      });
+      const {
+        calendarDate,
+        dateState,
+        isPastOccurrence,
+        isTodayOccurrence,
+        isFutureOccurrence,
+      } = occurrenceState;
       const workout = row.workout;
       if (!workout) {
         return {
@@ -570,28 +561,16 @@ export default function ManualBuilderMulti() {
     [weekdayRows]
   );
   const selectedWeekIsFullyPast = useMemo(
-    () =>
-      Boolean(weekdayRows.length) &&
-      weekdayRows.every(
-        (row) =>
-          row.calendarDate && compareDateKeys(row.calendarDate, editTodayDateKey) < 0
-      ),
-    [editTodayDateKey, weekdayRows]
+    () => Boolean(weekdayRows.length) && weekdayRows.every((row) => row.isPastOccurrence),
+    [weekdayRows]
   );
   const firstAvailableDuplicateRow = useMemo(() => {
     if (!isActiveEditMode) {
       return null;
     }
 
-    return (
-      weekdayRows.find(
-        (row) =>
-          !row.workout &&
-          row.calendarDate &&
-          compareDateKeys(row.calendarDate, editTodayDateKey) >= 0
-      ) || null
-    );
-  }, [editTodayDateKey, isActiveEditMode, weekdayRows]);
+    return weekdayRows.find((row) => !row.workout && !row.isPastOccurrence) || null;
+  }, [isActiveEditMode, weekdayRows]);
   const canMoveSelectedPrevious = useMemo(() => {
     if (!selectedWorkoutRow?.workout) {
       return false;
@@ -679,6 +658,10 @@ export default function ManualBuilderMulti() {
   }, [selectedWorkoutOrderIndex, weekdayRows]);
 
   const saveStatusLabel = useMemo(() => {
+    if (draftMetadata.isRecoveringDraft) {
+      return "Reloading...";
+    }
+
     if (draftMetadata.saveState === "saving") {
       return "Saving...";
     }
@@ -692,9 +675,9 @@ export default function ManualBuilderMulti() {
     }
 
     return "Draft";
-  }, [draftMetadata.lastSavedAt, draftMetadata.saveState]);
+  }, [draftMetadata.isRecoveringDraft, draftMetadata.lastSavedAt, draftMetadata.saveState]);
   const autosaveError = useMemo(() => {
-    if (draftMetadata.saveState !== "error") {
+    if (draftMetadata.recoveryMessage || draftMetadata.saveState !== "error") {
       return null;
     }
 
@@ -705,6 +688,7 @@ export default function ManualBuilderMulti() {
   }, [
     draftMetadata.lastSaveErrorCode,
     draftMetadata.lastSaveErrorMessage,
+    draftMetadata.recoveryMessage,
     draftMetadata.saveState,
   ]);
 
@@ -790,13 +774,13 @@ export default function ManualBuilderMulti() {
   const handleSettingsDurationChange = (nextValue) => {
     const parsed = Number(nextValue);
     if (!Number.isFinite(parsed)) {
-      setSettingsDurationWeeks(1);
+      setSettingsDurationWeeks(settingsMinDurationWeeks);
       return;
     }
 
     const safeDuration = Math.max(
-      1,
-      Math.min(MAX_CYCLE_DURATION_WEEKS, Math.trunc(parsed))
+      settingsMinDurationWeeks,
+      Math.min(settingsMaxDurationWeeks, Math.trunc(parsed))
     );
     setSettingsDurationWeeks(safeDuration);
     if (
@@ -809,24 +793,26 @@ export default function ManualBuilderMulti() {
   };
 
   const decrementSettingsDuration = () => {
-    handleSettingsDurationChange(Math.max(1, settingsDurationWeeks - 1));
+    handleSettingsDurationChange(
+      Math.max(settingsMinDurationWeeks, settingsDurationWeeks - 1)
+    );
   };
 
   const incrementSettingsDuration = () => {
     handleSettingsDurationChange(
-      Math.min(MAX_CYCLE_DURATION_WEEKS, settingsDurationWeeks + 1)
+      Math.min(settingsMaxDurationWeeks, settingsDurationWeeks + 1)
     );
   };
 
   const handleSaveSettings = async () => {
-    if (!cycleId || !activePlanId) {
+    if (!cycleId || !activePlanId || isRecoveringDraft) {
       return;
     }
 
     setSettingsError("");
 
-    if (!isTimelineEditable) {
-      setSettingsError("Timeline settings can only be edited for upcoming cycles.");
+    if (!canEditTimelineSettings) {
+      setSettingsError("Timeline settings can only be edited for upcoming or active cycles.");
       return;
     }
 
@@ -840,17 +826,36 @@ export default function ManualBuilderMulti() {
       return;
     }
 
-    if (settingsStartDate < todayDate || settingsEndDate < todayDate) {
+    if (settingsDurationWeeks < settingsMinDurationWeeks || settingsDurationWeeks > settingsMaxDurationWeeks) {
+      setSettingsError(
+        `Duration must stay between ${settingsMinDurationWeeks} and ${settingsMaxDurationWeeks} weeks.`
+      );
+      return;
+    }
+
+    if (isUpcomingCycle && (settingsStartDate < todayDate || settingsEndDate < todayDate)) {
       setSettingsError("Past dates are not allowed.");
       return;
     }
 
-    if (settingsDurationWeeks < 1 || settingsDurationWeeks > MAX_CYCLE_DURATION_WEEKS) {
-      setSettingsError("Duration must stay between 1 and 8 weeks.");
-      return;
+    if (isActiveCycle) {
+      if (settingsStartDate !== programDraft.startDate) {
+        setSettingsError("Start date cannot be changed on an active cycle.");
+        return;
+      }
+
+      if (settingsDurationWeeks < currentActiveWeekNumber) {
+        setSettingsError(`Duration cannot be shorter than week ${currentActiveWeekNumber}.`);
+        return;
+      }
+
+      if (settingsDurationWeeks > currentDraftWeekCount) {
+        setSettingsError("Active cycles can only be shortened.");
+        return;
+      }
     }
 
-    if (isSettingsExtension && !hasValidSettingsSourceWeek) {
+    if (isUpcomingCycle && isSettingsExtension && !hasValidSettingsSourceWeek) {
       setSettingsError("Choose one existing source week for the added weeks.");
       return;
     }
@@ -862,7 +867,7 @@ export default function ManualBuilderMulti() {
       const response = await updateUpcomingDraftTimeline(cycleId, activePlanId, {
         newStartDate: settingsStartDate,
         durationWeeks: settingsDurationWeeks,
-        ...(isSettingsExtension
+        ...(isUpcomingCycle && isSettingsExtension
           ? { sourceWeekNumber: Number(settingsSourceWeekNumber) }
           : {}),
       });
@@ -877,6 +882,10 @@ export default function ManualBuilderMulti() {
   };
 
   const handleDeleteCycle = async () => {
+    if (isRecoveringDraft) {
+      return;
+    }
+
     if (!cycleId || !showDeleteConfirm) {
       setShowDeleteConfirm(true);
       return;
@@ -895,7 +904,7 @@ export default function ManualBuilderMulti() {
   };
 
   const handlePublish = async () => {
-    if (!cycleId || !activePlanId) {
+    if (!cycleId || !activePlanId || isRecoveringDraft) {
       return;
     }
 
@@ -909,6 +918,11 @@ export default function ManualBuilderMulti() {
       hydrateProgramDraft(response);
       navigate(getCycleDetailsPath(cycleId), { replace: true });
     } catch (publishError) {
+      const didRecoverDraft = await handleDraftExpired(publishError, cycleId);
+      if (didRecoverDraft) {
+        return;
+      }
+
       setPublishError(
         buildUiError(publishError, "Unable to publish cycle.")
       );
@@ -918,6 +932,10 @@ export default function ManualBuilderMulti() {
   };
 
   const handleToggleEditMode = () => {
+    if (isRecoveringDraft) {
+      return;
+    }
+
     setIsEditMode((prev) => {
       if (prev) {
         setSelectedWorkoutOrderIndex(null);
@@ -928,7 +946,7 @@ export default function ManualBuilderMulti() {
   };
 
   const handleWorkoutRowClick = (row) => {
-    if (!row?.workout) {
+    if (!row?.workout || isRecoveringDraft) {
       return;
     }
 
@@ -949,7 +967,7 @@ export default function ManualBuilderMulti() {
   };
 
   const handleMoveSelectedWorkout = (direction) => {
-    if (!selectedWorkoutRow?.workout) {
+    if (!selectedWorkoutRow?.workout || isRecoveringDraft) {
       return;
     }
 
@@ -969,7 +987,7 @@ export default function ManualBuilderMulti() {
   };
 
   const handleDuplicateSelectedWorkout = () => {
-    if (!selectedWorkoutRow?.workout || !canDuplicateSelectedWorkout) {
+    if (!selectedWorkoutRow?.workout || !canDuplicateSelectedWorkout || isRecoveringDraft) {
       return;
     }
 
@@ -980,16 +998,20 @@ export default function ManualBuilderMulti() {
   };
 
   const handleDeleteSelectedWorkout = () => {
-    if (!canDeleteSelectedWorkout) {
+    if (!canDeleteSelectedWorkout || isRecoveringDraft) {
       return;
     }
 
-    const accepted = window.confirm("Delete this workout from the current week?");
-    if (!accepted) {
+    setShowDeleteWorkoutConfirm(true);
+  };
+
+  const handleConfirmDeleteSelectedWorkout = () => {
+    if (!canDeleteSelectedWorkout || !selectedWorkoutRow?.workout || isRecoveringDraft) {
       return;
     }
 
     deleteSelectedWeekWorkout(selectedWorkoutRow.workout.orderIndex);
+    setShowDeleteWorkoutConfirm(false);
     setSelectedWorkoutOrderIndex(null);
   };
 
@@ -1043,7 +1065,8 @@ export default function ManualBuilderMulti() {
             <button
               type="button"
               onClick={openSettingsPanel}
-              className="flex size-10 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+              disabled={isRecoveringDraft}
+              className="flex size-10 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="Open cycle settings"
             >
               <span className="material-symbols-outlined text-xl font-light">
@@ -1055,6 +1078,22 @@ export default function ManualBuilderMulti() {
       </header>
 
       <main className="mx-auto max-w-md space-y-4 px-4 pb-28 pt-4">
+        {draftMetadata.recoveryMessage && (
+          <div
+            className={[
+              "rounded-xl border px-4 py-3 text-sm",
+              isRecoveringDraft
+                ? "border-sky-200 bg-sky-50 text-sky-700"
+                : "border-amber-200 bg-amber-50 text-amber-700",
+            ].join(" ")}
+          >
+            <p className="font-semibold">
+              {isRecoveringDraft ? "Recovering draft" : "Draft recovery failed"}
+            </p>
+            <p className="mt-1">{draftMetadata.recoveryMessage}</p>
+          </div>
+        )}
+
         {autosaveError && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
             <p className="font-semibold">Autosave failed</p>
@@ -1223,11 +1262,13 @@ export default function ManualBuilderMulti() {
             <button
               type="button"
               onClick={handleToggleEditMode}
+              disabled={isRecoveringDraft}
               className={[
                 "rounded-full px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors",
                 isEditMode
                   ? "bg-slate-900 text-white"
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200",
+                isRecoveringDraft ? "cursor-not-allowed opacity-50" : "",
               ].join(" ")}
             >
               {isEditMode ? "Done" : "Edit"}
@@ -1243,7 +1284,7 @@ export default function ManualBuilderMulti() {
               <button
                 type="button"
                 onClick={() => handleMoveSelectedWorkout("previous")}
-                disabled={!canMoveSelectedPrevious}
+                disabled={isRecoveringDraft || !canMoveSelectedPrevious}
                 className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                 aria-label="Move workout to previous day"
                 title="Move to previous day"
@@ -1253,7 +1294,7 @@ export default function ManualBuilderMulti() {
               <button
                 type="button"
                 onClick={() => handleMoveSelectedWorkout("next")}
-                disabled={!canMoveSelectedNext}
+                disabled={isRecoveringDraft || !canMoveSelectedNext}
                 className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                 aria-label="Move workout to next day"
                 title="Move to next day"
@@ -1263,7 +1304,7 @@ export default function ManualBuilderMulti() {
               <button
                 type="button"
                 onClick={handleDuplicateSelectedWorkout}
-                disabled={!canDuplicateSelectedWorkout}
+                disabled={isRecoveringDraft || !canDuplicateSelectedWorkout}
                 className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                 aria-label="Duplicate workout in this week"
                 title="Duplicate"
@@ -1273,7 +1314,7 @@ export default function ManualBuilderMulti() {
               <button
                 type="button"
                 onClick={handleDeleteSelectedWorkout}
-                disabled={!canDeleteSelectedWorkout}
+                disabled={isRecoveringDraft || !canDeleteSelectedWorkout}
                 className="flex size-9 items-center justify-center rounded-full border border-red-200 text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
                 aria-label="Delete workout from this week"
                 title="Delete"
@@ -1321,15 +1362,23 @@ export default function ManualBuilderMulti() {
                   <button
                     type="button"
                     onClick={() => handleWorkoutRowClick(row)}
+                    disabled={isRecoveringDraft}
                     className="group min-w-0 flex-1 text-left"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate text-base font-semibold">
                         {row.workout.name}
                       </span>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                        Day {row.workout.orderIndex}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {isActiveCycle && row.isPastOccurrence && (
+                          <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                            Locked
+                          </span>
+                        )}
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                          Day {row.workout.orderIndex}
+                        </span>
+                      </div>
                     </div>
                     <p className="mt-1 text-[11px] leading-relaxed text-slate-500 opacity-80">
                       {row.workout.meta}
@@ -1371,16 +1420,22 @@ export default function ManualBuilderMulti() {
 
           <button
             type="button"
-            disabled={isPublishing || !activePlanId}
+            disabled={isPublishing || isRecoveringDraft || !activePlanId}
             onClick={handlePublish}
             className={[
               "flex w-full items-center justify-center rounded-xl py-4 font-bold transition-colors",
-              !isPublishing && activePlanId
+              !isPublishing && !isRecoveringDraft && activePlanId
                 ? "bg-primary text-white"
                 : "cursor-not-allowed bg-slate-300 text-white/60",
             ].join(" ")}
           >
-            <span>{isPublishing ? "Publishing..." : "Publish Cycle"}</span>
+            <span>
+              {isRecoveringDraft
+                ? "Reloading latest draft..."
+                : isPublishing
+                  ? "Publishing..."
+                  : "Publish Cycle"}
+            </span>
           </button>
         </div>
       </div>
@@ -1423,14 +1478,18 @@ export default function ManualBuilderMulti() {
                     Start Date
                   </label>
                   <p className="mt-1 text-xs text-slate-400">
-                    Timeline edits are available for upcoming cycles only.
+                    {isUpcomingCycle
+                      ? "Timeline edits are available for upcoming cycles only."
+                      : isActiveCycle
+                        ? "Start date is locked once the cycle is active."
+                        : "Timeline edits are not available for this cycle."}
                   </p>
                 </div>
                 {!isSettingsWeekPickerOpen ? (
                   <button
                     type="button"
                     onClick={() => {
-                      if (!isTimelineEditable) {
+                      if (!isStartDateEditable) {
                         return;
                       }
 
@@ -1439,7 +1498,7 @@ export default function ManualBuilderMulti() {
                       );
                       setIsSettingsWeekPickerOpen(true);
                     }}
-                    disabled={!isTimelineEditable}
+                    disabled={!isStartDateEditable}
                     aria-expanded={false}
                     className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-left transition-all duration-150 focus:border-transparent focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                   >
@@ -1551,7 +1610,11 @@ export default function ManualBuilderMulti() {
                     Duration In Weeks
                   </label>
                   <p className="mt-1 text-xs text-slate-400">
-                    Trim removes weeks from the end. Extend adds weeks at the end. Changes stay in draft until you publish.
+                    {isUpcomingCycle
+                      ? "Trim removes weeks from the end. Extend adds weeks at the end. Changes stay in draft until you publish."
+                      : isActiveCycle
+                        ? `Active cycles can only be shortened through the current week. Minimum: week ${currentActiveWeekNumber}.`
+                        : "Duration changes are not available for this cycle."}
                   </p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -1559,7 +1622,7 @@ export default function ManualBuilderMulti() {
                     <button
                       type="button"
                       onClick={decrementSettingsDuration}
-                      disabled={!isTimelineEditable || settingsDurationWeeks <= 1}
+                      disabled={!isDurationEditable || settingsDurationWeeks <= settingsMinDurationWeeks}
                       className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                       aria-label="Decrease duration in weeks"
                     >
@@ -1578,7 +1641,7 @@ export default function ManualBuilderMulti() {
                     <button
                       type="button"
                       onClick={incrementSettingsDuration}
-                      disabled={!isTimelineEditable || settingsDurationWeeks >= MAX_CYCLE_DURATION_WEEKS}
+                      disabled={!isDurationEditable || settingsDurationWeeks >= settingsMaxDurationWeeks}
                       className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                       aria-label="Increase duration in weeks"
                     >
@@ -1588,7 +1651,7 @@ export default function ManualBuilderMulti() {
                 </div>
               </section>
 
-              {isSettingsExtension && (
+              {isUpcomingCycle && isSettingsExtension && (
                 <section className="space-y-3">
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -1634,9 +1697,9 @@ export default function ManualBuilderMulti() {
                 </section>
               )}
 
-              {!isTimelineEditable && (
+              {!canEditTimelineSettings && (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-                  Timeline edits are only available for upcoming cycles in V1.
+                  Timeline edits are only available for upcoming or active cycles in V1.
                 </div>
               )}
 
@@ -1657,15 +1720,15 @@ export default function ManualBuilderMulti() {
                 <button
                   type="button"
                   onClick={handleSaveSettings}
-                  disabled={!isTimelineEditable || isSavingSettings}
+                  disabled={!canEditTimelineSettings || isSavingSettings || isRecoveringDraft}
                   className={[
                     "flex-1 rounded-xl py-3 font-semibold transition-colors",
-                    isTimelineEditable && !isSavingSettings
+                    canEditTimelineSettings && !isSavingSettings && !isRecoveringDraft
                       ? "bg-primary text-slate-900"
                       : "cursor-not-allowed bg-slate-300 text-white/60",
                   ].join(" ")}
                 >
-                  {isSavingSettings ? "Saving..." : "Save"}
+                  {isRecoveringDraft ? "Reloading..." : isSavingSettings ? "Saving..." : "Save"}
                 </button>
               </div>
 
@@ -1673,8 +1736,9 @@ export default function ManualBuilderMulti() {
                 {!showDeleteConfirm ? (
                   <button
                     type="button"
-                    onClick={() => setShowDeleteConfirm(true)}
-                    className="w-full rounded-xl border border-red-200 bg-white py-3 font-semibold text-red-500 transition-colors hover:bg-red-50"
+                    onClick={() => !isRecoveringDraft && setShowDeleteConfirm(true)}
+                    disabled={isRecoveringDraft}
+                    className="w-full rounded-xl border border-red-200 bg-white py-3 font-semibold text-red-500 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Delete Cycle
                   </button>
@@ -1696,16 +1760,65 @@ export default function ManualBuilderMulti() {
                         <button
                           type="button"
                           onClick={handleDeleteCycle}
-                          disabled={isDeletingCycle}
+                          disabled={isDeletingCycle || isRecoveringDraft}
                           className="flex-1 rounded-xl bg-red-500 py-3 font-semibold text-white transition-colors hover:bg-red-600 disabled:opacity-60"
                         >
-                          {isDeletingCycle ? "Deleting..." : "Delete Cycle"}
+                          {isRecoveringDraft
+                            ? "Reloading..."
+                            : isDeletingCycle
+                              ? "Deleting..."
+                              : "Delete Cycle"}
                         </button>
                       </div>
                     </div>
                   </div>
                 )}
               </section>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteWorkoutConfirm && selectedWorkoutRow?.workout && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/45 px-4 backdrop-blur-sm">
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default"
+            aria-label="Close workout delete confirmation"
+            onClick={() => setShowDeleteWorkoutConfirm(false)}
+          />
+
+          <div className="relative w-full max-w-sm rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-red-600">
+                <span className="material-symbols-outlined">delete</span>
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-slate-900">Delete this workout?</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  {selectedWorkoutRow.workout.name
+                    ? `Remove "${selectedWorkoutRow.workout.name}" from this week.`
+                    : "Remove this workout from the current week."}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowDeleteWorkoutConfirm(false)}
+                className="flex-1 rounded-xl border border-slate-200 py-3 font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteSelectedWorkout}
+                disabled={isRecoveringDraft}
+                className="flex-1 rounded-xl bg-red-500 py-3 font-semibold text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Delete workout
+              </button>
             </div>
           </div>
         </div>

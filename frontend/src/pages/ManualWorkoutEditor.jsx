@@ -2,6 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { MAX_BLOCK_SET_COUNT } from "../context/ManualProgramContext";
 import { useEditableProgram } from "../context/EditableProgramContext";
+import {
+  getOrderIndexFallbackWeekdayIndex,
+  getDateKeyInTimeZone,
+  resolveOccurrenceTemporalState,
+} from "../features/multiWeek/occurrence";
 import { getCycleWorkoutEditorPath } from "../features/multiWeek/routes";
 import { resolveBackTarget } from "../features/weeklyPlans/navigation";
 import { fetchExercises } from "../services/api";
@@ -311,6 +316,7 @@ export default function ManualWorkoutEditor() {
   const {
     programDraft,
     draftMetadata,
+    getMultiWeekTodayDateKey,
     setSelectedWeek,
     updateWorkoutName,
     updateBlock,
@@ -485,8 +491,42 @@ export default function ManualWorkoutEditor() {
   ]);
 
   const hasIncompleteSuperset = hasIncompleteSupersets(workout?.id ?? null);
+  const workoutOccurrenceState = useMemo(
+    () =>
+      resolveOccurrenceTemporalState({
+        cycleStartDate: programDraft.startDate,
+        weekNumber: multiWeekWorkoutMatch?.weekNumber || parsedWeekNumber || 1,
+        scheduledDay: workout?.scheduledDay || null,
+        weekdayIndex:
+          getOrderIndexFallbackWeekdayIndex(workout?.orderIndex) ??
+          getOrderIndexFallbackWeekdayIndex(parsedOrderIndex),
+              todayDateKey: getMultiWeekTodayDateKey
+              ? getMultiWeekTodayDateKey()
+              : draftMetadata.draftState?.localDate ||
+                getDateKeyInTimeZone(
+                  draftMetadata.timezone || programDraft.timezone || "America/Toronto"
+                ),
+      }),
+      [
+        draftMetadata.draftState?.localDate,
+        draftMetadata.timezone,
+        getMultiWeekTodayDateKey,
+        multiWeekWorkoutMatch?.weekNumber,
+        parsedOrderIndex,
+        parsedWeekNumber,
+        programDraft.startDate,
+        programDraft.timezone,
+        workout?.orderIndex,
+        workout?.scheduledDay,
+      ]
+  );
+  const isPastWorkoutOccurrenceLocked =
+    programDraft.isMultiWeek &&
+    draftMetadata.temporalStatus === "active" &&
+    workoutOccurrenceState.isPastOccurrence;
   const shouldShowSearchPanel =
-    isSearchOpen || Boolean(debouncedSearchQuery) || Boolean(activeSearchTarget);
+    !isPastWorkoutOccurrenceLocked &&
+    (isSearchOpen || Boolean(debouncedSearchQuery) || Boolean(activeSearchTarget));
   const hasStructuredFilters = useMemo(
     () =>
       searchFilters.muscle.length > 0 ||
@@ -750,6 +790,17 @@ export default function ManualWorkoutEditor() {
   }, [isWorkoutTitleEditing]);
 
   useEffect(() => {
+    if (!isPastWorkoutOccurrenceLocked) {
+      return;
+    }
+
+    setIsWorkoutTitleEditing(false);
+    setIsSearchOpen(false);
+    setOpenFilterMenu(null);
+    setActiveSearchTarget(null);
+  }, [isPastWorkoutOccurrenceLocked]);
+
+  useEffect(() => {
     if (!pendingScrollToLastBlock || !workout?.blocks.length) {
       return;
     }
@@ -816,6 +867,10 @@ export default function ManualWorkoutEditor() {
           : "Draft";
 
   const handleExerciseResultClick = (exercise) => {
+    if (isPastWorkoutOccurrenceLocked) {
+      return;
+    }
+
     if (activeSearchTarget) {
       assignSupersetExercise(
         workout.id,
@@ -840,6 +895,10 @@ export default function ManualWorkoutEditor() {
   };
 
   const activateA2Selection = (blockId, exerciseIndex) => {
+    if (isPastWorkoutOccurrenceLocked) {
+      return;
+    }
+
     setActiveSearchTarget({
       type: "superset-slot",
       blockId,
@@ -848,6 +907,10 @@ export default function ManualWorkoutEditor() {
   };
 
   const handleClearSearch = () => {
+    if (isPastWorkoutOccurrenceLocked) {
+      return;
+    }
+
     setSearchQuery("");
     setDebouncedSearchQuery("");
   };
@@ -860,6 +923,10 @@ export default function ManualWorkoutEditor() {
   };
 
   const handleFilterValueToggle = (filterKey, value) => {
+    if (isPastWorkoutOccurrenceLocked) {
+      return;
+    }
+
     setSearchFilters((prev) => {
       const currentValues = prev[filterKey] || [];
       const nextValues = currentValues.includes(value)
@@ -877,6 +944,10 @@ export default function ManualWorkoutEditor() {
 
   const handleFilterClear = (event, filterKey) => {
     event.stopPropagation();
+    if (isPastWorkoutOccurrenceLocked) {
+      return;
+    }
+
     setSearchFilters((prev) => ({ ...prev, [filterKey]: [] }));
     setOpenFilterMenu(null);
   };
@@ -999,6 +1070,7 @@ export default function ManualWorkoutEditor() {
                     ref={workoutTitleInputRef}
                     type="text"
                     value={workout.name}
+                    disabled={isPastWorkoutOccurrenceLocked}
                     onChange={(e) => updateWorkoutName(workout.id, e.target.value)}
                     onBlur={() => setIsWorkoutTitleEditing(false)}
                     onKeyDown={handleWorkoutTitleKeyDown}
@@ -1012,8 +1084,9 @@ export default function ManualWorkoutEditor() {
                     </p>
                     <button
                       type="button"
+                      disabled={isPastWorkoutOccurrenceLocked}
                       onClick={() => setIsWorkoutTitleEditing(true)}
-                      className="rounded-full p-1 text-slate-400 transition-colors hover:bg-primary/10 hover:text-primary select-none"
+                      className="rounded-full p-1 text-slate-400 transition-colors hover:bg-primary/10 hover:text-primary select-none disabled:cursor-not-allowed disabled:opacity-40"
                       aria-label="Edit workout title"
                     >
                       <span className="material-symbols-outlined text-lg">edit</span>
@@ -1039,6 +1112,7 @@ export default function ManualWorkoutEditor() {
                 type="text"
                 placeholder="Search exercises..."
                 value={searchQuery}
+                disabled={isPastWorkoutOccurrenceLocked}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => setIsSearchOpen(true)}
                 className="w-full rounded-lg border-none bg-slate-50 py-2.5 pl-10 pr-12 text-base transition-all focus:ring-2 focus:ring-primary/30"
@@ -1046,8 +1120,9 @@ export default function ManualWorkoutEditor() {
               {searchQuery.trim() && (
                 <button
                   type="button"
+                  disabled={isPastWorkoutOccurrenceLocked}
                   onClick={handleClearSearch}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700 select-none"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700 select-none disabled:cursor-not-allowed disabled:opacity-40"
                   aria-label="Clear search"
                 >
                   <span className="material-symbols-outlined text-lg">close</span>
@@ -1083,6 +1158,7 @@ export default function ManualWorkoutEditor() {
                             <button
                               key={filterKey}
                               type="button"
+                              disabled={isPastWorkoutOccurrenceLocked}
                               onClick={() =>
                                 setOpenFilterMenu((prev) =>
                                   prev === filterKey ? null : filterKey
@@ -1093,6 +1169,7 @@ export default function ManualWorkoutEditor() {
                                 isActive
                                   ? "border-primary/20 bg-primary/10 text-primary"
                                   : "border-slate-200 bg-slate-50 text-slate-500",
+                                isPastWorkoutOccurrenceLocked ? "cursor-not-allowed opacity-50" : "",
                               ].join(" ")}
                             >
                               <span>
@@ -1136,6 +1213,7 @@ export default function ManualWorkoutEditor() {
                             <button
                               key={option.value}
                               type="button"
+                              disabled={isPastWorkoutOccurrenceLocked}
                               onClick={() =>
                                 handleFilterValueToggle(openFilterMenu, option.value)
                               }
@@ -1144,6 +1222,7 @@ export default function ManualWorkoutEditor() {
                                 isSelected
                                   ? "bg-primary text-slate-900"
                                   : "bg-white text-slate-600",
+                                isPastWorkoutOccurrenceLocked ? "cursor-not-allowed opacity-50" : "",
                               ].join(" ")}
                             >
                               {option.label}
@@ -1180,8 +1259,9 @@ export default function ManualWorkoutEditor() {
                       <button
                         key={exercise.exerciseId}
                         type="button"
+                        disabled={isPastWorkoutOccurrenceLocked}
                         onClick={() => handleExerciseResultClick(exercise)}
-                        className="group flex w-full items-center justify-between rounded-lg p-2 text-left transition-colors hover:bg-slate-50"
+                        className="group flex w-full items-center justify-between rounded-lg p-2 text-left transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <div>
                           <p className="text-sm font-bold text-slate-700">
@@ -1214,6 +1294,15 @@ export default function ManualWorkoutEditor() {
       </header>
 
       <main className="mx-auto max-w-2xl px-4 pt-4">
+        {isPastWorkoutOccurrenceLocked && (
+          <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+            <p className="font-semibold">Past workout locked on active cycle</p>
+            <p className="mt-1 text-slate-500">
+              This occurrence is in the past, so you can review it here but you can&apos;t edit it.
+            </p>
+          </div>
+        )}
+
         <div className="mb-6 rounded-xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur-md">
           <div className="mb-4 flex items-center justify-between">
             <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
@@ -1331,7 +1420,8 @@ export default function ManualWorkoutEditor() {
                       <button
                         type="button"
                         onClick={() => removeBlock(workout.id, block.id)}
-                        className="text-slate-400 transition-colors hover:text-red-500"
+                        disabled={isPastWorkoutOccurrenceLocked}
+                        className="text-slate-400 transition-colors hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <span className="material-symbols-outlined">delete</span>
                       </button>
@@ -1358,6 +1448,7 @@ export default function ManualWorkoutEditor() {
                                     <button
                                       type="button"
                                       data-a2-target={`${block.id}-${exerciseIndex}`}
+                                      disabled={isPastWorkoutOccurrenceLocked}
                                       onClick={() => activateA2Selection(block.id, exerciseIndex)}
                                       className={[
                                         "w-full rounded-lg border border-dashed px-3 py-2 text-left text-sm font-bold transition-colors",
@@ -1365,6 +1456,7 @@ export default function ManualWorkoutEditor() {
                                         activeSearchTarget?.exerciseIndex === exerciseIndex
                                           ? "border-primary bg-primary/10 text-primary"
                                           : "border-amber-300 bg-amber-50 text-amber-700 hover:border-primary/40 hover:text-primary",
+                                        isPastWorkoutOccurrenceLocked ? "cursor-not-allowed opacity-50" : "",
                                       ].join(" ")}
                                     >
                                       Select second exercise
@@ -1400,6 +1492,7 @@ export default function ManualWorkoutEditor() {
                                     <input
                                       type="text"
                                       inputMode="numeric"
+                                      disabled={isPastWorkoutOccurrenceLocked}
                                       value={
                                         tempoDrafts[getTempoFieldKey(block.id, exerciseIndex)] ??
                                         formatTempoValue(exercise.tempo)
@@ -1455,6 +1548,7 @@ export default function ManualWorkoutEditor() {
                                         <input
                                           type="number"
                                           inputMode="numeric"
+                                          disabled={isPastWorkoutOccurrenceLocked}
                                           min="0"
                                           max="100"
                                           step="1"
@@ -1504,6 +1598,7 @@ export default function ManualWorkoutEditor() {
                                       <div className="col-span-4">
                                         <button
                                           type="button"
+                                          disabled={isPastWorkoutOccurrenceLocked}
                                           onClick={() =>
                                             updateSet(
                                               workout.id,
@@ -1516,6 +1611,7 @@ export default function ManualWorkoutEditor() {
                                           className={[
                                             "flex h-9 w-9 items-center justify-center rounded-xl border text-sm font-bold transition-all active:scale-95",
                                             getRirButtonClasses(set.rpe),
+                                            isPastWorkoutOccurrenceLocked ? "cursor-not-allowed opacity-50" : "",
                                           ].join(" ")}
                                           aria-label={`RIR ${set.rpe}. Tap to cycle`}
                                         >
@@ -1531,6 +1627,7 @@ export default function ManualWorkoutEditor() {
 
                                 <div className="mt-4 border-t border-slate-100 pt-4">
                                   <textarea
+                                    disabled={isPastWorkoutOccurrenceLocked}
                                     value={exercise.notes || ""}
                                     onChange={(e) =>
                                       updateSupersetExercise(
@@ -1559,6 +1656,7 @@ export default function ManualWorkoutEditor() {
                           <div className="flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
                             <button
                               type="button"
+                              disabled={isPastWorkoutOccurrenceLocked}
                               onClick={() =>
                                 updateSupersetSetCount(
                                   workout.id,
@@ -1566,13 +1664,14 @@ export default function ManualWorkoutEditor() {
                                   Math.max(1, (block.sets || 1) - 1)
                                 )
                               }
-                              className="border-r border-slate-200 px-3 py-2 text-slate-500 hover:bg-slate-50"
+                              className="border-r border-slate-200 px-3 py-2 text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               -
                             </button>
                             <span className="flex-1 text-center text-sm font-bold">{block.sets}</span>
                             <button
                               type="button"
+                              disabled={isPastWorkoutOccurrenceLocked || (block.sets || 0) >= MAX_BLOCK_SET_COUNT}
                               onClick={() =>
                                 updateSupersetSetCount(
                                   workout.id,
@@ -1580,10 +1679,9 @@ export default function ManualWorkoutEditor() {
                                   (block.sets || 0) + 1
                                 )
                               }
-                              disabled={(block.sets || 0) >= MAX_BLOCK_SET_COUNT}
                               className={[
                                 "border-l border-slate-200 px-3 py-2",
-                                (block.sets || 0) >= MAX_BLOCK_SET_COUNT
+                                isPastWorkoutOccurrenceLocked || (block.sets || 0) >= MAX_BLOCK_SET_COUNT
                                   ? "cursor-not-allowed text-slate-300"
                                   : "text-slate-500 hover:bg-slate-50",
                               ].join(" ")}
@@ -1601,12 +1699,13 @@ export default function ManualWorkoutEditor() {
                           <div className="flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
                             <button
                               type="button"
+                              disabled={isPastWorkoutOccurrenceLocked}
                               onClick={() =>
                                 updateBlock(workout.id, block.id, {
                                   rest: getNextRestValue(block.rest, -1),
                                 })
                               }
-                              className="border-r border-slate-200 px-3 py-2 text-slate-500 transition-colors hover:bg-slate-50 select-none"
+                              className="border-r border-slate-200 px-3 py-2 text-slate-500 transition-colors hover:bg-slate-50 select-none disabled:cursor-not-allowed disabled:opacity-40"
                               aria-label="Decrease rest interval"
                             >
                               <span className="material-symbols-outlined text-base">remove</span>
@@ -1616,12 +1715,13 @@ export default function ManualWorkoutEditor() {
                             </span>
                             <button
                               type="button"
+                              disabled={isPastWorkoutOccurrenceLocked}
                               onClick={() =>
                                 updateBlock(workout.id, block.id, {
                                   rest: getNextRestValue(block.rest, 1),
                                 })
                               }
-                              className="border-l border-slate-200 px-3 py-2 text-slate-500 transition-colors hover:bg-slate-50 select-none"
+                              className="border-l border-slate-200 px-3 py-2 text-slate-500 transition-colors hover:bg-slate-50 select-none disabled:cursor-not-allowed disabled:opacity-40"
                               aria-label="Increase rest interval"
                             >
                               <span className="material-symbols-outlined text-base">add</span>
@@ -1655,8 +1755,9 @@ export default function ManualWorkoutEditor() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
+                      disabled={isPastWorkoutOccurrenceLocked}
                       onClick={() => convertSingleBlockToSuperset(workout.id, block.id)}
-                      className="text-slate-400 transition-colors hover:text-primary"
+                      className="text-slate-400 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
                       aria-label="Convert to superset"
                     >
                       <span className="material-symbols-outlined">layers</span>
@@ -1675,7 +1776,8 @@ export default function ManualWorkoutEditor() {
                     <button
                       type="button"
                       onClick={() => removeBlock(workout.id, block.id)}
-                      className="text-slate-400 transition-colors hover:text-red-500"
+                      disabled={isPastWorkoutOccurrenceLocked}
+                      className="text-slate-400 transition-colors hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <span className="material-symbols-outlined">delete</span>
                     </button>
@@ -1692,6 +1794,7 @@ export default function ManualWorkoutEditor() {
                         <input
                           type="text"
                           inputMode="numeric"
+                          disabled={isPastWorkoutOccurrenceLocked}
                           value={tempoDrafts[getTempoFieldKey(block.id)] ?? formatTempoValue(block.tempo)}
                           onFocus={() => beginTempoEditing(block.id, block.tempo)}
                           onChange={(e) => changeTempoDraft(block.id, e.target.value)}
@@ -1715,12 +1818,13 @@ export default function ManualWorkoutEditor() {
                         <div className="flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
                           <button
                             type="button"
+                            disabled={isPastWorkoutOccurrenceLocked}
                             onClick={() =>
                               updateBlock(workout.id, block.id, {
                                 rest: getNextRestValue(block.rest, -1),
                               })
                             }
-                            className="border-r border-slate-200 px-3 py-2 text-slate-500 transition-colors hover:bg-slate-50 select-none"
+                            className="border-r border-slate-200 px-3 py-2 text-slate-500 transition-colors hover:bg-slate-50 select-none disabled:cursor-not-allowed disabled:opacity-40"
                             aria-label="Decrease rest interval"
                           >
                             <span className="material-symbols-outlined text-base">remove</span>
@@ -1730,12 +1834,13 @@ export default function ManualWorkoutEditor() {
                           </span>
                           <button
                             type="button"
+                            disabled={isPastWorkoutOccurrenceLocked}
                             onClick={() =>
                               updateBlock(workout.id, block.id, {
                                 rest: getNextRestValue(block.rest, 1),
                               })
                             }
-                            className="border-l border-slate-200 px-3 py-2 text-slate-500 transition-colors hover:bg-slate-50 select-none"
+                            className="border-l border-slate-200 px-3 py-2 text-slate-500 transition-colors hover:bg-slate-50 select-none disabled:cursor-not-allowed disabled:opacity-40"
                             aria-label="Increase rest interval"
                           >
                             <span className="material-symbols-outlined text-base">add</span>
@@ -1763,6 +1868,7 @@ export default function ManualWorkoutEditor() {
                               <input
                                 type="number"
                                 inputMode="numeric"
+                                disabled={isPastWorkoutOccurrenceLocked}
                                 min="0"
                                 max="100"
                                 step="1"
@@ -1793,6 +1899,7 @@ export default function ManualWorkoutEditor() {
                             <div className="col-span-4">
                               <button
                                 type="button"
+                                disabled={isPastWorkoutOccurrenceLocked}
                                 onClick={() =>
                                   updateSet(workout.id, block.id, setIndex, {
                                     rpe: getNextRirValue(set.rpe),
@@ -1801,6 +1908,7 @@ export default function ManualWorkoutEditor() {
                                 className={[
                                   "flex h-9 w-9 items-center justify-center rounded-xl border text-sm font-bold transition-all active:scale-95",
                                   getRirButtonClasses(set.rpe),
+                                  isPastWorkoutOccurrenceLocked ? "cursor-not-allowed opacity-50" : "",
                                 ].join(" ")}
                                 aria-label={`RIR ${set.rpe}. Tap to cycle`}
                               >
@@ -1811,10 +1919,10 @@ export default function ManualWorkoutEditor() {
                               <button
                                 type="button"
                                 onClick={() => removeSet(workout.id, block.id, setIndex)}
-                                disabled={!canRemoveSingleSet}
+                                disabled={isPastWorkoutOccurrenceLocked || !canRemoveSingleSet}
                                 className={[
                                   "rounded p-1 transition-colors",
-                                  canRemoveSingleSet
+                                  !isPastWorkoutOccurrenceLocked && canRemoveSingleSet
                                     ? "text-slate-400 hover:text-red-500"
                                     : "cursor-not-allowed text-slate-200",
                                 ].join(" ")}
@@ -1833,7 +1941,8 @@ export default function ManualWorkoutEditor() {
                         <button
                           type="button"
                           onClick={() => addSet(workout.id, block.id)}
-                          className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-200 py-2 text-sm font-medium text-slate-500 transition-all hover:border-primary/50 hover:text-primary"
+                          disabled={isPastWorkoutOccurrenceLocked}
+                          className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-200 py-2 text-sm font-medium text-slate-500 transition-all hover:border-primary/50 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <span className="material-symbols-outlined text-sm">add</span>
                           Add Set
@@ -1842,6 +1951,7 @@ export default function ManualWorkoutEditor() {
 
                       <div className="mt-4 border-t border-slate-100 pt-4">
                         <textarea
+                          disabled={isPastWorkoutOccurrenceLocked}
                           value={block.notes || ""}
                           onChange={(e) =>
                             updateBlock(workout.id, block.id, { notes: e.target.value })
