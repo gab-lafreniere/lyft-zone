@@ -457,13 +457,19 @@ export async function deleteCycle(cycleId) {
   return readJsonResponse(response);
 }
 
-export async function getHomeDashboard() {
+export async function getHomeDashboard(selectedDate) {
   const userId = await ensureCurrentUserId();
+  const query = {
+    userId,
+    timezone: getLocalTimezone(),
+  };
+
+  if (selectedDate) {
+    query.selectedDate = selectedDate;
+  }
+
   const response = await fetch(
-    `${BACKEND_URL}/api/cycles/home-dashboard?${new URLSearchParams({
-      userId,
-      timezone: getLocalTimezone(),
-    }).toString()}`
+    `${BACKEND_URL}/api/home/dashboard?${new URLSearchParams(query).toString()}`
   );
 
   return readJsonResponse(response);

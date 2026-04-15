@@ -1,9 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { getHomeDashboard } from "../services/api";
 
+function getLocalDateInput() {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function formatDayLabel(dateKey) {
   return new Date(`${dateKey}T00:00:00Z`).toLocaleDateString("en-US", {
     weekday: "narrow",
+    timeZone: "UTC",
   });
 }
 
@@ -12,29 +21,27 @@ function formatDayNumber(dateKey) {
 }
 
 function getDayCardClasses(day) {
-  if (day?.state === "today") {
-    return "flex flex-col items-center p-2 rounded-lg bg-primary/20 border border-primary/30 relative";
+  if (day?.isSelected && day?.isToday) {
+    return "flex flex-col items-center rounded-lg border border-primary/40 bg-primary/20 p-2 relative";
   }
 
-  if (day?.state === "past_empty") {
-    return "flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-slate-100";
+  if (day?.isSelected) {
+    return "flex flex-col items-center rounded-lg border border-primary/30 bg-primary/10 p-2";
   }
 
-  if (day?.state === "past_missed") {
-    return "flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-slate-100";
+  if (day?.state === "planned") {
+    return "flex flex-col items-center rounded-lg border border-primary/40 bg-white p-2 shadow-sm";
   }
 
-  if (day?.state === "future_planned") {
-    return "flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-primary/40";
-  }
-
-  return "flex flex-col items-center p-2 rounded-lg bg-white shadow-sm border border-slate-100";
+  return "flex flex-col items-center rounded-lg border border-slate-100 bg-white p-2 shadow-sm";
 }
 
 export default function HomeDashboard() {
   const [scrolled, setScrolled] = useState(false);
   const [dashboard, setDashboard] = useState(null);
   const [error, setError] = useState("");
+  const [selectedDate, setSelectedDate] = useState(() => getLocalDateInput());
+  const [fixedScheduleDays, setFixedScheduleDays] = useState([]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 4);
@@ -48,9 +55,13 @@ export default function HomeDashboard() {
 
     async function loadDashboard() {
       try {
-        const response = await getHomeDashboard();
+        const response = await getHomeDashboard(selectedDate);
         if (isMounted) {
           setDashboard(response);
+          setFixedScheduleDays((currentDays) =>
+            currentDays.length > 0 ? currentDays : response?.schedule14Days?.days || []
+          );
+          setSelectedDate(response?.selectedDate || selectedDate);
           setError("");
         }
       } catch (loadError) {
@@ -66,52 +77,60 @@ export default function HomeDashboard() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [selectedDate]);
 
+  const status = dashboard?.status || null;
   const currentProgram = dashboard?.currentProgram || null;
   const todayFocus = dashboard?.todayFocus || null;
-  const flatDays = useMemo(
-    () => (dashboard?.weeks || []).flatMap((week) => week.days || []).slice(0, 14),
-    [dashboard]
+  const scheduleDays = useMemo(
+    () =>
+      fixedScheduleDays.map((day) => ({
+        ...day,
+        isSelected: day.date === selectedDate,
+      })),
+    [fixedScheduleDays, selectedDate]
+  );
+  const firstWeekDays = scheduleDays.slice(0, 7);
+  const isSelectedDateToday = useMemo(
+    () => scheduleDays.some((day) => day.date === dashboard?.selectedDate && day.isToday),
+    [dashboard?.selectedDate, scheduleDays]
   );
 
   const weeklySetGoal = currentProgram?.summary?.totalSetsFirstWeek || 24;
   const workoutsPerWeek = currentProgram?.summary?.sessionsPerWeek || 4;
-  const workoutDaysThisWeek = (dashboard?.weeks?.[0]?.days || []).filter(
-    (day) => (day.workouts || []).length > 0
-  ).length;
+  const workoutDaysThisWeek = firstWeekDays.filter((day) => day.session).length;
+  const focusHeading = isSelectedDateToday ? "Today's Focus" : "Selected Day Focus";
 
   return (
     <div className="-mx-6 bg-background-light text-slate-900 antialiased font-display">
-      {/* Header Section */}
       <header
         className={[
-          "sticky top-0 z-40 px-6 pt-1 pb-1 bg-background-light transition-shadow duration-200",
+          "sticky top-0 z-40 bg-background-light px-6 pb-1 pt-1 transition-shadow duration-200",
           scrolled ? "shadow-[0_6px_18px_rgba(15,23,42,0.08)]" : "shadow-none",
         ].join(" ")}
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="size-12 rounded-full overflow-hidden border-2 border-white shadow-sm">
+            <div className="size-12 overflow-hidden rounded-full border-2 border-white shadow-sm">
               <img
                 alt="Alex Johnson"
-                className="w-full h-full object-cover"
+                className="h-full w-full object-cover"
                 src="https://lh3.googleusercontent.com/aida-public/AB6AXuAOqSnukIxxig6axnIuq0lGlXj4I6ciPTu5Oe88ZY9cv2aT0AGMV8O7q5dWRK5NhL8gG_ZGNViFE8Y1UQkVSlmp5fOYhI8JHcttUzj0NOrT1vuOpfl1qv5htMMAa3UbR-GLVKqaFMZEFu7S6NIgmO1wD7ueqr9NvXWcPoFBh2muyPArPBj6n1FJPWTbqVRbkXxLqRBvoj5UFAvRDCvxx0M7Pm0Q92fcft6HhL6Xd_Nrzyt9pt97KXKUgOy5jUvSjdrZ1iUBZJAwA68"
               />
             </div>
 
             <div className="leading-tight">
-              <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
+              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
                 Good morning
               </p>
-              <h1 className="font-bold text-xl text-slate-900">Alex Johnson</h1>
+              <h1 className="text-xl font-bold text-slate-900">Alex Johnson</h1>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
             <button
               type="button"
-              className="glass size-10 rounded-full flex items-center justify-center text-slate-700 shadow-sm"
+              className="glass flex size-10 items-center justify-center rounded-full text-slate-700 shadow-sm"
               aria-label="Notifications"
             >
               <span className="material-symbols-outlined text-[22px]">notifications</span>
@@ -119,7 +138,7 @@ export default function HomeDashboard() {
 
             <button
               type="button"
-              className="glass size-10 rounded-full flex items-center justify-center text-slate-700 shadow-sm"
+              className="glass flex size-10 items-center justify-center rounded-full text-slate-700 shadow-sm"
               aria-label="Settings"
             >
               <span className="material-symbols-outlined text-[22px]">settings</span>
@@ -128,83 +147,101 @@ export default function HomeDashboard() {
         </div>
       </header>
 
-      {/* Main Content Scrollable Area */}
-      <main className="px-6 flex flex-col gap-2.5 pt-1">
-        <div className="inline-flex w-fit items-center gap-2 px-3 py-1 rounded-full bg-accent-teal/50 border border-primary/20">
+      <main className="flex flex-col gap-2.5 px-6 pt-1">
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-primary/20 bg-accent-teal/50 px-3 py-1">
           <span className="size-1.5 rounded-full bg-primary animate-pulse"></span>
-          <p className="text-[11px] font-semibold text-slate-700 uppercase tracking-tight">
-            {currentProgram
-              ? `Week 1 of ${currentProgram.durationWeeks} · ${currentProgram.name}`
-              : "No active published cycle"}
+          <p className="text-[11px] font-semibold uppercase tracking-tight text-slate-700">
+            {status?.label || "No published cycle"}
           </p>
         </div>
 
-        {/* Hero Card (Today's Session) */}
-        <section className="relative group rounded-xl overflow-hidden shadow-lg">
+        <section className="group relative overflow-hidden rounded-xl shadow-lg">
           <img
             alt="Gym Background"
-            className="absolute inset-0 w-full h-full object-cover"
+            className="absolute inset-0 h-full w-full object-cover"
             src="https://lh3.googleusercontent.com/aida-public/AB6AXuCEPstqrEn1FRzNtnYTq447xhXDZPDl7UrsIXnlBjrCaGK7kbUC_K9xtKuDK7S3iqy43UFTU-XxY-z2QrP_jKxlZyZhrmavYgqacCnsDX9jVVph5C6J8jft5x3xJMfKDH4CCbT6y-LVErnpTGCQvYmiuKMf0XAE5qeMossuciJ7AyU783X5YiBTxrR6sY25JDGxTfNenIjjgoSwpQ1qMztyZjHzLSTLTijLN8TdqqxSEKf7asdiMEYyRTNUUQSdUf66OemeFKBvupM"
           />
 
           <div className="absolute inset-0 bg-gradient-to-t from-black/95 to-black/35"></div>
 
-          <div className="relative p-4 flex flex-col justify-end min-h-[140px] sm:min-h-[160px]">
+          <div className="relative flex min-h-[140px] flex-col justify-end p-4 sm:min-h-[160px]">
             <div className="mb-3">
-              <p className="text-[9px] font-bold text-primary uppercase tracking-widest mb-0.5">
-                Today's Focus
+              <p className="mb-0.5 text-[9px] font-bold uppercase tracking-widest text-primary">
+                {focusHeading}
               </p>
-              <h2 className="text-xl font-black text-white tracking-tight">
-                {todayFocus?.name || "No workout scheduled"}
+              <h2 className="text-xl font-black tracking-tight text-white">
+                {todayFocus?.title || "Rest / Recovery"}
               </h2>
-              <p className="text-white/90 text-xs font-semibold">
+              <p className="text-xs font-semibold text-white/90">
                 {currentProgram ? currentProgram.name : "Current program unavailable"}
               </p>
-              <p className="text-white/60 text-[10px] mt-0.5">
-                {todayFocus
-                  ? `Workout ${todayFocus.orderIndex} · Week ${todayFocus.weekNumber}`
-                  : "Rest / recovery day"}
+              <p className="mt-0.5 text-[10px] text-white/60">
+                {todayFocus?.subtitle || "No session planned"}
               </p>
             </div>
 
             <button
               type="button"
-              className="w-full bg-primary hover:bg-[#15cfbf] text-slate-950 font-black py-2 sm:py-2.5 rounded-xl transition-all shadow-xl flex items-center justify-center gap-2"
+              disabled={!todayFocus?.showStartSession}
+              className={[
+                "flex h-11 w-full items-center justify-center gap-2 rounded-xl px-4 shadow-xl transition-all",
+                todayFocus?.showStartSession
+                  ? "bg-primary hover:bg-[#15cfbf]"
+                  : "cursor-not-allowed border border-white/15 bg-white/10",
+              ].join(" ")}
             >
-              <span className="uppercase tracking-wider text-[10px]">
-                Start Session
+              <span
+                className={[
+                  "text-[10px] font-black uppercase tracking-wider",
+                  todayFocus?.showStartSession ? "text-slate-950" : "text-white/80",
+                ].join(" ")}
+              >
+                {todayFocus?.showStartSession ? "Start Session" : "Rest Day"}
               </span>
-              <span className="material-symbols-outlined text-lg">play_arrow</span>
+              <span
+                className={[
+                  "material-symbols-outlined text-lg",
+                  todayFocus?.showStartSession ? "text-slate-950" : "text-white/70",
+                ].join(" ")}
+              >
+                {todayFocus?.showStartSession ? "play_arrow" : "bedtime"}
+              </span>
             </button>
           </div>
         </section>
 
-        {/* Schedule Section */}
         <section>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <span className="material-symbols-outlined text-sm">
-                calendar_today
-              </span>
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="flex items-center gap-2 text-sm font-bold text-slate-800">
+              <span className="material-symbols-outlined text-sm">calendar_today</span>
               Schedule
             </h3>
-            <span className="text-[10px] text-slate-400 font-medium uppercase">
+            <span className="text-[10px] font-medium uppercase text-slate-400">
               Next 14 Days
             </span>
           </div>
 
           <div className="grid grid-cols-7 gap-1.5">
-            {flatDays.map((day) => {
-              const isToday = day.state === "today";
-              const hasWorkout = (day.workouts || []).length > 0;
-              const isPastMissed = day.state === "past_missed";
+            {scheduleDays.map((day) => {
+              const hasSession = Boolean(day.session);
 
               return (
-                <div key={day.date} className={getDayCardClasses(day)}>
+                <button
+                  key={day.date}
+                  type="button"
+                  onClick={() => setSelectedDate(day.date)}
+                  className={getDayCardClasses(day)}
+                  aria-pressed={day.isSelected}
+                  aria-label={`Select ${day.date}`}
+                >
                   <span
                     className={[
                       "text-[9px] font-medium",
-                      isToday ? "text-primary font-bold" : hasWorkout ? "text-slate-500" : "text-slate-400",
+                      day.isToday || day.isSelected
+                        ? "font-bold text-primary"
+                        : hasSession
+                          ? "text-slate-500"
+                          : "text-slate-400",
                     ].join(" ")}
                   >
                     {formatDayLabel(day.date)}
@@ -212,39 +249,47 @@ export default function HomeDashboard() {
                   <span
                     className={[
                       "text-xs font-bold",
-                      isToday || hasWorkout ? "text-slate-900" : "text-slate-700",
-                      isToday ? "font-black" : "",
+                      day.isToday || day.isSelected || hasSession
+                        ? "text-slate-900"
+                        : "text-slate-700",
+                      day.isToday || day.isSelected ? "font-black" : "",
                     ].join(" ")}
                   >
                     {formatDayNumber(day.date)}
                   </span>
-                  {isToday ? (
-                    <div className="size-1.5 rounded-full bg-primary mt-1 shadow-[0_0_8px_rgba(25,230,212,0.6)]"></div>
-                  ) : hasWorkout ? (
-                    <span className="material-symbols-outlined text-primary text-[14px] mt-1">
-                      {isPastMissed ? "fitness_center" : "fitness_center"}
+                  {hasSession ? (
+                    <span className="material-symbols-outlined mt-1 text-[14px] text-primary">
+                      fitness_center
                     </span>
                   ) : (
-                    <div className="size-1.5 rounded-full bg-slate-200 mt-1"></div>
+                    <div
+                      className={[
+                        "mt-1 size-1.5 rounded-full",
+                        day.isToday
+                          ? "bg-primary shadow-[0_0_8px_rgba(25,230,212,0.6)]"
+                          : "bg-slate-200",
+                      ].join(" ")}
+                    ></div>
                   )}
-                </div>
+                </button>
               );
             })}
           </div>
         </section>
 
-        {/* Weekly Performance */}
-        <section className="glass rounded-xl p-3 shadow-sm border border-white">
-          <div className="flex items-end justify-between mb-2">
+        <section className="glass rounded-xl border border-white p-3 shadow-sm">
+          <div className="mb-2 flex items-end justify-between">
             <div>
-              <h3 className="text-sm font-bold text-slate-800 tracking-tight">Weekly Performance</h3>
+              <h3 className="text-sm font-bold tracking-tight text-slate-800">
+                Weekly Performance
+              </h3>
               <p className="text-[10px] font-semibold text-slate-500">Current Week</p>
             </div>
           </div>
 
-          <div className="flex justify-around items-center gap-4 py-2">
+          <div className="flex items-center justify-around gap-4 py-2">
             <div className="flex flex-col items-center">
-              <div className="relative flex items-center justify-center size-16">
+              <div className="relative flex size-16 items-center justify-center">
                 <svg className="size-full -rotate-90" viewBox="0 0 36 36">
                   <circle
                     className="stroke-slate-100"
@@ -269,7 +314,7 @@ export default function HomeDashboard() {
                   <span className="text-[10px] font-bold text-slate-800">
                     {workoutDaysThisWeek}/{Math.max(workoutsPerWeek, 1)}
                   </span>
-                  <span className="text-[7px] text-slate-500 uppercase font-bold">
+                  <span className="text-[7px] font-bold uppercase text-slate-500">
                     Days
                   </span>
                 </div>
@@ -283,7 +328,7 @@ export default function HomeDashboard() {
             </div>
 
             <div className="flex flex-col items-center">
-              <div className="relative flex items-center justify-center size-16">
+              <div className="relative flex size-16 items-center justify-center">
                 <svg className="size-full -rotate-90" viewBox="0 0 36 36">
                   <circle
                     className="stroke-slate-100"
@@ -299,7 +344,10 @@ export default function HomeDashboard() {
                     cy="18"
                     fill="none"
                     r="16"
-                    strokeDasharray={`${Math.min(100, Math.round((weeklySetGoal / Math.max(weeklySetGoal, 1)) * 100))}, 100`}
+                    strokeDasharray={`${Math.min(
+                      100,
+                      Math.round((weeklySetGoal / Math.max(weeklySetGoal, 1)) * 100)
+                    )}, 100`}
                     strokeLinecap="round"
                     strokeWidth="3"
                   ></circle>
@@ -308,7 +356,7 @@ export default function HomeDashboard() {
                   <span className="text-[10px] font-bold text-slate-800">
                     {weeklySetGoal}
                   </span>
-                  <span className="text-[7px] text-slate-500 uppercase font-bold">
+                  <span className="text-[7px] font-bold uppercase text-slate-500">
                     Sets
                   </span>
                 </div>
@@ -321,22 +369,21 @@ export default function HomeDashboard() {
           </div>
         </section>
 
-        {/* AI Coach Insight */}
-        <section className="glass-darker rounded-xl p-3 border-l-4 border-primary shadow-sm mt-auto">
+        <section className="glass-darker mt-auto rounded-xl border-l-4 border-primary p-3 shadow-sm">
           <div className="flex items-start gap-3">
-            <div className="bg-primary/20 p-2 rounded-full">
-              <span className="material-symbols-outlined text-primary text-xl">
+            <div className="rounded-full bg-primary/20 p-2">
+              <span className="material-symbols-outlined text-xl text-primary">
                 insights
               </span>
             </div>
             <div>
-              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wide mb-1">
+              <h3 className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-800">
                 AI Coach Insight
               </h3>
-              <p className="text-sm text-slate-600 leading-snug">
+              <p className="text-sm leading-snug text-slate-600">
                 {currentProgram
-                  ? `Your current multi-week cycle is active. Keep the same structure on Home: current week plus next week, with missed past workouts shown in grey.`
-                  : "Create and publish a multi-week cycle to see your current program and the next two weeks here."}
+                  ? "Your Home now follows the published cycle and scheduled sessions. Select any day to preview its planned focus."
+                  : "Create and publish a multi-week cycle to see your current program and upcoming sessions here."}
               </p>
             </div>
           </div>
@@ -348,10 +395,8 @@ export default function HomeDashboard() {
           </div>
         )}
 
-        {/* Navigation Spacer */}
         <div className="h-[calc(64px+max(8px,env(safe-area-inset-bottom)))]"></div>
       </main>
-      {/* Bottom Navigation */}
     </div>
   );
 }
