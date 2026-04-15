@@ -1,5 +1,6 @@
 const { getPrisma } = require('../lib/prisma');
 const { ApiError } = require('./usersService');
+const { regenerateScheduledSessionsForPublishedCycle } = require('./scheduledSessionsService');
 const {
   normalizeNullableNumber,
   normalizeNullableInteger,
@@ -1241,6 +1242,35 @@ async function createCycleFromWeeklyPlan(payload) {
     return { cycle, publishedPlan };
   });
 
+  try {
+    await regenerateScheduledSessionsForPublishedCycle(created.cycle.id, {
+      userId: payload.userId,
+      timezone: effectiveTimezone,
+      regenerateFromDateKey: startDateKey,
+    });
+  } catch (error) {
+    logCycleServiceError(
+      'create_cycle_from_weekly_plan',
+      'sync_scheduled_sessions',
+      {
+        userId: payload.userId,
+        cycleId: created.cycle.id,
+        publishedPlanId: created.publishedPlan.id,
+      },
+      error
+    );
+
+    await prisma.trainingCycle.delete({
+      where: { id: created.cycle.id },
+    });
+
+    throw new ApiError(
+      500,
+      'SCHEDULE_SYNC_FAILED',
+      'Cycle creation failed while synchronizing scheduled sessions.'
+    );
+  }
+
   const temporalStatus = deriveTemporalStatus(created.cycle, effectiveTimezone);
   return {
     cycleId: created.cycle.id,
@@ -2055,7 +2085,7 @@ async function publishCycleDraft(cycleId, payload = {}) {
   let phase = 'start';
 
   try {
-    return await prisma.$transaction(
+    const publishResult = await prisma.$transaction(
       async (tx) => {
         phase = 'load_cycle';
         const cycle = await loadCycleForUser(tx, cycleId, userId);
@@ -2165,6 +2195,33 @@ async function publishCycleDraft(cycleId, payload = {}) {
         timeout: 15000,
       }
     );
+
+    phase = 'sync_scheduled_sessions';
+    try {
+      await regenerateScheduledSessionsForPublishedCycle(cycleId, {
+        userId,
+        timezone: publishResult.timezone,
+      });
+    } catch (error) {
+      logCycleServiceError(
+        'publish_cycle_draft',
+        phase,
+        {
+          cycleId,
+          userId,
+          publishedPlanId: publishResult.publishedPlanId,
+        },
+        error
+      );
+
+      throw new ApiError(
+        500,
+        'SCHEDULE_SYNC_FAILED',
+        'Cycle was published, but scheduled sessions failed to synchronize.'
+      );
+    }
+
+    return publishResult;
   } catch (error) {
     logCycleServiceError('publish_cycle_draft', phase, { cycleId, userId }, error);
     throw error;
@@ -2424,6 +2481,301 @@ function createCalendarRowsForWeek(startDateKey, cycleCard, visiblePlan, weekSta
   };
 }
 
+function normalizeSelectedDateKey(requestedSelectedDate, effectiveTimezone) {
+  return toDateKey(requestedSelectedDate) || getTodayDateKey(effectiveTimezone);
+}
+
+function selectCanonicalHomeCycle(cycles, requestedTimezone) {
+  const publishedCycles = cycles
+    .map((cycle) => {
+      const cycleTimeZone = resolveEffectiveTimezone(
+        cycle.timezone,
+        requestedTimezone,
+        DEFAULT_TIMEZONE
+      );
+      const visiblePlan = pickLatestPublished(cycle.plans);
+
+      if (!visiblePlan) {
+        return null;
+      }
+
+      return {
+        cycle,
+        visiblePlan,
+        cycleTimeZone,
+        temporalStatus: deriveTemporalStatus(cycle, cycleTimeZone),
+      };
+    })
+    .filter(Boolean);
+
+  return (
+    publishedCycles.find((entry) => entry.temporalStatus === 'active') ||
+    publishedCycles.find((entry) => entry.temporalStatus === 'upcoming') ||
+    null
+  );
+}
+
+function buildCanonicalHomeStatus(card, todayDateKey) {
+  if (!card) {
+    return {
+      state: 'none',
+      label: 'No published cycle',
+      cycleId: null,
+    };
+  }
+
+  if (card.temporalStatus === 'upcoming') {
+    return {
+      state: 'upcoming',
+      label: `Starts ${card.startDate} · ${card.name}`,
+      cycleId: card.cycleId,
+    };
+  }
+
+  const currentWeekNumber = Math.min(
+    card.durationWeeks,
+    Math.max(1, Math.floor((diffDateKeys(card.startDate, todayDateKey) || 0) / 7) + 1)
+  );
+
+  return {
+    state: 'active',
+    label: `Week ${currentWeekNumber} of ${card.durationWeeks} · ${card.name}`,
+    cycleId: card.cycleId,
+  };
+}
+
+function buildCanonicalCurrentProgram(card) {
+  if (!card) {
+    return null;
+  }
+
+  return {
+    cycleId: card.cycleId,
+    name: card.name,
+    startDate: card.startDate,
+    endDate: card.endDate,
+    durationWeeks: card.durationWeeks,
+    temporalStatus: card.temporalStatus,
+    summary: card.summary,
+  };
+}
+
+function buildCanonicalHomeCycleCard(cycle, visiblePlan, cycleTimeZone, temporalStatus) {
+  return {
+    cycleId: cycle.id,
+    visiblePlanId: visiblePlan?.id || null,
+    name: visiblePlan?.name || cycle.name,
+    startDate: toDateKey(cycle.startDate),
+    endDate: toDateKey(cycle.endDate),
+    durationWeeks: cycle.durationWeeks,
+    timezone: cycleTimeZone,
+    temporalStatus,
+    summary: buildPlanSummary(visiblePlan, toDateKey(cycle.startDate)),
+  };
+}
+
+function mapScheduledSessionToHomeSession(session) {
+  if (!session?.workout) {
+    return null;
+  }
+
+  return {
+    id: session.id,
+    status: session.status,
+    scheduledStartAt: session.scheduledStartAt,
+    scheduledEndAt: session.scheduledEndAt,
+    workoutId: session.workout.id,
+    workoutName: session.workout.name,
+    weekNumber: session.workout.planWeek.weekNumber,
+    orderIndex: session.workout.orderIndex,
+  };
+}
+
+function mapHomeSessionToDayState(session) {
+  return session ? 'planned' : 'rest';
+}
+
+function buildRestFocus(selectedDateKey, currentProgram) {
+  return {
+    date: selectedDateKey,
+    type: 'rest',
+    title: 'Rest / Recovery',
+    subtitle: currentProgram?.name || 'No session planned',
+    showStartSession: false,
+    session: null,
+  };
+}
+
+function buildSelectedDayFocus(selectedDateKey, session, currentProgram) {
+  if (!session) {
+    return buildRestFocus(selectedDateKey, currentProgram);
+  }
+
+  return {
+    date: selectedDateKey,
+    type: 'session',
+    title: session.workoutName,
+    subtitle: `Workout ${session.orderIndex} · Week ${session.weekNumber}`,
+    showStartSession: session.status === 'PLANNED' || session.status === 'RESCHEDULED',
+    session,
+  };
+}
+
+async function loadHomeSessionsByDate(cycleId, cycleTimeZone, windowStartDateKey, windowEndDateKey) {
+  const prisma = getPrisma();
+  const scheduledSessions = await prisma.scheduledSession.findMany({
+    where: {
+      workout: {
+        planWeek: {
+          plan: {
+            trainingCycleId: cycleId,
+          },
+        },
+      },
+    },
+    orderBy: { scheduledStartAt: 'asc' },
+    select: {
+      id: true,
+      status: true,
+      scheduledStartAt: true,
+      scheduledEndAt: true,
+      workout: {
+        select: {
+          id: true,
+          name: true,
+          orderIndex: true,
+          planWeek: {
+            select: {
+              weekNumber: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const sessionsByDate = new Map();
+
+  scheduledSessions.forEach((session) => {
+    const dateKey = getLocalDateTimeParts(session.scheduledStartAt, cycleTimeZone).dateKey;
+    if (
+      compareDateKeys(dateKey, windowStartDateKey) < 0 ||
+      compareDateKeys(dateKey, windowEndDateKey) > 0
+    ) {
+      return;
+    }
+
+    const homeSession = mapScheduledSessionToHomeSession(session);
+    if (sessionsByDate.has(dateKey)) {
+      console.warn('[cyclesService][get_canonical_home_dashboard]', {
+        cycleId,
+        dateKey,
+        message: 'Multiple scheduled sessions found for the same day; keeping the earliest one.',
+      });
+      return;
+    }
+
+    sessionsByDate.set(dateKey, homeSession);
+  });
+
+  return sessionsByDate;
+}
+
+async function getCanonicalHomeDashboard(userId, requestedTimezone, requestedSelectedDate) {
+  const prisma = getPrisma();
+  await assertUserExists(userId);
+
+  const effectiveTimezone = resolveEffectiveTimezone(requestedTimezone, DEFAULT_TIMEZONE);
+  const todayDateKey = getTodayDateKey(effectiveTimezone);
+  const selectedDateKey = normalizeSelectedDateKey(requestedSelectedDate, effectiveTimezone);
+  const scheduleStartDateKey = getStartOfMondayWeek(selectedDateKey);
+  const scheduleEndDateKey = addDays(scheduleStartDateKey, 13);
+
+  const cycles = await prisma.trainingCycle.findMany({
+    where: { userId },
+    include: {
+      plans: {
+        orderBy: { versionNumber: 'desc' },
+        include: fullPlanInclude,
+      },
+    },
+    orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }],
+  });
+
+  const visibleCycleEntry = selectCanonicalHomeCycle(cycles, requestedTimezone);
+
+  if (!visibleCycleEntry) {
+    const emptyDays = Array.from({ length: 14 }).map((_, index) => {
+      const dateKey = addDays(scheduleStartDateKey, index);
+      return {
+        date: dateKey,
+        isToday: dateKey === todayDateKey,
+        isSelected: dateKey === selectedDateKey,
+        state: 'rest',
+        session: null,
+      };
+    });
+
+    return {
+      timezone: effectiveTimezone,
+      selectedDate: selectedDateKey,
+      status: buildCanonicalHomeStatus(null, todayDateKey),
+      currentProgram: null,
+      todayFocus: buildRestFocus(selectedDateKey, null),
+      schedule14Days: {
+        startDate: scheduleStartDateKey,
+        endDate: scheduleEndDateKey,
+        days: emptyDays,
+      },
+    };
+  }
+
+  const { cycle: visibleCycle, visiblePlan, cycleTimeZone, temporalStatus } = visibleCycleEntry;
+  const cycleCard = buildCanonicalHomeCycleCard(
+    visibleCycle,
+    visiblePlan,
+    cycleTimeZone,
+    temporalStatus
+  );
+  const currentProgram = buildCanonicalCurrentProgram(cycleCard);
+  const sessionsByDate = await loadHomeSessionsByDate(
+    visibleCycle.id,
+    cycleTimeZone,
+    scheduleStartDateKey,
+    scheduleEndDateKey
+  );
+
+  const days = Array.from({ length: 14 }).map((_, index) => {
+    const dateKey = addDays(scheduleStartDateKey, index);
+    const session = sessionsByDate.get(dateKey) || null;
+
+    return {
+      date: dateKey,
+      isToday: dateKey === todayDateKey,
+      isSelected: dateKey === selectedDateKey,
+      state: mapHomeSessionToDayState(session),
+      session,
+    };
+  });
+
+  return {
+    timezone: effectiveTimezone,
+    selectedDate: selectedDateKey,
+    status: buildCanonicalHomeStatus(cycleCard, todayDateKey),
+    currentProgram,
+    todayFocus: buildSelectedDayFocus(
+      selectedDateKey,
+      sessionsByDate.get(selectedDateKey) || null,
+      currentProgram
+    ),
+    schedule14Days: {
+      startDate: scheduleStartDateKey,
+      endDate: scheduleEndDateKey,
+      days,
+    },
+  };
+}
+
 async function getHomeDashboard(userId, requestedTimezone) {
   const prisma = getPrisma();
   await assertUserExists(userId);
@@ -2499,6 +2851,7 @@ module.exports = {
   createPlanForCycle,
   deleteCycle,
   extendCycleDraft,
+  getCanonicalHomeDashboard,
   getCycleDetails,
   getCycleFull,
   getHomeDashboard,
