@@ -285,6 +285,10 @@ export function MultiWeekProgramProvider({ children }) {
   const multiWeekDraftRef = useRef(multiWeekDraft);
   const draftMetadataRef = useRef(draftMetadata);
   const draftRecoveryPromiseRef = useRef(null);
+  const saveRequestIdRef = useRef(0);
+  const latestAppliedSaveRequestIdRef = useRef(0);
+  const saveInFlightPromiseRef = useRef(null);
+  const pendingSaveRequestedRef = useRef(false);
 
   useEffect(() => {
     multiWeekDraftRef.current = multiWeekDraft;
@@ -406,6 +410,14 @@ export function MultiWeekProgramProvider({ children }) {
       return null;
     }
 
+    if (saveInFlightPromiseRef.current) {
+      pendingSaveRequestedRef.current = true;
+      return saveInFlightPromiseRef.current;
+    }
+
+    const requestId = saveRequestIdRef.current + 1;
+    saveRequestIdRef.current = requestId;
+
     setDraftMetadata((prev) => (
       prev.saveState === "saving"
         ? prev
@@ -415,12 +427,46 @@ export function MultiWeekProgramProvider({ children }) {
           }
     ));
 
-    try {
+    const runSave = async () => {
       const response = await updateCycleDraft(currentMetadata.cycleId, currentPlanId, {
         ...payload,
         allowCrossDayDraft: currentMetadata.allowCrossDayDraft,
       });
 
+      const currentSignature = JSON.stringify(
+        mapMultiWeekDraftToApi(multiWeekDraftRef.current)
+      );
+      const hasNewerLocalEdits = currentSignature !== signature;
+      const isOlderThanAppliedResponse =
+        requestId < latestAppliedSaveRequestIdRef.current;
+
+      if (hasNewerLocalEdits || isOlderThanAppliedResponse) {
+        setDraftMetadata((prev) => {
+          const latestLocalSignature = JSON.stringify(
+            mapMultiWeekDraftToApi(multiWeekDraftRef.current)
+          );
+          const hasUnsavedLocalEdits =
+            latestLocalSignature !== prev.lastPersistedSignature;
+
+          if (!hasUnsavedLocalEdits) {
+            return prev;
+          }
+
+          const hasNewerSaveRequestInFlight = requestId < saveRequestIdRef.current;
+          const nextSaveState = hasNewerSaveRequestInFlight ? "saving" : "dirty";
+
+          return prev.saveState === nextSaveState
+            ? prev
+            : {
+                ...prev,
+                saveState: nextSaveState,
+              };
+        });
+
+        return response;
+      }
+
+      latestAppliedSaveRequestIdRef.current = requestId;
       const activePlanId = response?.planId || null;
       const nextState = mapCycleBuilderPayload(response);
       setMultiWeekDraft((prev) => ({
@@ -439,24 +485,56 @@ export function MultiWeekProgramProvider({ children }) {
       }));
 
       return response;
-    } catch (error) {
-      const didRecoverDraft = await handleDraftExpired(error, currentMetadata?.cycleId || null);
-      if (didRecoverDraft) {
-        return null;
-      }
+    };
 
-      setDraftMetadata((prev) => (
-        prev.saveState === "error"
-          ? prev
-          : {
-              ...prev,
-              saveState: "error",
-              lastSaveErrorMessage: error?.message || "Unable to autosave this draft.",
-              lastSaveErrorCode: error?.code || null,
+    const savePromise = (async () => {
+      try {
+        return await runSave();
+      } catch (error) {
+        const didRecoverDraft = await handleDraftExpired(error, currentMetadata?.cycleId || null);
+        if (didRecoverDraft) {
+          return null;
+        }
+
+        setDraftMetadata((prev) => (
+          prev.saveState === "error"
+            ? prev
+            : {
+                ...prev,
+                saveState: "error",
+                lastSaveErrorMessage: error?.message || "Unable to autosave this draft.",
+                lastSaveErrorCode: error?.code || null,
+              }
+        ));
+        throw error;
+      } finally {
+        saveInFlightPromiseRef.current = null;
+
+        if (pendingSaveRequestedRef.current) {
+          pendingSaveRequestedRef.current = false;
+          const latestMetadata = draftMetadataRef.current;
+
+          if (!latestMetadata?.isRecoveringDraft) {
+            const latestDraft = multiWeekDraftRef.current;
+            const latestSignature = JSON.stringify(mapMultiWeekDraftToApi(latestDraft));
+
+            if (latestSignature !== latestMetadata.lastPersistedSignature) {
+              persistDraftNow(latestDraft).catch((queuedError) => {
+                console.error("[MultiWeekProgramContext] queued autosave failed", {
+                  cycleId: draftMetadataRef.current?.cycleId || null,
+                  cyclePlanId: draftMetadataRef.current?.cyclePlanId || null,
+                  errorCode: queuedError?.code || null,
+                  errorMessage: queuedError?.message || null,
+                });
+              });
             }
-      ));
-      throw error;
-    }
+          }
+        }
+      }
+    })();
+
+    saveInFlightPromiseRef.current = savePromise;
+    return savePromise;
   }, [handleDraftExpired]);
 
   useEffect(() => {

@@ -1843,130 +1843,135 @@ async function openOrCreateCycleEditDraft(cycleId, payload = {}) {
   let phase = 'start';
 
   try {
-    return await prisma.$transaction(async (tx) => {
-      phase = 'load_cycle';
-      const cycle = await loadCycleForUser(tx, cycleId, userId);
-      const effectiveTimezone = resolveEffectiveTimezone(cycle.timezone, payload.timezone, DEFAULT_TIMEZONE);
-      const temporalStatus = deriveTemporalStatus(cycle, effectiveTimezone);
+    return await prisma.$transaction(
+      async (tx) => {
+        phase = 'load_cycle';
+        const cycle = await loadCycleForUser(tx, cycleId, userId);
+        const effectiveTimezone = resolveEffectiveTimezone(cycle.timezone, payload.timezone, DEFAULT_TIMEZONE);
+        const temporalStatus = deriveTemporalStatus(cycle, effectiveTimezone);
 
-      logCycleServiceEvent('open_cycle_edit_draft', phase, {
-        cycleId,
-        userId,
-        temporalStatus,
-        timezone: effectiveTimezone,
-      });
+        logCycleServiceEvent('open_cycle_edit_draft', phase, {
+          cycleId,
+          userId,
+          temporalStatus,
+          timezone: effectiveTimezone,
+        });
 
-      if (temporalStatus === 'past') {
-        throw new ApiError(400, 'VALIDATION_ERROR', 'Past cycles cannot be edited');
-      }
+        if (temporalStatus === 'past') {
+          throw new ApiError(400, 'VALIDATION_ERROR', 'Past cycles cannot be edited');
+        }
 
-      phase = 'resolve_draft';
-      let draftPlan = await normalizeSingleDraft(tx, cycleId);
-      const publishedPlan = pickLatestPublished(cycle.plans);
-      let state = 'reused';
+        phase = 'resolve_draft';
+        let draftPlan = await normalizeSingleDraft(tx, cycleId);
+        const publishedPlan = pickLatestPublished(cycle.plans);
+        let state = 'reused';
 
-      if (draftPlan && !isDraftStillUsable(cycle, draftPlan, effectiveTimezone, Boolean(payload.allowCrossDayDraft))) {
-        phase = 'discard_expired_draft';
-        await tx.plan.delete({ where: { id: draftPlan.id } });
-        draftPlan = null;
-        state = 'recreated';
-      }
+        if (draftPlan && !isDraftStillUsable(cycle, draftPlan, effectiveTimezone, Boolean(payload.allowCrossDayDraft))) {
+          phase = 'discard_expired_draft';
+          await tx.plan.delete({ where: { id: draftPlan.id } });
+          draftPlan = null;
+          state = 'recreated';
+        }
 
-      if (!draftPlan) {
-        if (!publishedPlan) {
-          const fallbackDraft = cycle.plans.find((plan) => plan.status === 'DRAFT') || null;
-          if (!fallbackDraft) {
-            throw new ApiError(400, 'VALIDATION_ERROR', 'No editable version found for this cycle');
-          }
+        if (!draftPlan) {
+          if (!publishedPlan) {
+            const fallbackDraft = cycle.plans.find((plan) => plan.status === 'DRAFT') || null;
+            if (!fallbackDraft) {
+              throw new ApiError(400, 'VALIDATION_ERROR', 'No editable version found for this cycle');
+            }
 
-          draftPlan = fallbackDraft;
-          state = 'reused';
-        } else {
-          phase = 'create_draft_from_published';
-          const sourceDocument = clonePlanDocument(publishedPlan);
-          const nextVersion = Math.max(...cycle.plans.map((plan) => plan.versionNumber)) + 1;
-
-          const existingDraft = await tx.plan.findFirst({
-            where: {
-              trainingCycleId: cycle.id,
-              status: 'DRAFT',
-            },
-            orderBy: { updatedAt: 'desc' },
-            include: fullPlanInclude,
-          });
-
-          if (existingDraft) {
-            draftPlan = existingDraft;
+            draftPlan = fallbackDraft;
+            state = 'reused';
           } else {
+            phase = 'create_draft_from_published';
+            const sourceDocument = clonePlanDocument(publishedPlan);
+            const nextVersion = Math.max(...cycle.plans.map((plan) => plan.versionNumber)) + 1;
 
-            try {
-              draftPlan = await tx.plan.create({
-                data: {
-                  trainingCycleId: cycle.id,
-                  parentPlanId: publishedPlan.id,
-                  name: sourceDocument.name,
-                  versionNumber: nextVersion,
-                  sourceType: publishedPlan.sourceType || 'USER',
-                  status: 'DRAFT',
-                  weeks: {
-                    create: buildPlanCreateWeeksInput(sourceDocument.weeks),
-                  },
-                },
-                include: fullPlanInclude,
-              });
-            } catch (error) {
-              if (error.code === 'P2002') {
-                // quelqu’un a créé le draft juste avant nous → on le récupère
-                draftPlan = await tx.plan.findFirst({
-                  where: {
+            const existingDraft = await tx.plan.findFirst({
+              where: {
+                trainingCycleId: cycle.id,
+                status: 'DRAFT',
+              },
+              orderBy: { updatedAt: 'desc' },
+              include: fullPlanInclude,
+            });
+
+            if (existingDraft) {
+              draftPlan = existingDraft;
+            } else {
+
+              try {
+                draftPlan = await tx.plan.create({
+                  data: {
                     trainingCycleId: cycle.id,
+                    parentPlanId: publishedPlan.id,
+                    name: sourceDocument.name,
+                    versionNumber: nextVersion,
+                    sourceType: publishedPlan.sourceType || 'USER',
                     status: 'DRAFT',
+                    weeks: {
+                      create: buildPlanCreateWeeksInput(sourceDocument.weeks),
+                    },
                   },
-                  orderBy: { updatedAt: 'desc' },
                   include: fullPlanInclude,
                 });
-              } else {
-                throw error;
+              } catch (error) {
+                if (error.code === 'P2002') {
+                  // quelqu’un a créé le draft juste avant nous → on le récupère
+                  draftPlan = await tx.plan.findFirst({
+                    where: {
+                      trainingCycleId: cycle.id,
+                      status: 'DRAFT',
+                    },
+                    orderBy: { updatedAt: 'desc' },
+                    include: fullPlanInclude,
+                  });
+                } else {
+                  throw error;
+                }
               }
             }
+            state = 'fresh';
           }
-          state = 'fresh';
         }
+
+        phase = 'return_builder_payload';
+        logCycleServiceEvent('open_cycle_edit_draft', phase, {
+          cycleId,
+          userId,
+          draftPlanId: draftPlan.id,
+          publishedPlanId: publishedPlan?.id || null,
+          draftState: state,
+        });
+
+        return {
+          cycleId: cycle.id,
+          planId: draftPlan.id,
+          status: draftPlan.status,
+          temporalStatus,
+          timezone: effectiveTimezone,
+          cycle: {
+            id: cycle.id,
+            name: cycle.name,
+            startDate: toDateKey(cycle.startDate),
+            endDate: toDateKey(cycle.endDate),
+            durationWeeks: cycle.durationWeeks,
+          },
+          builderPayload: buildCycleBuilderPayload(cycle, draftPlan),
+          draftState: {
+            state,
+            effectiveTimezone,
+            localDate: getTodayDateKey(effectiveTimezone),
+            isGraceWindow: temporalStatus === 'active' && isWithinGraceWindow(effectiveTimezone),
+            canExtendDraft: temporalStatus === 'active' && isWithinGraceWindow(effectiveTimezone),
+          },
+          updatedAt: draftPlan.updatedAt,
+        };
+      },
+      {
+        timeout: 15000,
       }
-
-      phase = 'return_builder_payload';
-      logCycleServiceEvent('open_cycle_edit_draft', phase, {
-        cycleId,
-        userId,
-        draftPlanId: draftPlan.id,
-        publishedPlanId: publishedPlan?.id || null,
-        draftState: state,
-      });
-
-      return {
-        cycleId: cycle.id,
-        planId: draftPlan.id,
-        status: draftPlan.status,
-        temporalStatus,
-        timezone: effectiveTimezone,
-        cycle: {
-          id: cycle.id,
-          name: cycle.name,
-          startDate: toDateKey(cycle.startDate),
-          endDate: toDateKey(cycle.endDate),
-          durationWeeks: cycle.durationWeeks,
-        },
-        builderPayload: buildCycleBuilderPayload(cycle, draftPlan),
-        draftState: {
-          state,
-          effectiveTimezone,
-          localDate: getTodayDateKey(effectiveTimezone),
-          isGraceWindow: temporalStatus === 'active' && isWithinGraceWindow(effectiveTimezone),
-          canExtendDraft: temporalStatus === 'active' && isWithinGraceWindow(effectiveTimezone),
-        },
-        updatedAt: draftPlan.updatedAt,
-      };
-    });
+    );
   } catch (error) {
     logCycleServiceError('open_cycle_edit_draft', phase, { cycleId, userId }, error);
     throw error;
@@ -2159,6 +2164,8 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
         },
         updatedAt: updatedPlan.updatedAt,
       };
+    }, {
+      timeout: 15000,
     });
   } catch (error) {
     logCycleServiceError('update_cycle_draft', phase, { cycleId, planId, userId }, error);
@@ -2940,14 +2947,52 @@ function buildSelectedDayFocus(selectedDateKey, session, currentProgram) {
   };
 }
 
-async function loadHomeSessionsByDate(cycleId, cycleTimeZone, windowStartDateKey, windowEndDateKey) {
+function countPlannedWorkoutSets(workout) {
+  return (workout?.blocks || []).reduce(
+    (blockSum, block) =>
+      blockSum +
+      (block?.blockExercises || []).reduce(
+        (exerciseSum, exercise) => exerciseSum + (exercise?.setTemplates || []).length,
+        0
+      ),
+    0
+  );
+}
+
+function buildWeeklyPerformancePayload(weekStartDateKey, weekEndDateKey, plannedWorkouts, plannedSets) {
+  return {
+    weekStartDate: weekStartDateKey,
+    weekEndDate: weekEndDateKey,
+    workouts: {
+      actual: 0,
+      planned: plannedWorkouts,
+    },
+    sets: {
+      actual: 0,
+      planned: plannedSets,
+    },
+  };
+}
+
+async function loadHomeSessionsByDateForUser(
+  userId,
+  requestedTimezone,
+  windowStartDateKey,
+  windowEndDateKey
+) {
   const prisma = getPrisma();
   const scheduledSessions = await prisma.scheduledSession.findMany({
     where: {
+      scheduledStartAt: {
+        gte: new Date(`${addDays(windowStartDateKey, -1)}T00:00:00.000Z`),
+        lte: new Date(`${addDays(windowEndDateKey, 1)}T23:59:59.999Z`),
+      },
       workout: {
         planWeek: {
           plan: {
-            trainingCycleId: cycleId,
+            trainingCycle: {
+              userId,
+            },
           },
         },
       },
@@ -2966,6 +3011,16 @@ async function loadHomeSessionsByDate(cycleId, cycleTimeZone, windowStartDateKey
           planWeek: {
             select: {
               weekNumber: true,
+              plan: {
+                select: {
+                  trainingCycle: {
+                    select: {
+                      id: true,
+                      timezone: true,
+                    },
+                  },
+                },
+              },
             },
           },
         },
@@ -2976,7 +3031,13 @@ async function loadHomeSessionsByDate(cycleId, cycleTimeZone, windowStartDateKey
   const sessionsByDate = new Map();
 
   scheduledSessions.forEach((session) => {
-    const dateKey = getLocalDateTimeParts(session.scheduledStartAt, cycleTimeZone).dateKey;
+    const sessionCycle = session.workout?.planWeek?.plan?.trainingCycle || null;
+    const sessionTimeZone = resolveEffectiveTimezone(
+      sessionCycle?.timezone,
+      requestedTimezone,
+      DEFAULT_TIMEZONE
+    );
+    const dateKey = getLocalDateTimeParts(session.scheduledStartAt, sessionTimeZone).dateKey;
     if (
       compareDateKeys(dateKey, windowStartDateKey) < 0 ||
       compareDateKeys(dateKey, windowEndDateKey) > 0
@@ -2987,9 +3048,11 @@ async function loadHomeSessionsByDate(cycleId, cycleTimeZone, windowStartDateKey
     const homeSession = mapScheduledSessionToHomeSession(session);
     if (sessionsByDate.has(dateKey)) {
       console.warn('[cyclesService][get_canonical_home_dashboard]', {
-        cycleId,
+        userId,
         dateKey,
-        message: 'Multiple scheduled sessions found for the same day; keeping the earliest one.',
+        incomingCycleId: sessionCycle?.id || null,
+        message:
+          'Multiple scheduled sessions found for the same day; keeping the earliest one.',
       });
       return;
     }
@@ -3000,6 +3063,114 @@ async function loadHomeSessionsByDate(cycleId, cycleTimeZone, windowStartDateKey
   return sessionsByDate;
 }
 
+async function loadHomeWeeklyPerformanceForUser(
+  userId,
+  requestedTimezone,
+  weekStartDateKey,
+  weekEndDateKey
+) {
+  const prisma = getPrisma();
+  const scheduledSessions = await prisma.scheduledSession.findMany({
+    where: {
+      scheduledStartAt: {
+        gte: new Date(`${addDays(weekStartDateKey, -1)}T00:00:00.000Z`),
+        lte: new Date(`${addDays(weekEndDateKey, 1)}T23:59:59.999Z`),
+      },
+      workout: {
+        planWeek: {
+          plan: {
+            trainingCycle: {
+              userId,
+            },
+          },
+        },
+      },
+    },
+    orderBy: { scheduledStartAt: 'asc' },
+    select: {
+      id: true,
+      scheduledStartAt: true,
+      workout: {
+        select: {
+          id: true,
+          planWeek: {
+            select: {
+              plan: {
+                select: {
+                  trainingCycle: {
+                    select: {
+                      id: true,
+                      timezone: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          blocks: {
+            select: {
+              blockExercises: {
+                select: {
+                  setTemplates: {
+                    select: {
+                      id: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const sessionsByDate = new Map();
+
+  scheduledSessions.forEach((session) => {
+    const sessionCycle = session.workout?.planWeek?.plan?.trainingCycle || null;
+    const sessionTimeZone = resolveEffectiveTimezone(
+      sessionCycle?.timezone,
+      requestedTimezone,
+      DEFAULT_TIMEZONE
+    );
+    const dateKey = getLocalDateTimeParts(session.scheduledStartAt, sessionTimeZone).dateKey;
+
+    if (
+      compareDateKeys(dateKey, weekStartDateKey) < 0 ||
+      compareDateKeys(dateKey, weekEndDateKey) > 0
+    ) {
+      return;
+    }
+
+    if (sessionsByDate.has(dateKey)) {
+      console.warn('[cyclesService][get_canonical_home_dashboard_weekly_performance]', {
+        userId,
+        dateKey,
+        incomingCycleId: sessionCycle?.id || null,
+        message:
+          'Multiple scheduled sessions found for the same day in weekly performance; keeping the earliest one.',
+      });
+      return;
+    }
+
+    sessionsByDate.set(dateKey, session);
+  });
+
+  const plannedWorkouts = sessionsByDate.size;
+  const plannedSets = Array.from(sessionsByDate.values()).reduce(
+    (sum, session) => sum + countPlannedWorkoutSets(session.workout),
+    0
+  );
+
+  return buildWeeklyPerformancePayload(
+    weekStartDateKey,
+    weekEndDateKey,
+    plannedWorkouts,
+    plannedSets
+  );
+}
+
 async function getCanonicalHomeDashboard(userId, requestedTimezone, requestedSelectedDate) {
   const prisma = getPrisma();
   await assertUserExists(userId);
@@ -3007,6 +3178,8 @@ async function getCanonicalHomeDashboard(userId, requestedTimezone, requestedSel
   const effectiveTimezone = resolveEffectiveTimezone(requestedTimezone, DEFAULT_TIMEZONE);
   const todayDateKey = getTodayDateKey(effectiveTimezone);
   const selectedDateKey = normalizeSelectedDateKey(requestedSelectedDate, effectiveTimezone);
+  const currentWeekStartDateKey = getStartOfMondayWeek(todayDateKey);
+  const currentWeekEndDateKey = addDays(currentWeekStartDateKey, 6);
   const scheduleStartDateKey = getStartOfMondayWeek(selectedDateKey);
   const scheduleEndDateKey = addDays(scheduleStartDateKey, 13);
 
@@ -3022,6 +3195,12 @@ async function getCanonicalHomeDashboard(userId, requestedTimezone, requestedSel
   });
 
   const visibleCycleEntry = selectCanonicalHomeCycle(cycles, requestedTimezone);
+  const weeklyPerformance = await loadHomeWeeklyPerformanceForUser(
+    userId,
+    requestedTimezone,
+    currentWeekStartDateKey,
+    currentWeekEndDateKey
+  );
 
   if (!visibleCycleEntry) {
     const emptyDays = Array.from({ length: 14 }).map((_, index) => {
@@ -3041,6 +3220,7 @@ async function getCanonicalHomeDashboard(userId, requestedTimezone, requestedSel
       status: buildCanonicalHomeStatus(null, todayDateKey),
       currentProgram: null,
       todayFocus: buildRestFocus(selectedDateKey, null),
+      weeklyPerformance,
       schedule14Days: {
         startDate: scheduleStartDateKey,
         endDate: scheduleEndDateKey,
@@ -3057,9 +3237,9 @@ async function getCanonicalHomeDashboard(userId, requestedTimezone, requestedSel
     temporalStatus
   );
   const currentProgram = buildCanonicalCurrentProgram(cycleCard);
-  const sessionsByDate = await loadHomeSessionsByDate(
-    visibleCycle.id,
-    cycleTimeZone,
+  const sessionsByDate = await loadHomeSessionsByDateForUser(
+    userId,
+    requestedTimezone,
     scheduleStartDateKey,
     scheduleEndDateKey
   );
@@ -3087,6 +3267,7 @@ async function getCanonicalHomeDashboard(userId, requestedTimezone, requestedSel
       sessionsByDate.get(selectedDateKey) || null,
       currentProgram
     ),
+    weeklyPerformance,
     schedule14Days: {
       startDate: scheduleStartDateKey,
       endDate: scheduleEndDateKey,

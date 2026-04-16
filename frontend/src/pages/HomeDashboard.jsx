@@ -82,6 +82,7 @@ export default function HomeDashboard() {
   const status = dashboard?.status || null;
   const currentProgram = dashboard?.currentProgram || null;
   const todayFocus = dashboard?.todayFocus || null;
+  const weeklyPerformance = dashboard?.weeklyPerformance || null;
   const scheduleDays = useMemo(
     () =>
       fixedScheduleDays.map((day) => ({
@@ -90,15 +91,21 @@ export default function HomeDashboard() {
       })),
     [fixedScheduleDays, selectedDate]
   );
-  const firstWeekDays = scheduleDays.slice(0, 7);
   const isSelectedDateToday = useMemo(
     () => scheduleDays.some((day) => day.date === dashboard?.selectedDate && day.isToday),
     [dashboard?.selectedDate, scheduleDays]
   );
 
-  const weeklySetGoal = currentProgram?.summary?.totalSetsFirstWeek || 24;
-  const workoutsPerWeek = currentProgram?.summary?.sessionsPerWeek || 4;
-  const workoutDaysThisWeek = firstWeekDays.filter((day) => day.session).length;
+  const workoutActual = Math.max(0, Number(weeklyPerformance?.workouts?.actual) || 0);
+  const workoutPlanned = Math.max(0, Number(weeklyPerformance?.workouts?.planned) || 0);
+  const workoutRemaining = Math.max(0, workoutPlanned - workoutActual);
+  const workoutProgressPercent =
+    workoutPlanned > 0 ? Math.round((workoutActual / workoutPlanned) * 100) : 0;
+  const setActual = Math.max(0, Number(weeklyPerformance?.sets?.actual) || 0);
+  const setPlanned = Math.max(0, Number(weeklyPerformance?.sets?.planned) || 0);
+  const setRemaining = Math.max(0, setPlanned - setActual);
+  const setProgressPercent =
+    setPlanned > 0 ? Math.round((setActual / setPlanned) * 100) : 0;
   const focusHeading = isSelectedDateToday ? "Today's Focus" : "Selected Day Focus";
 
   return (
@@ -305,24 +312,24 @@ export default function HomeDashboard() {
                     cy="18"
                     fill="none"
                     r="16"
-                    strokeDasharray={`${Math.min(100, workoutDaysThisWeek * 25)}, 100`}
+                    strokeDasharray={`${workoutProgressPercent}, 100`}
                     strokeLinecap="round"
                     strokeWidth="3"
                   ></circle>
                 </svg>
                 <div className="absolute flex flex-col items-center">
                   <span className="text-[10px] font-bold text-slate-800">
-                    {workoutDaysThisWeek}/{Math.max(workoutsPerWeek, 1)}
+                    {workoutActual}/{workoutPlanned}
                   </span>
                   <span className="text-[7px] font-bold uppercase text-slate-500">
-                    Days
+                    Workouts
                   </span>
                 </div>
               </div>
               <div className="mt-2 text-center">
-                <p className="text-[10px] font-bold text-slate-700">Weekly Sessions</p>
+                <p className="text-[10px] font-bold text-slate-700">Workouts</p>
                 <p className="text-[8px] text-slate-400">
-                  {Math.max(0, workoutsPerWeek - workoutDaysThisWeek)} remaining
+                  {workoutRemaining} remaining
                 </p>
               </div>
             </div>
@@ -344,17 +351,14 @@ export default function HomeDashboard() {
                     cy="18"
                     fill="none"
                     r="16"
-                    strokeDasharray={`${Math.min(
-                      100,
-                      Math.round((weeklySetGoal / Math.max(weeklySetGoal, 1)) * 100)
-                    )}, 100`}
+                    strokeDasharray={`${setProgressPercent}, 100`}
                     strokeLinecap="round"
                     strokeWidth="3"
                   ></circle>
                 </svg>
                 <div className="absolute flex flex-col items-center">
                   <span className="text-[10px] font-bold text-slate-800">
-                    {weeklySetGoal}
+                    {setActual}/{setPlanned}
                   </span>
                   <span className="text-[7px] font-bold uppercase text-slate-500">
                     Sets
@@ -362,8 +366,8 @@ export default function HomeDashboard() {
                 </div>
               </div>
               <div className="mt-2 text-center">
-                <p className="text-[10px] font-bold text-slate-700">Planned Sets</p>
-                <p className="text-[8px] text-slate-400">First week target</p>
+                <p className="text-[10px] font-bold text-slate-700">Volume</p>
+                <p className="text-[8px] text-slate-400">{setRemaining} remaining</p>
               </div>
             </div>
           </div>

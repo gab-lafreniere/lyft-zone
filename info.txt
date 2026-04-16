@@ -173,11 +173,45 @@ SÉPARATION PLAN / EXÉCUTION
 - L’historique utilisateur ne doit jamais modifier le plan d’origine
 
 --------------------------------------------------
+EXÉCUTION RÉELLE (SOURCE DE VÉRITÉ)
+--------------------------------------------------
+
+Le système distingue explicitement:
+
+1. Planification (théorique)
+2. Exécution (réelle)
+
+Planification:
+- Weekly plan
+- Training cycle
+- Scheduled sessions
+
+Exécution:
+- Séances réellement effectuées par l’utilisateur
+- Logs détaillés par exercice et par set
+
+Principes:
+
+- Une séance réalisée est une entité distincte d’une séance planifiée
+- Une séance réalisée peut provenir:
+  - d’une scheduled session (donc cycle)
+  - d’un workout lancé depuis un plan (weekly ou cycle)
+- Une séance ne nécessite pas obligatoirement une planification préalable, mais doit toujours être basée sur un workout structuré
+
+- Les analytics et insights reposent prioritairement sur les données réelles (logs)
+- Les données planifiées servent de référence comparative (prévu vs réel)
+
+- Le système ne considère jamais le plan comme une vérité absolue
+- La vérité produit est toujours basée sur ce qui est réellement exécuté
+
+--------------------------------------------------
 NOTES IMPORTANTES
 --------------------------------------------------
 
-- Le calendrier actuel est principalement dérivé de la structure du cycle
-- Les scheduled sessions existent côté backend mais ne sont pas encore la source principale du système
+- Le calendrier Home (court terme, ex: 14 jours) est basé sur les scheduled sessions utilisateur
+- Il doit inclure toutes les séances planifiées dans la fenêtre, peu importe le cycle (actif ou upcoming)
+- Le cycle reste une structure de référence, mais ne limite pas l’affichage des séances à court terme
+- Les scheduled sessions deviennent la source de vérité pour la planification opérationnelle court terme
 
 ==================================================
 ENTRÉES UTILISATEUR DU WIZARD
@@ -267,6 +301,35 @@ MODULES PRINCIPAUX (ÉTAT ACTUEL)
 - Historique de structure des plans
   - Gestion draft / published
   - Version active visible
+
+--------------------------------------------------
+HOME DASHBOARD (VISION)
+--------------------------------------------------
+
+Le Home dashboard fournit une vue court terme et opérationnelle.
+
+Calendrier:
+- Affiche une fenêtre courte (ex: 14 jours)
+- Basé sur les scheduled sessions utilisateur
+- Inclut les séances provenant de tous les cycles (actifs et futurs)
+- Ne dépend pas uniquement du cycle actif
+
+Today focus:
+- Basé sur la séance planifiée du jour sélectionné
+- Peut provenir de n’importe quel cycle
+
+Métriques affichées:
+- Nombre de séances prévues vs réalisées (hebdomadaire)
+- Nombre de sets prévus vs réalisés (hebdomadaire)
+
+Principes UX:
+- Les objectifs peuvent être dépassés
+- Les indicateurs visuels doivent permettre de dépasser 100% (ex: style Apple Watch)
+- Le système ne pénalise pas le dépassement, il l’interprète comme une donnée
+
+Rôle:
+- Fournir une lecture rapide et claire de la planification et de l’exécution court terme
+- Ne pas remplacer les analytics avancées (Insights)
 
 --------------------------------------------------
 MODULES PARTIELLEMENT IMPLÉMENTÉS
@@ -374,7 +437,7 @@ L’API est structurée autour de plusieurs domaines métier:
 USERS
 --------------------------------------------------
 
-POST /api/users  
+POST /api/users
 PUT /api/users/:userId/profile
 
 --------------------------------------------------
@@ -399,9 +462,9 @@ CYCLES (MULTI-WEEK)
 
 Endpoints principaux:
 
-POST /api/cycles  
-POST /api/cycles/:cycleId/plans  
-GET /api/cycles/:cycleId/full  
+POST /api/cycles
+POST /api/cycles/:cycleId/plans
+GET /api/cycles/:cycleId/full
 
 Fonctionnalités associées:
 - Création d’un cycle à partir d’un weekly plan
@@ -413,8 +476,8 @@ Fonctionnalités associées:
 SCHEDULED SESSIONS
 --------------------------------------------------
 
-POST /api/scheduled-sessions  
-GET /api/scheduled-sessions  
+POST /api/scheduled-sessions
+GET /api/scheduled-sessions
 
 Note:
 - Les scheduled sessions existent côté backend
@@ -424,7 +487,7 @@ Note:
 EXERCISES
 --------------------------------------------------
 
-GET /api/exercises  
+GET /api/exercises
 
 Supporte:
 - q (recherche texte)
@@ -599,6 +662,34 @@ Introduire le tracking réel des performances utilisateur.
 - Historique par exercice
 - Analyse de progression basique
 - Volume par muscle dans le temps
+
+Les analyses reposent sur la comparaison entre:
+
+- Données planifiées (plans, cycles, scheduled sessions)
+- Données réelles (logs de séances)
+
+Axes principaux d’analyse:
+
+1. Volume
+- Sets prévus vs réalisés
+- Volume total par semaine / cycle
+
+2. Fréquence
+- Séances prévues vs réalisées
+
+3. Performance
+- Progression sur exercices clés
+- Estimation du 1RM dans le temps
+- Évolution des performances à charge / reps comparables
+
+Comparaison de cycles:
+- Adhérence (planifié vs réalisé)
+- Volume réel exécuté
+- Performance sur exercices pivots
+
+Principe:
+- Aucune métrique globale opaque
+- Les axes sont analysés séparément pour rester interprétables
 
 --------------------------------------------------
 PHASE 3: IA
@@ -793,10 +884,12 @@ RÈGLES D’IDENTITÉ DES DONNÉES
 SUIVI DES SÉANCES
 ==================================================
 - Mode entraînement plein écran
+- Basé sur un workout structuré (weekly plan ou cycle)
 - Input rapide poids, reps, RIR
 - Chronomètre de repos intégré
 - Mobile first strict
 - Enregistrement automatique côté backend
+- Génère des données réelles utilisées pour les analytics
 
 ==================================================
 PERSISTANCE DES DONNÉES
