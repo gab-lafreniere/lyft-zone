@@ -93,6 +93,32 @@ const fullPlanInclude = {
   },
 };
 
+const draftMutationInclude = {
+  weeks: {
+    orderBy: { orderIndex: 'asc' },
+    include: {
+      workouts: {
+        orderBy: { orderIndex: 'asc' },
+        include: {
+          blocks: {
+            orderBy: { orderIndex: 'asc' },
+            include: {
+              blockExercises: {
+                orderBy: { orderIndex: 'asc' },
+                include: {
+                  setTemplates: {
+                    orderBy: { setIndex: 'asc' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 const weeklySourceVersionInclude = {
   workouts: {
     orderBy: { orderIndex: 'asc' },
@@ -893,14 +919,37 @@ async function loadCycleForUser(tx, cycleId, userId) {
   return cycle;
 }
 
-async function normalizeSingleDraft(tx, cycleId) {
+async function loadCycleSummaryForUser(tx, cycleId, userId) {
+  const cycle = await tx.trainingCycle.findFirst({
+    where: {
+      id: cycleId,
+      userId,
+    },
+    select: {
+      id: true,
+      name: true,
+      startDate: true,
+      endDate: true,
+      durationWeeks: true,
+      timezone: true,
+    },
+  });
+
+  if (!cycle) {
+    throw new ApiError(404, 'NOT_FOUND', 'Training cycle not found');
+  }
+
+  return cycle;
+}
+
+async function normalizeSingleDraft(tx, cycleId, include = fullPlanInclude) {
   const drafts = await tx.plan.findMany({
     where: {
       trainingCycleId: cycleId,
       status: 'DRAFT',
     },
     orderBy: { updatedAt: 'desc' },
-    include: fullPlanInclude,
+    include,
   });
 
   if (drafts.length <= 1) {
@@ -919,6 +968,327 @@ async function normalizeSingleDraft(tx, cycleId) {
   return latestDraft;
 }
 
+function compareByIndex(primaryKey, secondaryKey = null) {
+  return (left, right) => {
+    const primaryDelta = Number(left?.[primaryKey] || 0) - Number(right?.[primaryKey] || 0);
+    if (primaryDelta !== 0) {
+      return primaryDelta;
+    }
+
+    if (!secondaryKey) {
+      return 0;
+    }
+
+    return Number(left?.[secondaryKey] || 0) - Number(right?.[secondaryKey] || 0);
+  };
+}
+
+function normalizeSetTemplateForPersistence(setTemplate = {}, setIndex, options = {}) {
+  const normalized = {
+    setIndex,
+    setType: setTemplate.setType || 'WORKING',
+    targetReps: normalizeNullableInteger(setTemplate.targetReps),
+    minReps: normalizeNullableInteger(setTemplate.minReps),
+    maxReps: normalizeNullableInteger(setTemplate.maxReps),
+    targetSeconds: normalizeNullableInteger(setTemplate.targetSeconds),
+    targetRir: normalizeNullableNumber(setTemplate.targetRir),
+    targetRpe: normalizeNullableNumber(setTemplate.targetRpe),
+    tempo: normalizeOptionalString(setTemplate.tempo),
+    restSeconds: normalizeNullableInteger(setTemplate.restSeconds),
+    notes: normalizeOptionalString(setTemplate.notes),
+  };
+
+  if (options.includeIds) {
+    normalized.id = normalizeOptionalString(setTemplate.id);
+  }
+
+  return normalized;
+}
+
+function normalizeExerciseForPersistence(exercise = {}, orderIndex, options = {}) {
+  const normalized = {
+    orderIndex,
+    exerciseId: normalizeOptionalString(exercise.exerciseId),
+    executionNotes: normalizeOptionalString(exercise.executionNotes),
+    defaultTempo: normalizeOptionalString(exercise.defaultTempo),
+    defaultRestSeconds: normalizeNullableInteger(exercise.defaultRestSeconds),
+    defaultTargetRir: normalizeNullableNumber(exercise.defaultTargetRir),
+    defaultTargetRpe: normalizeNullableNumber(exercise.defaultTargetRpe),
+    intensificationMethod: exercise.intensificationMethod || 'NONE',
+    notes: normalizeOptionalString(exercise.notes),
+    setTemplates: (Array.isArray(exercise.setTemplates) ? exercise.setTemplates : [])
+      .slice()
+      .sort(compareByIndex('setIndex'))
+      .map((setTemplate, index) =>
+        normalizeSetTemplateForPersistence(setTemplate, index + 1, options)
+      ),
+  };
+
+  if (options.includeIds) {
+    normalized.id = normalizeOptionalString(exercise.id);
+  }
+
+  return normalized;
+}
+
+function normalizeBlockForPersistence(block = {}, orderIndex, options = {}) {
+  const normalized = {
+    orderIndex,
+    blockType: block.blockType,
+    label: normalizeOptionalString(block.label),
+    roundCount: normalizeNullableInteger(block.roundCount),
+    restStrategy: block.restStrategy || null,
+    restSeconds: normalizeNullableInteger(block.restSeconds),
+    notes: normalizeOptionalString(block.notes),
+    exercises: (Array.isArray(block.exercises) ? block.exercises : [])
+      .slice()
+      .sort(compareByIndex('orderIndex'))
+      .map((exercise, index) =>
+        normalizeExerciseForPersistence(exercise, index + 1, options)
+      ),
+  };
+
+  if (options.includeIds) {
+    normalized.id = normalizeOptionalString(block.id);
+  }
+
+  return normalized;
+}
+
+function normalizeWorkoutForPersistence(workout = {}, orderIndex, options = {}) {
+  const normalized = {
+    name: String(workout.name || '').trim(),
+    orderIndex,
+    scheduledDay: workout.scheduledDay || null,
+    estimatedDurationMinutes: normalizeNullableInteger(workout.estimatedDurationMinutes),
+    notes: normalizeOptionalString(workout.notes),
+    blocks: (Array.isArray(workout.blocks) ? workout.blocks : [])
+      .slice()
+      .sort(compareByIndex('orderIndex'))
+      .map((block, index) => normalizeBlockForPersistence(block, index + 1, options)),
+  };
+
+  if (options.includeIds) {
+    normalized.id = normalizeOptionalString(workout.id);
+  }
+
+  return normalized;
+}
+
+function normalizeWeekForPersistence(week = {}, weekNumber, orderIndex, options = {}) {
+  const normalized = {
+    weekNumber,
+    orderIndex,
+    label: normalizeOptionalString(week.label) || `Week ${weekNumber}`,
+    notes: normalizeOptionalString(week.notes),
+    workouts: (Array.isArray(week.workouts) ? week.workouts : [])
+      .slice()
+      .sort(compareByIndex('orderIndex'))
+      .map((workout, index) =>
+        normalizeWorkoutForPersistence(workout, index + 1, options)
+      ),
+  };
+
+  if (options.includeIds) {
+    normalized.id = normalizeOptionalString(week.id);
+  }
+
+  return normalized;
+}
+
+function normalizeCycleDocumentForPersistence(document = {}, options = {}) {
+  return {
+    name: String(document.name || '').trim(),
+    weeks: (Array.isArray(document.weeks) ? document.weeks : [])
+      .slice()
+      .sort(compareByIndex('weekNumber', 'orderIndex'))
+      .map((week, index) => {
+        const normalizedWeekNumber = normalizeInt(week.weekNumber, index + 1);
+        return normalizeWeekForPersistence(week, normalizedWeekNumber, index + 1, options);
+      }),
+  };
+}
+
+function buildDraftMutationDocument(plan) {
+  if (!plan) {
+    return null;
+  }
+
+  return {
+    id: plan.id,
+    name: plan.name,
+    weeks: (Array.isArray(plan.weeks) ? plan.weeks : []).map((week) => ({
+      id: week.id,
+      weekNumber: week.weekNumber,
+      orderIndex: week.orderIndex,
+      label: week.label,
+      notes: week.notes,
+      workouts: (Array.isArray(week.workouts) ? week.workouts : []).map((workout) => ({
+        id: workout.id,
+        name: workout.name,
+        orderIndex: workout.orderIndex,
+        scheduledDay: workout.scheduledDay,
+        estimatedDurationMinutes: workout.estimatedDurationMinutes,
+        notes: workout.notes,
+        blocks: (Array.isArray(workout.blocks) ? workout.blocks : []).map((block) => ({
+          id: block.id,
+          orderIndex: block.orderIndex,
+          blockType: block.blockType,
+          label: block.label,
+          roundCount: block.roundCount,
+          restStrategy: block.restStrategy,
+          restSeconds: block.restSeconds,
+          notes: block.notes,
+          exercises: (Array.isArray(block.blockExercises) ? block.blockExercises : []).map((exercise) => ({
+            id: exercise.id,
+            exerciseId: exercise.exerciseId,
+            orderIndex: exercise.orderIndex,
+            executionNotes: exercise.executionNotes,
+            defaultTempo: exercise.defaultTempo,
+            defaultRestSeconds: exercise.defaultRestSeconds,
+            defaultTargetRir: exercise.defaultTargetRir,
+            defaultTargetRpe: exercise.defaultTargetRpe,
+            intensificationMethod: exercise.intensificationMethod,
+            notes: exercise.notes,
+            setTemplates: (Array.isArray(exercise.setTemplates) ? exercise.setTemplates : []).map((setTemplate) => ({
+              id: setTemplate.id,
+              setIndex: setTemplate.setIndex,
+              setType: setTemplate.setType,
+              targetReps: setTemplate.targetReps,
+              minReps: setTemplate.minReps,
+              maxReps: setTemplate.maxReps,
+              targetSeconds: setTemplate.targetSeconds,
+              targetRir: setTemplate.targetRir,
+              targetRpe: setTemplate.targetRpe,
+              tempo: setTemplate.tempo,
+              restSeconds: setTemplate.restSeconds,
+              notes: setTemplate.notes,
+            })),
+          })),
+        })),
+      })),
+    })),
+  };
+}
+
+function buildCanonicalCycleSignature(document) {
+  return JSON.stringify(normalizeCycleDocumentForPersistence(document));
+}
+
+function isCycleDraftNoOp(currentDraftDocument, incomingDocument) {
+  return buildCanonicalCycleSignature(currentDraftDocument) === buildCanonicalCycleSignature(incomingDocument);
+}
+
+function normalizeWeekScalarFields(week) {
+  return JSON.stringify({
+    weekNumber: week.weekNumber,
+    orderIndex: week.orderIndex,
+    label: week.label || null,
+    notes: week.notes || null,
+  });
+}
+
+function normalizeWorkoutScalarFields(workout) {
+  return JSON.stringify({
+    name: workout.name,
+    orderIndex: workout.orderIndex,
+    scheduledDay: workout.scheduledDay || null,
+    estimatedDurationMinutes: normalizeNullableInteger(workout.estimatedDurationMinutes),
+    notes: workout.notes || null,
+  });
+}
+
+function normalizeWorkoutBlockFields(workout) {
+  return JSON.stringify(
+    (Array.isArray(workout.blocks) ? workout.blocks : []).map((block) => ({
+      orderIndex: block.orderIndex,
+      blockType: block.blockType,
+      label: block.label || null,
+      roundCount: normalizeNullableInteger(block.roundCount),
+      restStrategy: block.restStrategy || null,
+      restSeconds: normalizeNullableInteger(block.restSeconds),
+      notes: block.notes || null,
+      exercises: (Array.isArray(block.exercises) ? block.exercises : []).map((exercise) => ({
+        orderIndex: exercise.orderIndex,
+        exerciseId: exercise.exerciseId || null,
+        executionNotes: exercise.executionNotes || null,
+        defaultTempo: exercise.defaultTempo || null,
+        defaultRestSeconds: normalizeNullableInteger(exercise.defaultRestSeconds),
+        defaultTargetRir: normalizeNullableNumber(exercise.defaultTargetRir),
+        defaultTargetRpe: normalizeNullableNumber(exercise.defaultTargetRpe),
+        intensificationMethod: exercise.intensificationMethod || 'NONE',
+        notes: exercise.notes || null,
+        setTemplates: (Array.isArray(exercise.setTemplates) ? exercise.setTemplates : []).map((setTemplate) => ({
+          setIndex: setTemplate.setIndex,
+          setType: setTemplate.setType || 'WORKING',
+          targetReps: normalizeNullableInteger(setTemplate.targetReps),
+          minReps: normalizeNullableInteger(setTemplate.minReps),
+          maxReps: normalizeNullableInteger(setTemplate.maxReps),
+          targetSeconds: normalizeNullableInteger(setTemplate.targetSeconds),
+          targetRir: normalizeNullableNumber(setTemplate.targetRir),
+          targetRpe: normalizeNullableNumber(setTemplate.targetRpe),
+          tempo: setTemplate.tempo || null,
+          restSeconds: normalizeNullableInteger(setTemplate.restSeconds),
+          notes: setTemplate.notes || null,
+        })),
+      })),
+    }))
+  );
+}
+
+function buildWorkoutBlocksCreateInput(blocks = []) {
+  return blocks.map((block) => ({
+    orderIndex: block.orderIndex,
+    blockType: block.blockType,
+    label: block.label || undefined,
+    roundCount: block.roundCount ?? undefined,
+    restStrategy: block.restStrategy ?? undefined,
+    restSeconds: block.restSeconds ?? undefined,
+    notes: block.notes ?? undefined,
+    blockExercises: {
+      create: block.exercises.map((exercise) => ({
+        exerciseId: exercise.exerciseId,
+        orderIndex: exercise.orderIndex,
+        executionNotes: exercise.executionNotes ?? undefined,
+        defaultTempo: exercise.defaultTempo ?? undefined,
+        defaultRestSeconds: exercise.defaultRestSeconds ?? undefined,
+        defaultTargetRir: exercise.defaultTargetRir ?? undefined,
+        defaultTargetRpe: exercise.defaultTargetRpe ?? undefined,
+        intensificationMethod: exercise.intensificationMethod ?? undefined,
+        notes: exercise.notes ?? undefined,
+        setTemplates: {
+          create: exercise.setTemplates.map((setTemplate) => ({
+            setIndex: setTemplate.setIndex,
+            setType: setTemplate.setType,
+            targetReps: setTemplate.targetReps ?? undefined,
+            minReps: setTemplate.minReps ?? undefined,
+            maxReps: setTemplate.maxReps ?? undefined,
+            targetSeconds: setTemplate.targetSeconds ?? undefined,
+            targetRir: setTemplate.targetRir ?? undefined,
+            targetRpe: setTemplate.targetRpe ?? undefined,
+            tempo: setTemplate.tempo ?? undefined,
+            restSeconds: setTemplate.restSeconds ?? undefined,
+            notes: setTemplate.notes ?? undefined,
+          })),
+        },
+      })),
+    },
+  }));
+}
+
+function buildWorkoutCreateInput(workout) {
+  return {
+    name: workout.name,
+    orderIndex: workout.orderIndex,
+    scheduledDay: workout.scheduledDay || undefined,
+    estimatedDurationMinutes: workout.estimatedDurationMinutes ?? undefined,
+    notes: workout.notes ?? undefined,
+    blocks: {
+      create: buildWorkoutBlocksCreateInput(workout.blocks),
+    },
+  };
+}
+
 function buildPlanCreateWeeksInput(weeks = []) {
   return weeks.map((week) => ({
     weekNumber: week.weekNumber,
@@ -926,51 +1296,7 @@ function buildPlanCreateWeeksInput(weeks = []) {
     label: week.label || null,
     notes: week.notes || null,
     workouts: {
-      create: week.workouts.map((workout) => ({
-        name: workout.name,
-        orderIndex: workout.orderIndex,
-        scheduledDay: workout.scheduledDay || null,
-        estimatedDurationMinutes: workout.estimatedDurationMinutes || null,
-        notes: workout.notes || null,
-        blocks: {
-          create: workout.blocks.map((block) => ({
-            orderIndex: block.orderIndex,
-            blockType: block.blockType,
-            label: block.label || null,
-            roundCount: block.roundCount || null,
-            restStrategy: block.restStrategy || null,
-            restSeconds: block.restSeconds || null,
-            notes: block.notes || null,
-            blockExercises: {
-              create: block.exercises.map((exercise) => ({
-                exerciseId: exercise.exerciseId,
-                orderIndex: exercise.orderIndex,
-                executionNotes: exercise.executionNotes || null,
-                defaultTempo: exercise.defaultTempo || null,
-                defaultRestSeconds: normalizeNullableInteger(exercise.defaultRestSeconds),
-                defaultTargetRir: normalizeNullableNumber(exercise.defaultTargetRir),
-                defaultTargetRpe: normalizeNullableNumber(exercise.defaultTargetRpe),
-                intensificationMethod: exercise.intensificationMethod || 'NONE',
-                notes: exercise.notes || null,
-                setTemplates: {
-                  create: exercise.setTemplates.map((setTemplate) => ({
-                    setIndex: setTemplate.setIndex,
-                    setType: setTemplate.setType || 'WORKING',
-                    targetReps: normalizeNullableInteger(setTemplate.targetReps),
-                    minReps: normalizeNullableInteger(setTemplate.minReps),
-                    maxReps: normalizeNullableInteger(setTemplate.maxReps),
-                    targetSeconds: normalizeNullableInteger(setTemplate.targetSeconds),
-                    targetRir: normalizeNullableNumber(setTemplate.targetRir),
-                    targetRpe: normalizeNullableNumber(setTemplate.targetRpe),
-                    restSeconds: normalizeNullableInteger(setTemplate.restSeconds),
-                    notes: setTemplate.notes || null,
-                  })),
-                },
-              })),
-            },
-          })),
-        },
-      })),
+      create: week.workouts.map((workout) => buildWorkoutCreateInput(workout)),
     },
   }));
 }
@@ -1028,6 +1354,314 @@ function clonePlanDocument(plan) {
       })),
     })),
   };
+}
+
+function buildIdentityConflictError(level, descriptor) {
+  return new ApiError(
+    400,
+    'VALIDATION_ERROR',
+    `Ambiguous ${level} identity in cycle draft payload for ${descriptor}`
+  );
+}
+
+function matchIncomingWeeks(existingWeeks = [], incomingWeeks = []) {
+  const existingById = new Map(existingWeeks.map((week) => [week.id, week]));
+  const existingByWeekNumber = new Map(existingWeeks.map((week) => [week.weekNumber, week]));
+  const matchedExistingIds = new Set();
+  const pairs = [];
+  const creates = [];
+  const missingIdWeeks = [];
+
+  incomingWeeks.forEach((week) => {
+    if (week.id) {
+      const matched = existingById.get(week.id) || null;
+      const fallbackMatch = existingByWeekNumber.get(week.weekNumber) || null;
+
+      if (matched) {
+        matchedExistingIds.add(matched.id);
+        pairs.push({ existingWeek: matched, incomingWeek: week });
+      } else if (fallbackMatch && !matchedExistingIds.has(fallbackMatch.id)) {
+        matchedExistingIds.add(fallbackMatch.id);
+        pairs.push({ existingWeek: fallbackMatch, incomingWeek: week });
+      } else {
+        creates.push(week);
+      }
+
+      return;
+    }
+
+    missingIdWeeks.push(week);
+  });
+
+  missingIdWeeks.forEach((week) => {
+    const fallbackMatch = existingByWeekNumber.get(week.weekNumber) || null;
+
+    if (fallbackMatch && matchedExistingIds.has(fallbackMatch.id)) {
+      throw buildIdentityConflictError('week', `weekNumber ${week.weekNumber}`);
+    }
+
+    if (fallbackMatch) {
+      matchedExistingIds.add(fallbackMatch.id);
+      pairs.push({ existingWeek: fallbackMatch, incomingWeek: week });
+      return;
+    }
+
+    creates.push(week);
+  });
+
+  const deletes = existingWeeks.filter((week) => !matchedExistingIds.has(week.id));
+  return { pairs, creates, deletes };
+}
+
+function matchIncomingWorkouts(existingWorkouts = [], incomingWorkouts = [], weekNumber) {
+  const existingById = new Map(existingWorkouts.map((workout) => [workout.id, workout]));
+  const existingByOrderIndex = new Map(
+    existingWorkouts.map((workout) => [workout.orderIndex, workout])
+  );
+  const matchedExistingIds = new Set();
+  const pairs = [];
+  const creates = [];
+  const missingIdWorkouts = [];
+
+  incomingWorkouts.forEach((workout) => {
+    if (workout.id) {
+      const matched = existingById.get(workout.id) || null;
+      const fallbackMatch = existingByOrderIndex.get(workout.orderIndex) || null;
+
+      if (matched) {
+        matchedExistingIds.add(matched.id);
+        pairs.push({ existingWorkout: matched, incomingWorkout: workout });
+      } else if (fallbackMatch && !matchedExistingIds.has(fallbackMatch.id)) {
+        matchedExistingIds.add(fallbackMatch.id);
+        pairs.push({ existingWorkout: fallbackMatch, incomingWorkout: workout });
+      } else {
+        creates.push(workout);
+      }
+
+      return;
+    }
+
+    missingIdWorkouts.push(workout);
+  });
+
+  missingIdWorkouts.forEach((workout) => {
+    const fallbackMatch = existingByOrderIndex.get(workout.orderIndex) || null;
+
+    if (fallbackMatch && matchedExistingIds.has(fallbackMatch.id)) {
+      throw buildIdentityConflictError(
+        'workout',
+        `week ${weekNumber}, orderIndex ${workout.orderIndex}`
+      );
+    }
+
+    if (fallbackMatch) {
+      matchedExistingIds.add(fallbackMatch.id);
+      pairs.push({ existingWorkout: fallbackMatch, incomingWorkout: workout });
+      return;
+    }
+
+    creates.push(workout);
+  });
+
+  const deletes = existingWorkouts.filter((workout) => !matchedExistingIds.has(workout.id));
+  return { pairs, creates, deletes };
+}
+
+function diffCycleDraft(currentDraftDocument, incomingDocument) {
+  const normalizedCurrent = normalizeCycleDocumentForPersistence(currentDraftDocument, { includeIds: true });
+  const normalizedIncoming = normalizeCycleDocumentForPersistence(incomingDocument, { includeIds: true });
+  const weekMatches = matchIncomingWeeks(normalizedCurrent.weeks, normalizedIncoming.weeks);
+
+  const weekUpdates = weekMatches.pairs.map(({ existingWeek, incomingWeek }) => {
+    const workoutMatches = matchIncomingWorkouts(
+      existingWeek.workouts,
+      incomingWeek.workouts,
+      incomingWeek.weekNumber
+    );
+    const matchedWorkoutIds = new Set(
+      workoutMatches.pairs.map(({ existingWorkout }) => existingWorkout.id)
+    );
+    const finalWorkoutOrder = incomingWeek.workouts.map((workout) => {
+      const matchedPair = workoutMatches.pairs.find(
+        ({ incomingWorkout }) => incomingWorkout === workout
+      );
+      return {
+        incomingWorkout: workout,
+        existingWorkout: matchedPair?.existingWorkout || null,
+        isNew: !matchedPair,
+      };
+    });
+    const reorderedExistingWorkouts = finalWorkoutOrder
+      .filter((entry) => entry.existingWorkout)
+      .map((entry) => entry.existingWorkout.id);
+    const originalExistingWorkouts = existingWeek.workouts
+      .filter((workout) => matchedWorkoutIds.has(workout.id))
+      .map((workout) => workout.id);
+
+    return {
+      existingWeek,
+      incomingWeek,
+      scalarChanged:
+        normalizeWeekScalarFields(existingWeek) !== normalizeWeekScalarFields(incomingWeek),
+      workoutCreates: workoutMatches.creates,
+      workoutDeletes: workoutMatches.deletes,
+      workoutUpdates: workoutMatches.pairs.map(({ existingWorkout, incomingWorkout }) => ({
+        existingWorkout,
+        incomingWorkout,
+        scalarChanged:
+          normalizeWorkoutScalarFields(existingWorkout) !==
+          normalizeWorkoutScalarFields(incomingWorkout),
+        blockChanged:
+          normalizeWorkoutBlockFields(existingWorkout) !==
+          normalizeWorkoutBlockFields(incomingWorkout),
+      })),
+      finalWorkoutOrder,
+      reorderChanged:
+        originalExistingWorkouts.length !== reorderedExistingWorkouts.length ||
+        originalExistingWorkouts.some((workoutId, index) => workoutId !== reorderedExistingWorkouts[index]),
+    };
+  });
+
+  return {
+    normalizedCurrent,
+    normalizedIncoming,
+    nameChanged: normalizedCurrent.name !== normalizedIncoming.name,
+    weekCreates: weekMatches.creates,
+    weekDeletes: weekMatches.deletes,
+    weekUpdates,
+  };
+}
+
+async function replaceWorkoutBlocks(tx, workoutId, blocks) {
+  await tx.workoutBlock.deleteMany({
+    where: {
+      workoutId,
+    },
+  });
+
+  if (!blocks.length) {
+    return;
+  }
+
+  await tx.workout.update({
+    where: { id: workoutId },
+    data: {
+      blocks: {
+        create: buildWorkoutBlocksCreateInput(blocks),
+      },
+    },
+  });
+}
+
+async function assertNoScheduledSessionRefs(tx, workoutIds = []) {
+  const ids = Array.from(new Set(workoutIds.filter(Boolean)));
+
+  if (!ids.length) {
+    return;
+  }
+
+  const referencedSession = await tx.scheduledSession.findFirst({
+    where: {
+      workoutId: {
+        in: ids,
+      },
+    },
+    select: {
+      id: true,
+      workoutId: true,
+    },
+  });
+
+  if (referencedSession) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      `Cannot delete draft workouts that are referenced by scheduled sessions (workoutId: ${referencedSession.workoutId})`
+    );
+  }
+}
+
+async function updateWeekScalarFields(tx, existingWeek, incomingWeek) {
+  return tx.planWeek.update({
+    where: { id: existingWeek.id },
+    data: {
+      weekNumber: incomingWeek.weekNumber,
+      orderIndex: incomingWeek.orderIndex,
+      label: incomingWeek.label ?? null,
+      notes: incomingWeek.notes ?? null,
+    },
+  });
+}
+
+async function moveExistingWorkoutsToSentinelOrder(tx, workouts = []) {
+  const sentinelBase = 1000000;
+
+  for (let index = 0; index < workouts.length; index += 1) {
+    await tx.workout.update({
+      where: { id: workouts[index].id },
+      data: {
+        orderIndex: sentinelBase + index,
+      },
+    });
+  }
+}
+
+async function applyWorkoutFinalState(
+  tx,
+  planWeekId,
+  finalWorkoutOrder = [],
+  workoutUpdates = [],
+  options = {}
+) {
+  const forceOrderReset = Boolean(options.forceOrderReset);
+  const workoutUpdatesById = new Map(
+    workoutUpdates.map((entry) => [entry.existingWorkout.id, entry])
+  );
+
+  for (let index = 0; index < finalWorkoutOrder.length; index += 1) {
+    const entry = finalWorkoutOrder[index];
+    const finalOrderIndex = index + 1;
+
+    if (entry.isNew) {
+      await tx.workout.create({
+        data: {
+          planWeekId,
+          ...buildWorkoutCreateInput({
+            ...entry.incomingWorkout,
+            orderIndex: finalOrderIndex,
+          }),
+        },
+      });
+      continue;
+    }
+
+    const updateEntry = workoutUpdatesById.get(entry.existingWorkout.id);
+    const incomingWorkout = {
+      ...updateEntry.incomingWorkout,
+      orderIndex: finalOrderIndex,
+    };
+    const shouldUpdateWorkoutScalars =
+      forceOrderReset ||
+      updateEntry.scalarChanged ||
+      updateEntry.existingWorkout.orderIndex !== finalOrderIndex;
+
+    if (shouldUpdateWorkoutScalars) {
+      await tx.workout.update({
+        where: { id: entry.existingWorkout.id },
+        data: {
+          name: incomingWorkout.name,
+          orderIndex: incomingWorkout.orderIndex,
+          scheduledDay: incomingWorkout.scheduledDay ?? null,
+          estimatedDurationMinutes: incomingWorkout.estimatedDurationMinutes ?? null,
+          notes: incomingWorkout.notes ?? null,
+        },
+      });
+    }
+
+    if (updateEntry.blockChanged) {
+      await replaceWorkoutBlocks(tx, entry.existingWorkout.id, incomingWorkout.blocks);
+    }
+  }
 }
 
 function buildDocumentFromWeeklyVersion(version, durationWeeks, workoutDayAssignments = new Map()) {
@@ -1986,12 +2620,15 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
 
   try {
     const document = validateCycleDocument(payload, 'draft');
+    const normalizedIncomingDocument = normalizeCycleDocumentForPersistence(document, {
+      includeIds: true,
+    });
     phase = 'validate_exercise_ids';
     await assertKnownExerciseIds(collectExerciseIdsFromWeeks(document.weeks));
 
     return await prisma.$transaction(async (tx) => {
       phase = 'load_cycle';
-      const cycle = await loadCycleForUser(tx, cycleId, userId);
+      const cycle = await loadCycleSummaryForUser(tx, cycleId, userId);
       const effectiveTimezone = resolveEffectiveTimezone(cycle.timezone, payload.timezone, DEFAULT_TIMEZONE);
       const temporalStatus = deriveTemporalStatus(cycle, effectiveTimezone);
 
@@ -2008,7 +2645,7 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
       }
 
       phase = 'resolve_current_draft';
-      const draftPlan = await normalizeSingleDraft(tx, cycleId);
+      const draftPlan = await normalizeSingleDraft(tx, cycleId, draftMutationInclude);
       if (!draftPlan || draftPlan.id !== planId) {
         throw new ApiError(400, 'VALIDATION_ERROR', 'This draft is not the current editable version');
       }
@@ -2023,7 +2660,12 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
         phase = 'validate_past_workout_lock';
         const todayDateKey = getTodayDateKey(effectiveTimezone);
         const cycleStartDateKey = toDateKey(cycle.startDate);
-        const existingDraftDocument = clonePlanDocument(draftPlan);
+        const existingDraftDocument = normalizeCycleDocumentForPersistence(
+          buildDraftMutationDocument(draftPlan),
+          {
+            includeIds: true,
+          }
+        );
         const dayOffsets = {
           MONDAY: 0,
           TUESDAY: 1,
@@ -2054,7 +2696,7 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
           });
         });
 
-        document.weeks.forEach((week) => {
+        normalizedIncomingDocument.weeks.forEach((week) => {
           week.workouts.forEach((workout) => {
             const occurrenceDateKey = getValidationOccurrenceDateKey(week.weekNumber, workout);
 
@@ -2074,77 +2716,128 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
         });
       }
 
-      phase = 'replace_draft_weeks';
-      await tx.exerciseSetTemplate.deleteMany({
-        where: {
-          blockExercise: {
-            workoutBlock: {
-              workout: {
-                planWeek: {
-                  planId: draftPlan.id,
+      phase = 'diff_draft_plan';
+      const currentDraftDocument = normalizeCycleDocumentForPersistence(
+        buildDraftMutationDocument(draftPlan),
+        {
+          includeIds: true,
+        }
+      );
+      const draftDiff = diffCycleDraft(currentDraftDocument, normalizedIncomingDocument);
+
+      if (isCycleDraftNoOp(draftDiff.normalizedCurrent, draftDiff.normalizedIncoming)) {
+        phase = 'return_current_draft';
+      } else {
+        phase = 'apply_draft_mutations';
+
+        if (draftDiff.nameChanged) {
+          await tx.plan.update({
+            where: { id: draftPlan.id },
+            data: {
+              name: draftDiff.normalizedIncoming.name,
+            },
+          });
+
+          await tx.trainingCycle.update({
+            where: { id: cycle.id },
+            data: {
+              name: draftDiff.normalizedIncoming.name,
+            },
+          });
+        }
+
+        for (const week of draftDiff.weekDeletes) {
+          await assertNoScheduledSessionRefs(
+            tx,
+            week.workouts.map((workout) => workout.id)
+          );
+          await tx.planWeek.delete({
+            where: { id: week.id },
+          });
+        }
+
+        for (const week of draftDiff.weekCreates) {
+          await tx.planWeek.create({
+            data: {
+              planId: draftPlan.id,
+              ...buildPlanCreateWeeksInput([week])[0],
+            },
+          });
+        }
+
+        for (const weekUpdate of draftDiff.weekUpdates) {
+          const hasWorkoutMutations =
+            weekUpdate.reorderChanged ||
+            weekUpdate.workoutCreates.length > 0 ||
+            weekUpdate.workoutDeletes.length > 0 ||
+            weekUpdate.workoutUpdates.some(
+              (entry) => entry.scalarChanged || entry.blockChanged
+            );
+
+          if (!weekUpdate.scalarChanged && !hasWorkoutMutations) {
+            continue;
+          }
+
+          if (weekUpdate.scalarChanged) {
+            await updateWeekScalarFields(tx, weekUpdate.existingWeek, weekUpdate.incomingWeek);
+          }
+
+          if (weekUpdate.workoutDeletes.length > 0) {
+            await assertNoScheduledSessionRefs(
+              tx,
+              weekUpdate.workoutDeletes.map((workout) => workout.id)
+            );
+
+            await tx.workout.deleteMany({
+              where: {
+                id: {
+                  in: weekUpdate.workoutDeletes.map((workout) => workout.id),
                 },
               },
-            },
-          },
-        },
-      });
+            });
+          }
 
-      await tx.blockExercise.deleteMany({
-        where: {
-          workoutBlock: {
-            workout: {
-              planWeek: {
-                planId: draftPlan.id,
-              },
-            },
-          },
-        },
-      });
+          const needsWorkoutRebuildPass =
+            weekUpdate.reorderChanged ||
+            weekUpdate.workoutCreates.length > 0 ||
+            weekUpdate.workoutDeletes.length > 0;
+          const existingWorkoutsToReorder = weekUpdate.workoutUpdates.map(
+            ({ existingWorkout }) => existingWorkout
+          );
 
-      await tx.workoutBlock.deleteMany({
-        where: {
-          workout: {
-            planWeek: {
-              planId: draftPlan.id,
-            },
-          },
-        },
-      });
+          if (needsWorkoutRebuildPass && existingWorkoutsToReorder.length > 0) {
+            await moveExistingWorkoutsToSentinelOrder(tx, existingWorkoutsToReorder);
+          }
 
-      await tx.workout.deleteMany({
-        where: {
-          planWeek: {
-            planId: draftPlan.id,
-          },
-        },
-      });
+          await applyWorkoutFinalState(
+            tx,
+            weekUpdate.existingWeek.id,
+            weekUpdate.finalWorkoutOrder,
+            weekUpdate.workoutUpdates,
+            {
+              forceOrderReset: needsWorkoutRebuildPass,
+            }
+          );
+        }
+      }
 
-      await tx.planWeek.deleteMany({
-        where: {
-          planId: draftPlan.id,
-        },
-      });
-
-      phase = 'update_draft_plan';
-      const updatedPlan = await tx.plan.update({
+      phase = 'load_updated_plan';
+      const updatedPlan = await tx.plan.findUnique({
         where: { id: draftPlan.id },
-        data: {
-          name: document.name,
-          trainingCycle: {
-            update: {
-              name: document.name,
-            },
-          },
-          weeks: {
-            create: buildPlanCreateWeeksInput(document.weeks),
-          },
-        },
         include: fullPlanInclude,
       });
 
+      if (!updatedPlan) {
+        throw new ApiError(
+          500,
+          'INTERNAL_SERVER_ERROR',
+          'Updated draft plan could not be reloaded'
+        );
+      }
+
       logCycleServiceEvent('update_cycle_draft', 'updated_draft_plan', {
         cycleId,
-        planId: updatedPlan.id,
+        planId: updatedPlan?.id || draftPlan.id,
         userId,
       });
 
@@ -2165,7 +2858,8 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
         updatedAt: updatedPlan.updatedAt,
       };
     }, {
-      timeout: 15000,
+      maxWait: 5000,
+      timeout: 30000,
     });
   } catch (error) {
     logCycleServiceError('update_cycle_draft', phase, { cycleId, planId, userId }, error);
