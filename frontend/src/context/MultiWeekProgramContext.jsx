@@ -13,6 +13,7 @@ import {
 } from "../features/multiWeek/occurrence";
 import { mapCycleBuilderPayload, mapMultiWeekDraftToApi } from "../features/multiWeek/mappers";
 import { openOrCreateCycleEditDraft, updateCycleDraft } from "../services/api";
+import { getDuplicateWorkoutName } from "../utils/duplicateWorkoutName";
 
 const MultiWeekProgramContext = createContext(null);
 export const MAX_BLOCK_SET_COUNT = 10;
@@ -87,8 +88,8 @@ function normalizeSupersetExerciseSets(exercise, targetCount) {
 function normalizeSupersetBlock(block) {
   const populatedCounts = Array.isArray(block.exercises)
     ? block.exercises
-        .map((exercise) => (Array.isArray(exercise?.sets) ? exercise.sets.length : 0))
-        .filter((count) => count > 0)
+      .map((exercise) => (Array.isArray(exercise?.sets) ? exercise.sets.length : 0))
+      .filter((count) => count > 0)
     : [];
   const targetCount = Math.max(1, block.sets ?? populatedCounts[0] ?? 1);
 
@@ -152,21 +153,22 @@ function createWorkout(name, withTemplateBlocks = true) {
   };
 }
 
-function cloneWorkoutForDuplicate(workout) {
+function cloneWorkoutForDuplicate(workout, name = workout.name) {
   return {
     ...workout,
     id: createId("workout"),
+    name,
     blocks: (workout.blocks || []).map((block) => ({
       ...block,
       id: createId("block"),
       exercises:
         block.type === "superset"
           ? (block.exercises || []).map((exercise) => ({
-              ...exercise,
-              sets: Array.isArray(exercise.sets)
-                ? exercise.sets.map((set) => ({ ...set }))
-                : [],
-            }))
+            ...exercise,
+            sets: Array.isArray(exercise.sets)
+              ? exercise.sets.map((set) => ({ ...set }))
+              : [],
+          }))
           : block.exercises,
       sets: Array.isArray(block.sets)
         ? block.sets.map((set) => ({ ...set }))
@@ -422,9 +424,9 @@ export function MultiWeekProgramProvider({ children }) {
       prev.saveState === "saving"
         ? prev
         : {
-            ...prev,
-            saveState: "saving",
-          }
+          ...prev,
+          saveState: "saving",
+        }
     ));
 
     const runSave = async () => {
@@ -458,9 +460,9 @@ export function MultiWeekProgramProvider({ children }) {
           return prev.saveState === nextSaveState
             ? prev
             : {
-                ...prev,
-                saveState: nextSaveState,
-              };
+              ...prev,
+              saveState: nextSaveState,
+            };
         });
 
         return response;
@@ -500,11 +502,11 @@ export function MultiWeekProgramProvider({ children }) {
           prev.saveState === "error"
             ? prev
             : {
-                ...prev,
-                saveState: "error",
-                lastSaveErrorMessage: error?.message || "Unable to autosave this draft.",
-                lastSaveErrorCode: error?.code || null,
-              }
+              ...prev,
+              saveState: "error",
+              lastSaveErrorMessage: error?.message || "Unable to autosave this draft.",
+              lastSaveErrorCode: error?.code || null,
+            }
         ));
         throw error;
       } finally {
@@ -688,10 +690,13 @@ export function MultiWeekProgramProvider({ children }) {
         }
 
         const nextWorkouts = [];
+        const existingWorkoutNames = week.workouts.map((workout) => workout.name);
         week.workouts.forEach((workout) => {
           nextWorkouts.push(workout);
           if (selectedIdSet.has(workout.id)) {
-            nextWorkouts.push(cloneWorkoutForDuplicate(workout));
+            const duplicateName = getDuplicateWorkoutName(workout.name, existingWorkoutNames);
+            existingWorkoutNames.push(duplicateName);
+            nextWorkouts.push(cloneWorkoutForDuplicate(workout, duplicateName));
           }
         });
 
@@ -734,11 +739,11 @@ export function MultiWeekProgramProvider({ children }) {
           workouts: week.workouts.map((workout) =>
             workout.id === workoutId
               ? {
-                  ...workout,
-                  blocks: workout.blocks.map((block) =>
-                    block.id === blockId ? { ...block, ...updates } : block
-                  ),
-                }
+                ...workout,
+                blocks: workout.blocks.map((block) =>
+                  block.id === blockId ? { ...block, ...updates } : block
+                ),
+              }
               : workout
           ),
         };
@@ -852,9 +857,9 @@ export function MultiWeekProgramProvider({ children }) {
           workouts: week.workouts.map((workout) =>
             workout.id === workoutId
               ? {
-                  ...workout,
-                  blocks: workout.blocks.filter((block) => block.id !== blockId),
-                }
+                ...workout,
+                blocks: workout.blocks.filter((block) => block.id !== blockId),
+              }
               : workout
           ),
         };
@@ -1146,7 +1151,11 @@ export function MultiWeekProgramProvider({ children }) {
           (maxValue, workout) => Math.max(maxValue, Number(workout.orderIndex) || 0),
           0
         );
-        const duplicatedWorkout = cloneWorkoutForDuplicate(sourceWorkout);
+        const duplicateName = getDuplicateWorkoutName(
+          sourceWorkout.name,
+          workouts.map((workout) => workout.name)
+        );
+        const duplicatedWorkout = cloneWorkoutForDuplicate(sourceWorkout, duplicateName);
 
         return {
           ...week,
@@ -1237,11 +1246,11 @@ export function MultiWeekProgramProvider({ children }) {
                 const nextExercises = block.exercises.map((exercise, index) =>
                   index === exerciseIndex
                     ? {
-                        ...exercise,
-                        sets: exercise.sets.map((set, idx) =>
-                          idx === setIndex ? { ...set, ...normalizedUpdates } : set
-                        ),
-                      }
+                      ...exercise,
+                      sets: exercise.sets.map((set, idx) =>
+                        idx === setIndex ? { ...set, ...normalizedUpdates } : set
+                      ),
+                    }
                     : exercise
                 );
 
@@ -1395,12 +1404,12 @@ export function MultiWeekProgramProvider({ children }) {
                   exercises: block.exercises.map((entry, index) =>
                     index === exerciseIndex
                       ? {
-                          ...entry,
-                          name: exercise.name,
-                          exerciseId: exercise.exerciseId,
-                          bodyParts: Array.isArray(exercise.bodyParts) ? exercise.bodyParts : [],
-                          muscleFocus: Array.isArray(exercise.muscleFocus) ? exercise.muscleFocus : [],
-                        }
+                        ...entry,
+                        name: exercise.name,
+                        exerciseId: exercise.exerciseId,
+                        bodyParts: Array.isArray(exercise.bodyParts) ? exercise.bodyParts : [],
+                        muscleFocus: Array.isArray(exercise.muscleFocus) ? exercise.muscleFocus : [],
+                      }
                       : entry
                   ),
                 };

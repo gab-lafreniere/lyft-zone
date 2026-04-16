@@ -2955,6 +2955,7 @@ async function publishCycleDraft(cycleId, payload = {}) {
             : clonePlanDocument(draftPlan);
 
         phase = 'validate_publish_document';
+
         validateCycleDocument(sourceDocument, 'publish');
         await assertKnownExerciseIds(collectExerciseIdsFromWeeks(sourceDocument.weeks));
 

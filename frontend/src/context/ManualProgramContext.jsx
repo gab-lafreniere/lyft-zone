@@ -8,6 +8,7 @@ import {
 } from "react";
 import { mapProgramDraftToWeeklyPlanUpdate, mapBuilderPayloadToProgramDraft } from "../features/weeklyPlans/mappers";
 import { updateWeeklyPlanDraft } from "../services/api";
+import { getDuplicateWorkoutName } from "../utils/duplicateWorkoutName";
 
 const ManualProgramContext = createContext(null);
 export const MAX_BLOCK_SET_COUNT = 10;
@@ -177,10 +178,11 @@ function createWorkout(name, withTemplateBlocks = true) {
   };
 }
 
-function cloneWorkoutForDuplicate(workout) {
+function cloneWorkoutForDuplicate(workout, name = workout.name) {
   return {
     ...workout,
     id: createId("workout"),
+    name,
     blocks: (workout.blocks || []).map((block) => ({
       ...block,
       id: createId("block"),
@@ -756,12 +758,15 @@ export function ManualProgramProvider({ children }) {
 
       const selectedIdSet = new Set(selectedIds);
       const nextWorkouts = [];
+      const existingWorkoutNames = prev.workouts.map((workout) => workout.name);
 
       prev.workouts.forEach((workout) => {
         nextWorkouts.push(workout);
 
         if (selectedIdSet.has(workout.id)) {
-          nextWorkouts.push(cloneWorkoutForDuplicate(workout));
+          const duplicateName = getDuplicateWorkoutName(workout.name, existingWorkoutNames);
+          existingWorkoutNames.push(duplicateName);
+          nextWorkouts.push(cloneWorkoutForDuplicate(workout, duplicateName));
         }
       });
 
