@@ -125,7 +125,7 @@ function buildWeekOptionsForMonth(monthDate, minStartDateValue, selectedStartDat
       : null;
   const options = [];
 
-  for (let cursor = firstWeekStart; formatDateInput(cursor) <= monthEnd; ) {
+  for (let cursor = firstWeekStart; formatDateInput(cursor) <= monthEnd;) {
     const optionValue = formatDateInput(cursor);
     const mondayBelongsToDisplayedMonth =
       cursor.getMonth() === monthIndex && cursor.getFullYear() === year;
@@ -297,9 +297,7 @@ export default function ManualBuilderMulti() {
     );
   }, [currentDraftWeekCount, editTodayDateKey, isActiveCycle, programDraft.startDate]);
   const settingsMinDurationWeeks = isActiveCycle ? currentActiveWeekNumber : 1;
-  const settingsMaxDurationWeeks = isActiveCycle
-    ? currentDraftWeekCount
-    : MAX_CYCLE_DURATION_WEEKS;
+  const settingsMaxDurationWeeks = MAX_CYCLE_DURATION_WEEKS;
 
   useEffect(() => {
     setPlanId(draftMetadata.cyclePlanId || null);
@@ -325,7 +323,6 @@ export default function ManualBuilderMulti() {
         }
 
         setPlanId(activePlanId);
-        console.log("ACTIVE PLAN ID:", activePlanId);
         hydrateProgramDraft(response);
         updateDraftMetadata({ cyclePlanId: activePlanId });
         setLoadError(null);
@@ -550,7 +547,7 @@ export default function ManualBuilderMulti() {
   const nextSelectedRow = useMemo(
     () =>
       selectedWorkoutRowIndex >= 0 &&
-      selectedWorkoutRowIndex < weekdayRows.length - 1
+        selectedWorkoutRowIndex < weekdayRows.length - 1
         ? weekdayRows[selectedWorkoutRowIndex + 1] || null
         : null,
     [selectedWorkoutRowIndex, weekdayRows]
@@ -848,14 +845,9 @@ export default function ManualBuilderMulti() {
         setSettingsError(`Duration cannot be shorter than week ${currentActiveWeekNumber}.`);
         return;
       }
-
-      if (settingsDurationWeeks > currentDraftWeekCount) {
-        setSettingsError("Active cycles can only be shortened.");
-        return;
-      }
     }
 
-    if (isUpcomingCycle && isSettingsExtension && !hasValidSettingsSourceWeek) {
+    if (isSettingsExtension && !hasValidSettingsSourceWeek) {
       setSettingsError("Choose one existing source week for the added weeks.");
       return;
     }
@@ -867,7 +859,8 @@ export default function ManualBuilderMulti() {
       const response = await updateUpcomingDraftTimeline(cycleId, activePlanId, {
         newStartDate: settingsStartDate,
         durationWeeks: settingsDurationWeeks,
-        ...(isUpcomingCycle && isSettingsExtension
+        allowCrossDayDraft: draftMetadata.allowCrossDayDraft,
+        ...(isSettingsExtension
           ? { sourceWeekNumber: Number(settingsSourceWeekNumber) }
           : {}),
       });
@@ -1150,11 +1143,11 @@ export default function ManualBuilderMulti() {
               Avg:{" "}
               {weeklyVolumeData.length
                 ? Math.round(
-                    weeklyVolumeData.reduce(
-                      (sum, week) => sum + week.totalSetCount,
-                      0
-                    ) / weeklyVolumeData.length
-                  )
+                  weeklyVolumeData.reduce(
+                    (sum, week) => sum + week.totalSetCount,
+                    0
+                  ) / weeklyVolumeData.length
+                )
                 : 0}
             </span>
           </div>
@@ -1281,58 +1274,58 @@ export default function ManualBuilderMulti() {
                 {selectedWorkoutOrderIndex == null ? "Select a workout" : "Edit week"}
               </span>
               <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => handleMoveSelectedWorkout("previous")}
-                disabled={isRecoveringDraft || !canMoveSelectedPrevious}
-                className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="Move workout to previous day"
-                title="Move to previous day"
-              >
-                <span className="material-symbols-outlined text-[18px]">arrow_upward</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleMoveSelectedWorkout("next")}
-                disabled={isRecoveringDraft || !canMoveSelectedNext}
-                className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="Move workout to next day"
-                title="Move to next day"
-              >
-                <span className="material-symbols-outlined text-[18px]">arrow_downward</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleDuplicateSelectedWorkout}
-                disabled={isRecoveringDraft || !canDuplicateSelectedWorkout}
-                className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="Duplicate workout in this week"
-                title="Duplicate"
-              >
-                <span className="material-symbols-outlined text-[18px]">content_copy</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleDeleteSelectedWorkout}
-                disabled={isRecoveringDraft || !canDeleteSelectedWorkout}
-                className="flex size-9 items-center justify-center rounded-full border border-red-200 text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="Delete workout from this week"
-                title="Delete"
-              >
-                <span className="material-symbols-outlined text-[18px]">delete</span>
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => handleMoveSelectedWorkout("previous")}
+                  disabled={isRecoveringDraft || !canMoveSelectedPrevious}
+                  className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label="Move workout to previous day"
+                  title="Move to previous day"
+                >
+                  <span className="material-symbols-outlined text-[18px]">arrow_upward</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMoveSelectedWorkout("next")}
+                  disabled={isRecoveringDraft || !canMoveSelectedNext}
+                  className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label="Move workout to next day"
+                  title="Move to next day"
+                >
+                  <span className="material-symbols-outlined text-[18px]">arrow_downward</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDuplicateSelectedWorkout}
+                  disabled={isRecoveringDraft || !canDuplicateSelectedWorkout}
+                  className="flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label="Duplicate workout in this week"
+                  title="Duplicate"
+                >
+                  <span className="material-symbols-outlined text-[18px]">content_copy</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteSelectedWorkout}
+                  disabled={isRecoveringDraft || !canDeleteSelectedWorkout}
+                  className="flex size-9 items-center justify-center rounded-full border border-red-200 text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label="Delete workout from this week"
+                  title="Delete"
+                >
+                  <span className="material-symbols-outlined text-[18px]">delete</span>
+                </button>
+              </div>
             </div>
           )}
 
-        <div className="space-y-2.5">
-          {weekdayRows.map((row) => (
-            <div
-              key={row.day}
-              className={[
-                "flex items-center gap-3",
-                row.workout
-                  ? [
+          <div className="space-y-2.5">
+            {weekdayRows.map((row) => (
+              <div
+                key={row.day}
+                className={[
+                  "flex items-center gap-3",
+                  row.workout
+                    ? [
                       "rounded-xl border bg-white p-3 shadow-sm transition-all",
                       isEditMode && row.workout
                         ? Number(selectedWorkoutOrderIndex) === Number(row.workout.orderIndex)
@@ -1340,66 +1333,66 @@ export default function ManualBuilderMulti() {
                           : "border-slate-100 opacity-70"
                         : "border-slate-100",
                     ].join(" ")
-                  : "rounded-lg px-3 py-1",
-              ].join(" ")}
-            >
-              <div
-                className={[
-                  "flex w-12 shrink-0 flex-col items-center justify-center rounded-lg bg-slate-100",
-                  row.workout ? "py-2" : "py-1.5",
+                    : "rounded-lg px-3 py-1",
                 ].join(" ")}
               >
-                <span className="text-sm font-black leading-none text-slate-900">
-                  {formatBadgeDate(row.calendarDate)}
-                </span>
-                <span className="mt-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
-                  {row.label.slice(0, 3)}
-                </span>
-              </div>
-
-              {row.workout ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => handleWorkoutRowClick(row)}
-                    disabled={isRecoveringDraft}
-                    className="group min-w-0 flex-1 text-left"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-base font-semibold">
-                        {row.workout.name}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        {isActiveCycle && row.isPastOccurrence && (
-                          <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-600">
-                            Locked
-                          </span>
-                        )}
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                          Day {row.workout.orderIndex}
-                        </span>
-                      </div>
-                    </div>
-                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500 opacity-80">
-                      {row.workout.meta}
-                    </p>
-                  </button>
-                  {!isEditMode && (
-                    <span className="material-symbols-outlined text-slate-400">
-                      chevron_right
-                    </span>
-                  )}
-                </>
-              ) : (
-                <div className="flex min-h-[42px] flex-1 items-center border-b border-dashed border-slate-200 px-1">
-                  <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-                    Rest day
-                  </p>
+                <div
+                  className={[
+                    "flex w-12 shrink-0 flex-col items-center justify-center rounded-lg bg-slate-100",
+                    row.workout ? "py-2" : "py-1.5",
+                  ].join(" ")}
+                >
+                  <span className="text-sm font-black leading-none text-slate-900">
+                    {formatBadgeDate(row.calendarDate)}
+                  </span>
+                  <span className="mt-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                    {row.label.slice(0, 3)}
+                  </span>
                 </div>
-              )}
-            </div>
-          ))}
-        </div>
+
+                {row.workout ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleWorkoutRowClick(row)}
+                      disabled={isRecoveringDraft}
+                      className="group min-w-0 flex-1 text-left"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-base font-semibold">
+                          {row.workout.name}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          {isActiveCycle && row.isPastOccurrence && (
+                            <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                              Locked
+                            </span>
+                          )}
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                            Day {row.workout.orderIndex}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="mt-1 text-[11px] leading-relaxed text-slate-500 opacity-80">
+                        {row.workout.meta}
+                      </p>
+                    </button>
+                    {!isEditMode && (
+                      <span className="material-symbols-outlined text-slate-400">
+                        chevron_right
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <div className="flex min-h-[42px] flex-1 items-center border-b border-dashed border-slate-200 px-1">
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                      Rest day
+                    </p>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
 
       </main>
@@ -1613,7 +1606,7 @@ export default function ManualBuilderMulti() {
                     {isUpcomingCycle
                       ? "Trim removes weeks from the end. Extend adds weeks at the end. Changes stay in draft until you publish."
                       : isActiveCycle
-                        ? `Active cycles can only be shortened through the current week. Minimum: week ${currentActiveWeekNumber}.`
+                        ? `Active cycles can be extended at the end only. Past weeks stay locked. Minimum: week ${currentActiveWeekNumber}.`
                         : "Duration changes are not available for this cycle."}
                   </p>
                 </div>
@@ -1651,7 +1644,7 @@ export default function ManualBuilderMulti() {
                 </div>
               </section>
 
-              {isUpcomingCycle && isSettingsExtension && (
+              {isSettingsExtension && (
                 <section className="space-y-3">
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">

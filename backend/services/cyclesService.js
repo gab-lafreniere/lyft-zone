@@ -29,6 +29,7 @@ const CYCLE_STATUSES = new Set(['PLANNED', 'ACTIVE', 'COMPLETED', 'ARCHIVED']);
 const TRAINING_MODES = new Set(['FIXED', 'AI_COACH']);
 const PLAN_SOURCE_TYPES = new Set(['SYSTEM', 'USER', 'AI']);
 const PLAN_STATUSES = new Set(['DRAFT', 'PUBLISHED', 'SUPERSEDED']);
+const MAX_CYCLE_DURATION_WEEKS = 8;
 const DAY_OF_WEEK = new Set([
   'MONDAY',
   'TUESDAY',
@@ -209,6 +210,134 @@ function trimDocumentWeeks(document, targetWeekCount) {
   };
 }
 
+function stripTimelineIdentityFields(record = {}, fields = []) {
+  const clone = { ...record };
+  fields.forEach((field) => {
+    delete clone[field];
+  });
+  return clone;
+}
+
+function cloneSetTemplateForTimelineExtension(setTemplate = {}) {
+  const clone = stripTimelineIdentityFields(setTemplate, ['id', 'blockExerciseId']);
+  return clone;
+}
+
+function cloneExerciseForTimelineExtension(exercise = {}) {
+  const clone = stripTimelineIdentityFields(exercise, [
+    'id',
+    'workoutBlockId',
+    'exercise',
+    'setTemplates',
+  ]);
+  const setTemplates = Array.isArray(exercise.setTemplates) ? exercise.setTemplates : [];
+
+  return {
+    ...clone,
+    bodyParts: Array.isArray(exercise.bodyParts) ? [...exercise.bodyParts] : [],
+    muscleFocus: Array.isArray(exercise.muscleFocus) ? [...exercise.muscleFocus] : [],
+    setTemplates: setTemplates.map(cloneSetTemplateForTimelineExtension),
+  };
+}
+
+function cloneBlockForTimelineExtension(block = {}) {
+  const clone = stripTimelineIdentityFields(block, [
+    'id',
+    'workoutId',
+    'blockExercises',
+    'exercises',
+  ]);
+  const exercises = Array.isArray(block.exercises) ? block.exercises : [];
+
+  return {
+    ...clone,
+    exercises: exercises.map(cloneExerciseForTimelineExtension),
+  };
+}
+
+function cloneWorkoutForTimelineExtension(workout = {}) {
+  const clone = stripTimelineIdentityFields(workout, ['id', 'planWeekId', 'blocks']);
+  const blocks = Array.isArray(workout.blocks) ? workout.blocks : [];
+
+  return {
+    ...clone,
+    blocks: blocks.map(cloneBlockForTimelineExtension),
+  };
+}
+
+function cloneWeekForTimelineExtension(sourceWeek = {}, targetWeekNumber) {
+  return {
+    weekNumber: targetWeekNumber,
+    orderIndex: targetWeekNumber,
+    label: `Week ${targetWeekNumber}`,
+    notes: sourceWeek.notes,
+    workouts: (Array.isArray(sourceWeek.workouts) ? sourceWeek.workouts : []).map(
+      cloneWorkoutForTimelineExtension
+    ),
+  };
+}
+
+function validateTimelineExtensionSource(document, sourceWeekNumber) {
+  const normalizedSourceWeekNumber = normalizeInt(sourceWeekNumber, null);
+  if (normalizedSourceWeekNumber == null) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'sourceWeekNumber is required when extending a cycle'
+    );
+  }
+
+  const sourceWeek = (document.weeks || []).find(
+    (week) => Number(week.weekNumber) === normalizedSourceWeekNumber
+  );
+
+  if (!sourceWeek) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'sourceWeekNumber must reference an existing week'
+    );
+  }
+
+  return sourceWeek;
+}
+
+function extendDocumentWeeks(document, targetWeekCount, sourceWeekNumber) {
+  const safeWeekCount = Math.max(1, normalizeInt(targetWeekCount, 1));
+  const sourceWeek = validateTimelineExtensionSource(document, sourceWeekNumber);
+  const currentWeeks = (document.weeks || []).map((week, index) => ({
+    ...week,
+    weekNumber: index + 1,
+    orderIndex: index + 1,
+    label: week.label || `Week ${index + 1}`,
+  }));
+
+  const addedWeeks = [];
+  for (let weekNumber = currentWeeks.length + 1; weekNumber <= safeWeekCount; weekNumber += 1) {
+    addedWeeks.push(cloneWeekForTimelineExtension(sourceWeek, weekNumber));
+  }
+
+  return {
+    ...document,
+    weeks: [...currentWeeks, ...addedWeeks],
+  };
+}
+
+function buildTimelineDocument(document, targetWeekCount, sourceWeekNumber = null) {
+  const safeWeekCount = Math.max(1, normalizeInt(targetWeekCount, 1));
+  const currentWeekCount = Array.isArray(document.weeks) ? document.weeks.length : 0;
+
+  if (safeWeekCount < currentWeekCount) {
+    return trimDocumentWeeks(document, safeWeekCount);
+  }
+
+  if (safeWeekCount > currentWeekCount) {
+    return extendDocumentWeeks(document, safeWeekCount, sourceWeekNumber);
+  }
+
+  return trimDocumentWeeks(document, safeWeekCount);
+}
+
 function getCurrentCycleWeekNumber(cycle, timeZone, now = new Date()) {
   const todayDateKey = getTodayDateKey(timeZone, now);
   const startDateKey = toDateKey(cycle.startDate);
@@ -218,6 +347,22 @@ function getCurrentCycleWeekNumber(cycle, timeZone, now = new Date()) {
     totalWeeks,
     Math.max(1, Math.floor((diffDateKeys(startDateKey, todayDateKey) || 0) / 7) + 1)
   );
+}
+
+async function appendPlanWeeks(tx, planId, weeks = []) {
+  for (const week of weeks) {
+    await tx.planWeek.create({
+      data: {
+        planId,
+        ...buildPlanCreateWeeksInput([week])[0],
+      },
+    });
+  }
+
+  return tx.plan.findUnique({
+    where: { id: planId },
+    include: fullPlanInclude,
+  });
 }
 
 async function replacePlanWeeks(tx, planId, weeks) {
@@ -1346,6 +1491,7 @@ function clonePlanDocument(plan) {
               targetSeconds: normalizeNullableInteger(setTemplate.targetSeconds),
               targetRir: normalizeNullableNumber(setTemplate.targetRir),
               targetRpe: normalizeNullableNumber(setTemplate.targetRpe),
+              tempo: normalizeOptionalString(setTemplate.tempo),
               restSeconds: normalizeNullableInteger(setTemplate.restSeconds),
               notes: setTemplate.notes,
             })),
@@ -3095,17 +3241,21 @@ async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
       'newEndDate'
     );
 
+    if (nextDurationWeeks > MAX_CYCLE_DURATION_WEEKS) {
+      throw new ApiError(
+        400,
+        'VALIDATION_ERROR',
+        `durationWeeks cannot exceed ${MAX_CYCLE_DURATION_WEEKS}`
+      );
+    }
+
+    const currentDurationWeeks = Math.max(1, normalizeInt(cycle.durationWeeks, 1));
+    const isExtension = nextDurationWeeks > currentDurationWeeks;
+    const isTrim = nextDurationWeeks < currentDurationWeeks;
+
     if (temporalStatus === 'upcoming') {
       ensureNotPastDate(normalizedStartDateKey, todayDateKey, 'startDate');
       ensureNotPastDate(nextEndDateKey, todayDateKey, 'endDate');
-
-      if (nextDurationWeeks > cycle.durationWeeks) {
-        throw new ApiError(
-          400,
-          'VALIDATION_ERROR',
-          'Extending a cycle beyond its current structure is not supported yet'
-        );
-      }
 
       const existingCycles = await tx.trainingCycle.findMany({
         where: { userId },
@@ -3121,20 +3271,20 @@ async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
         );
       }
 
-      if (nextDurationWeeks > cycle.durationWeeks) {
-        throw new ApiError(
-          400,
-          'VALIDATION_ERROR',
-          'Active cycles can only be shortened'
-        );
-      }
-
-      if (nextDurationWeeks < currentWeekNumber) {
+      if (isTrim && nextDurationWeeks < currentWeekNumber) {
         throw new ApiError(
           400,
           'VALIDATION_ERROR',
           `durationWeeks cannot be shorter than the current week (${currentWeekNumber})`
         );
+      }
+
+      if (isExtension) {
+        const existingCycles = await tx.trainingCycle.findMany({
+          where: { userId },
+          select: { id: true, startDate: true, endDate: true },
+        });
+        validateNoOverlap(existingCycles, normalizedStartDateKey, nextEndDateKey, cycle.id);
       }
     }
 
@@ -3165,12 +3315,50 @@ async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
       throw new ApiError(400, 'VALIDATION_ERROR', 'This draft is not the current editable version');
     }
 
-    const trimmedDocument = trimDocumentWeeks(
-      validateCycleDocument(clonePlanDocument(draftPlan), 'draft'),
-      nextDurationWeeks
+    if (
+      temporalStatus === 'active' &&
+      !isDraftStillUsable(cycle, draftPlan, effectiveTimezone, Boolean(payload.allowCrossDayDraft))
+    ) {
+      await tx.plan.delete({ where: { id: draftPlan.id } });
+      throw new ApiError(409, 'DRAFT_EXPIRED', 'This draft expired and must be reopened from the published version');
+    }
+
+    const currentDocument = validateCycleDocument(clonePlanDocument(draftPlan), 'draft');
+    if (currentDocument.weeks.length !== currentDurationWeeks) {
+      throw new ApiError(
+        400,
+        'VALIDATION_ERROR',
+        'Draft week count must match the current cycle duration before editing the timeline'
+      );
+    }
+
+    if (isExtension) {
+      validateTimelineExtensionSource(currentDocument, payload.sourceWeekNumber);
+    }
+
+    const nextDocument = buildTimelineDocument(
+      currentDocument,
+      nextDurationWeeks,
+      isExtension ? payload.sourceWeekNumber : null
     );
 
-    draftPlan = await replacePlanWeeks(tx, draftPlan.id, trimmedDocument.weeks);
+    if (nextDocument.weeks.length !== nextDurationWeeks) {
+      throw new ApiError(
+        500,
+        'INTERNAL_SERVER_ERROR',
+        'Timeline update produced an invalid week count'
+      );
+    }
+
+    if (isExtension) {
+      const weeksToAppend = nextDocument.weeks.filter(
+        (week) => Number(week.weekNumber) > currentDurationWeeks
+      );
+
+      draftPlan = await appendPlanWeeks(tx, draftPlan.id, weeksToAppend);
+    } else {
+      draftPlan = await replacePlanWeeks(tx, draftPlan.id, nextDocument.weeks);
+    }
 
     const sessionCandidates = await tx.scheduledSession.findMany({
       where: {
@@ -3246,6 +3434,9 @@ async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
       },
       currentWeekNumber,
     };
+  }, {
+    maxWait: 5000,
+    timeout: 30000,
   });
 }
 
