@@ -347,6 +347,9 @@ model Plan {
   isReference       Boolean        @default(false)
   changeSummary     Json?
   generationContext Json?
+  startDate         DateTime?      @db.Date
+  endDate           DateTime?      @db.Date
+  durationWeeks     Int?
   publishedAt       DateTime?
   supersededAt      DateTime?
   createdAt         DateTime       @default(now())

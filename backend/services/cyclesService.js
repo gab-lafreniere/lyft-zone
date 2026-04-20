@@ -338,6 +338,72 @@ function buildTimelineDocument(document, targetWeekCount, sourceWeekNumber = nul
   return trimDocumentWeeks(document, safeWeekCount);
 }
 
+function hasCompletePlanTimeline(plan) {
+  return Boolean(plan?.startDate && plan?.endDate && plan?.durationWeeks != null);
+}
+
+function hasAnyPlanTimeline(plan) {
+  return Boolean(plan?.startDate || plan?.endDate || plan?.durationWeeks != null);
+}
+
+function resolvePlanTimeline(cycle, plan) {
+  const usePlanTimeline = hasCompletePlanTimeline(plan);
+
+  if (hasAnyPlanTimeline(plan) && !usePlanTimeline) {
+    throw new ApiError(
+      500,
+      'INTERNAL_SERVER_ERROR',
+      'Plan timeline is incomplete'
+    );
+  }
+
+  const source = usePlanTimeline ? plan : cycle;
+  const startDateKey = toDateKey(source?.startDate);
+  const endDateKey = toDateKey(source?.endDate);
+  const durationWeeks = normalizeInt(source?.durationWeeks, null);
+
+  if (!startDateKey || !endDateKey || durationWeeks == null) {
+    throw new ApiError(
+      500,
+      'INTERNAL_SERVER_ERROR',
+      'Unable to resolve plan timeline'
+    );
+  }
+
+  return normalizeCanonicalMultiWeekDateRange(
+    startDateKey,
+    durationWeeks,
+    endDateKey
+  );
+}
+
+function buildPlanTimelineWrite(timeline) {
+  return {
+    startDate: parseDateInput(timeline.startDateKey),
+    endDate: parseDateInput(timeline.endDateKey),
+    durationWeeks: timeline.durationWeeks,
+  };
+}
+
+function serializeTimeline(timeline) {
+  return {
+    startDate: timeline.startDateKey,
+    endDate: timeline.endDateKey,
+    durationWeeks: timeline.durationWeeks,
+  };
+}
+
+function assertTimelineMatchesWeeks(timeline, weeks = [], context = 'Plan') {
+  const weekCount = Array.isArray(weeks) ? weeks.length : 0;
+  if (weekCount !== timeline.durationWeeks) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      `${context} week count must match durationWeeks`
+    );
+  }
+}
+
 function getCurrentCycleWeekNumber(cycle, timeZone, now = new Date()) {
   const todayDateKey = getTodayDateKey(timeZone, now);
   const startDateKey = toDateKey(cycle.startDate);
@@ -912,13 +978,14 @@ function toBuilderWorkout(workout) {
 
 function buildCycleBuilderPayload(cycle, plan) {
   const serializedPlan = serializePlan(plan);
+  const timeline = resolvePlanTimeline(cycle, plan);
 
   return {
     programName: serializedPlan?.name || cycle.name,
     sessionsPerWeek: getWeekSessionsPerWeek(serializedPlan?.weeks?.[0]),
-    programLength: cycle.durationWeeks,
-    startDate: toDateKey(cycle.startDate),
-    endDate: toDateKey(cycle.endDate),
+    programLength: timeline.durationWeeks,
+    startDate: timeline.startDateKey,
+    endDate: timeline.endDateKey,
     isMultiWeek: true,
     selectedWeek: 1,
     weeks: (serializedPlan?.weeks || []).map((week) => ({
@@ -2099,6 +2166,9 @@ async function createCycleFromWeeklyPlan(payload) {
         versionNumber: 1,
         sourceType: 'USER',
         status: 'PUBLISHED',
+        startDate: parseDateInput(startDateKey),
+        endDate: parseDateInput(endDateKey),
+        durationWeeks,
         publishedAt: new Date(),
         weeks: {
           create: buildPlanCreateWeeksInput(document.weeks),
@@ -2435,14 +2505,19 @@ async function getProgramsOverview(userId, requestedTimezone) {
   });
 
   const cards = cycles
-    .map((cycle) =>
-      buildCycleCard(
+    .map((cycle) => {
+      const publishedPlan = pickLatestPublished(cycle.plans);
+      if (!publishedPlan) {
+        return null;
+      }
+
+      return buildCycleCard(
         cycle,
-        pickVisiblePlan(cycle.plans),
+        publishedPlan,
         resolveEffectiveTimezone(cycle.timezone, requestedTimezone, DEFAULT_TIMEZONE)
-      )
-    )
-    .filter((card) => card.visiblePlanId);
+      );
+    })
+    .filter(Boolean);
 
   return {
     timezone: resolveEffectiveTimezone(requestedTimezone, DEFAULT_TIMEZONE),
@@ -2473,7 +2548,7 @@ async function getProgramOverviewV2(userId, requestedTimezone) {
   const timezone = resolveEffectiveTimezone(requestedTimezone, DEFAULT_TIMEZONE);
   const cards = cycles
     .map((cycle) => {
-      const visiblePlan = pickVisiblePlan(cycle.plans);
+      const visiblePlan = pickLatestPublished(cycle.plans);
       if (!visiblePlan) {
         return null;
       }
@@ -2482,22 +2557,15 @@ async function getProgramOverviewV2(userId, requestedTimezone) {
     })
     .filter(Boolean);
 
-  const activeCard =
-    cards.find((card) => card.temporalStatus === 'active' && card.editorialStatus === 'published') ||
-    cards.find((card) => card.temporalStatus === 'active') ||
-    null;
+  const activeCard = cards.find((card) => card.temporalStatus === 'active') || null;
   const todayDateKey = getTodayDateKey(activeCard?.timezone || timezone);
   const upcomingCards = cards.filter((card) => card.temporalStatus === 'upcoming');
   const nextUpcomingByTime =
     [...upcomingCards].sort((left, right) => compareDateKeys(left.startDate, right.startDate))[0] ||
     null;
-  const publishedUpcoming = upcomingCards
-    .filter((card) => card.editorialStatus === 'published')
-    .sort((left, right) => compareDateKeys(left.startDate, right.startDate));
-  const draftUpcoming = upcomingCards
-    .filter((card) => card.editorialStatus !== 'published')
-    .sort((left, right) => compareDateKeys(left.startDate, right.startDate));
-  const prioritizedUpcoming = [...publishedUpcoming, ...draftUpcoming].slice(0, 2);
+  const prioritizedUpcoming = upcomingCards
+    .sort((left, right) => compareDateKeys(left.startDate, right.startDate))
+    .slice(0, 2);
   const nextUpcomingCard = prioritizedUpcoming[0] || null;
   const pastPrograms = cards
     .filter((card) => card.temporalStatus === 'past')
@@ -2567,7 +2635,7 @@ async function getCycleDetails(cycleId, userId, requestedTimezone) {
   const effectiveTimezone = resolveEffectiveTimezone(cycle.timezone, requestedTimezone, DEFAULT_TIMEZONE);
   const todayDateKey = getTodayDateKey(effectiveTimezone);
   const temporalStatus = deriveTemporalStatus(cycle, effectiveTimezone);
-  const visiblePlan = pickVisiblePlan(cycle.plans);
+  const visiblePlan = pickLatestPublished(cycle.plans);
   const draftPlan = pickLatestDraft(cycle.plans);
 
   return {
@@ -2644,6 +2712,7 @@ async function openOrCreateCycleEditDraft(cycleId, payload = {}) {
         phase = 'resolve_draft';
         let draftPlan = await normalizeSingleDraft(tx, cycleId);
         const publishedPlan = pickLatestPublished(cycle.plans);
+        const canonicalTimeline = resolvePlanTimeline(cycle, null);
         let state = 'reused';
 
         if (draftPlan && !isDraftStillUsable(cycle, draftPlan, effectiveTimezone, Boolean(payload.allowCrossDayDraft))) {
@@ -2689,6 +2758,7 @@ async function openOrCreateCycleEditDraft(cycleId, payload = {}) {
                     versionNumber: nextVersion,
                     sourceType: publishedPlan.sourceType || 'USER',
                     status: 'DRAFT',
+                    ...buildPlanTimelineWrite(canonicalTimeline),
                     weeks: {
                       create: buildPlanCreateWeeksInput(sourceDocument.weeks),
                     },
@@ -2715,6 +2785,21 @@ async function openOrCreateCycleEditDraft(cycleId, payload = {}) {
           }
         }
 
+        const draftTimeline = resolvePlanTimeline(cycle, draftPlan);
+        if (!hasCompletePlanTimeline(draftPlan)) {
+          phase = 'initialize_draft_timeline';
+          draftPlan = await tx.plan.update({
+            where: { id: draftPlan.id },
+            data: buildPlanTimelineWrite(draftTimeline),
+            include: fullPlanInclude,
+          });
+        }
+        assertTimelineMatchesWeeks(
+          resolvePlanTimeline(cycle, draftPlan),
+          draftPlan.weeks,
+          'Cycle draft'
+        );
+
         phase = 'return_builder_payload';
         logCycleServiceEvent('open_cycle_edit_draft', phase, {
           cycleId,
@@ -2738,6 +2823,7 @@ async function openOrCreateCycleEditDraft(cycleId, payload = {}) {
             durationWeeks: cycle.durationWeeks,
           },
           builderPayload: buildCycleBuilderPayload(cycle, draftPlan),
+          draftTimeline: serializeTimeline(resolvePlanTimeline(cycle, draftPlan)),
           draftState: {
             state,
             effectiveTimezone,
@@ -2791,7 +2877,7 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
       }
 
       phase = 'resolve_current_draft';
-      const draftPlan = await normalizeSingleDraft(tx, cycleId, draftMutationInclude);
+      let draftPlan = await normalizeSingleDraft(tx, cycleId, draftMutationInclude);
       if (!draftPlan || draftPlan.id !== planId) {
         throw new ApiError(400, 'VALIDATION_ERROR', 'This draft is not the current editable version');
       }
@@ -2800,6 +2886,18 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
         phase = 'expire_stale_draft';
         await tx.plan.delete({ where: { id: draftPlan.id } });
         throw new ApiError(409, 'DRAFT_EXPIRED', 'This draft expired and must be reopened from the published version');
+      }
+
+      const draftTimeline = resolvePlanTimeline(cycle, draftPlan);
+      assertTimelineMatchesWeeks(draftTimeline, document.weeks, 'Cycle draft');
+
+      if (!hasCompletePlanTimeline(draftPlan)) {
+        phase = 'initialize_draft_timeline';
+        draftPlan = await tx.plan.update({
+          where: { id: draftPlan.id },
+          data: buildPlanTimelineWrite(draftTimeline),
+          include: draftMutationInclude,
+        });
       }
 
       if (temporalStatus === 'active') {
@@ -2879,13 +2977,6 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
         if (draftDiff.nameChanged) {
           await tx.plan.update({
             where: { id: draftPlan.id },
-            data: {
-              name: draftDiff.normalizedIncoming.name,
-            },
-          });
-
-          await tx.trainingCycle.update({
-            where: { id: cycle.id },
             data: {
               name: draftDiff.normalizedIncoming.name,
             },
@@ -2994,6 +3085,7 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
         temporalStatus,
         timezone: effectiveTimezone,
         builderPayload: buildCycleBuilderPayload(cycle, updatedPlan),
+        draftTimeline: serializeTimeline(resolvePlanTimeline(cycle, updatedPlan)),
         draftState: {
           state: 'reused',
           effectiveTimezone,
@@ -3095,10 +3187,17 @@ async function publishCycleDraft(cycleId, payload = {}) {
 
         phase = 'build_publish_document';
         const publishedPlan = pickLatestPublished(cycle.plans);
+        const draftTimeline = resolvePlanTimeline(cycle, draftPlan);
+        assertTimelineMatchesWeeks(
+          draftTimeline,
+          clonePlanDocument(draftPlan).weeks,
+          'Cycle draft'
+        );
         const sourceDocument =
           temporalStatus === 'active' && publishedPlan
             ? mergePublishedAndDraftWorkouts(cycle, publishedPlan, draftPlan, effectiveTimezone)
             : clonePlanDocument(draftPlan);
+        assertTimelineMatchesWeeks(draftTimeline, sourceDocument.weeks, 'Published cycle');
 
         phase = 'validate_publish_document';
 
@@ -3125,6 +3224,7 @@ async function publishCycleDraft(cycleId, payload = {}) {
             versionNumber: nextVersion,
             sourceType: draftPlan.sourceType || 'USER',
             status: 'PUBLISHED',
+            ...buildPlanTimelineWrite(draftTimeline),
             publishedAt: new Date(),
             weeks: {
               create: buildPlanCreateWeeksInput(sourceDocument.weeks),
@@ -3133,11 +3233,12 @@ async function publishCycleDraft(cycleId, payload = {}) {
           include: fullPlanInclude,
         });
 
-        phase = 'update_cycle_name';
-        await tx.trainingCycle.update({
+        phase = 'update_cycle_canonical_state';
+        const updatedCycle = await tx.trainingCycle.update({
           where: { id: cycle.id },
           data: {
             name: sourceDocument.name,
+            ...buildPlanTimelineWrite(draftTimeline),
           },
         });
 
@@ -3157,16 +3258,16 @@ async function publishCycleDraft(cycleId, payload = {}) {
           cycleId: cycle.id,
           publishedPlanId: newPublishedPlan.id,
           status: 'PUBLISHED',
-          temporalStatus,
+          temporalStatus: deriveTemporalStatus(updatedCycle, effectiveTimezone),
           timezone: effectiveTimezone,
           cycle: {
-            id: cycle.id,
+            id: updatedCycle.id,
             name: sourceDocument.name,
-            startDate: toDateKey(cycle.startDate),
-            endDate: toDateKey(cycle.endDate),
-            durationWeeks: cycle.durationWeeks,
+            startDate: toDateKey(updatedCycle.startDate),
+            endDate: toDateKey(updatedCycle.endDate),
+            durationWeeks: updatedCycle.durationWeeks,
           },
-          builderPayload: buildCycleBuilderPayload(cycle, newPublishedPlan),
+          builderPayload: buildCycleBuilderPayload(updatedCycle, newPublishedPlan),
           updatedAt: newPublishedPlan.updatedAt,
         };
       },
@@ -3218,6 +3319,7 @@ async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
     const temporalStatus = deriveTemporalStatus(cycle, effectiveTimezone);
     const todayDateKey = getTodayDateKey(effectiveTimezone);
     const currentStartDateKey = toDateKey(cycle.startDate);
+    const currentEndDateKey = toDateKey(cycle.endDate);
     const currentWeekNumber =
       temporalStatus === 'active' ? getCurrentCycleWeekNumber(cycle, effectiveTimezone) : null;
 
@@ -3249,9 +3351,54 @@ async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
       );
     }
 
-    const currentDurationWeeks = Math.max(1, normalizeInt(cycle.durationWeeks, 1));
-    const isExtension = nextDurationWeeks > currentDurationWeeks;
-    const isTrim = nextDurationWeeks < currentDurationWeeks;
+    let draftPlan = await normalizeSingleDraft(tx, cycle.id);
+    const publishedPlan = pickLatestPublished(cycle.plans);
+    const canonicalTimeline = resolvePlanTimeline(cycle, null);
+
+    if (!draftPlan && publishedPlan) {
+      const sourceDocument = clonePlanDocument(publishedPlan);
+      const latestPlan = cycle.plans[0];
+
+      draftPlan = await tx.plan.create({
+        data: {
+          trainingCycleId: cycle.id,
+          parentPlanId: publishedPlan.id,
+          name: sourceDocument.name,
+          versionNumber: (latestPlan?.versionNumber ?? 0) + 1,
+          sourceType: publishedPlan.sourceType || 'USER',
+          status: 'DRAFT',
+          ...buildPlanTimelineWrite(canonicalTimeline),
+          weeks: {
+            create: buildPlanCreateWeeksInput(sourceDocument.weeks),
+          },
+        },
+        include: fullPlanInclude,
+      });
+    }
+
+    if (!draftPlan || draftPlan.id !== planId) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'This draft is not the current editable version');
+    }
+
+    if (
+      temporalStatus === 'active' &&
+      !isDraftStillUsable(cycle, draftPlan, effectiveTimezone, Boolean(payload.allowCrossDayDraft))
+    ) {
+      await tx.plan.delete({ where: { id: draftPlan.id } });
+      throw new ApiError(409, 'DRAFT_EXPIRED', 'This draft expired and must be reopened from the published version');
+    }
+
+    let draftTimeline = resolvePlanTimeline(cycle, draftPlan);
+    if (!hasCompletePlanTimeline(draftPlan)) {
+      draftPlan = await tx.plan.update({
+        where: { id: draftPlan.id },
+        data: buildPlanTimelineWrite(draftTimeline),
+        include: fullPlanInclude,
+      });
+    }
+
+    const isExtension = nextDurationWeeks > draftTimeline.durationWeeks;
+    const isTrim = nextDurationWeeks < draftTimeline.durationWeeks;
 
     if (temporalStatus === 'upcoming') {
       ensureNotPastDate(normalizedStartDateKey, todayDateKey, 'startDate');
@@ -3279,7 +3426,7 @@ async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
         );
       }
 
-      if (isExtension) {
+      if (compareDateKeys(nextEndDateKey, currentEndDateKey) > 0) {
         const existingCycles = await tx.trainingCycle.findMany({
           where: { userId },
           select: { id: true, startDate: true, endDate: true },
@@ -3288,49 +3435,8 @@ async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
       }
     }
 
-    let draftPlan = await normalizeSingleDraft(tx, cycle.id);
-    const publishedPlan = pickLatestPublished(cycle.plans);
-
-    if (!draftPlan && publishedPlan) {
-      const sourceDocument = clonePlanDocument(publishedPlan);
-      const latestPlan = cycle.plans[0];
-
-      draftPlan = await tx.plan.create({
-        data: {
-          trainingCycleId: cycle.id,
-          parentPlanId: publishedPlan.id,
-          name: sourceDocument.name,
-          versionNumber: (latestPlan?.versionNumber ?? 0) + 1,
-          sourceType: publishedPlan.sourceType || 'USER',
-          status: 'DRAFT',
-          weeks: {
-            create: buildPlanCreateWeeksInput(sourceDocument.weeks),
-          },
-        },
-        include: fullPlanInclude,
-      });
-    }
-
-    if (!draftPlan || draftPlan.id !== planId) {
-      throw new ApiError(400, 'VALIDATION_ERROR', 'This draft is not the current editable version');
-    }
-
-    if (
-      temporalStatus === 'active' &&
-      !isDraftStillUsable(cycle, draftPlan, effectiveTimezone, Boolean(payload.allowCrossDayDraft))
-    ) {
-      await tx.plan.delete({ where: { id: draftPlan.id } });
-      throw new ApiError(409, 'DRAFT_EXPIRED', 'This draft expired and must be reopened from the published version');
-    }
-
     const currentDocument = validateCycleDocument(clonePlanDocument(draftPlan), 'draft');
-    if (currentDocument.weeks.length !== currentDurationWeeks) {
-      throw new ApiError(
-        400,
-        'VALIDATION_ERROR',
-        'Draft week count must match the current cycle duration before editing the timeline'
-      );
-    }
+    assertTimelineMatchesWeeks(draftTimeline, currentDocument.weeks, 'Cycle draft');
 
     if (isExtension) {
       validateTimelineExtensionSource(currentDocument, payload.sourceWeekNumber);
@@ -3352,7 +3458,7 @@ async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
 
     if (isExtension) {
       const weeksToAppend = nextDocument.weeks.filter(
-        (week) => Number(week.weekNumber) > currentDurationWeeks
+        (week) => Number(week.weekNumber) > draftTimeline.durationWeeks
       );
 
       draftPlan = await appendPlanWeeks(tx, draftPlan.id, weeksToAppend);
@@ -3360,71 +3466,33 @@ async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
       draftPlan = await replacePlanWeeks(tx, draftPlan.id, nextDocument.weeks);
     }
 
-    const sessionCandidates = await tx.scheduledSession.findMany({
-      where: {
-        workout: {
-          planWeek: {
-            plan: {
-              trainingCycleId: cycle.id,
-            },
-          },
-        },
-      },
-      select: {
-        id: true,
-        scheduledStartAt: true,
-      },
+    draftTimeline = {
+      startDateKey: normalizedStartDateKey,
+      endDateKey: nextEndDateKey,
+      durationWeeks: nextDurationWeeks,
+    };
+    draftPlan = await tx.plan.update({
+      where: { id: draftPlan.id },
+      data: buildPlanTimelineWrite(draftTimeline),
+      include: fullPlanInclude,
     });
-    const scheduledSessionIdsToDelete = sessionCandidates
-      .filter(
-        (session) =>
-          getLocalDateTimeParts(session.scheduledStartAt, effectiveTimezone).dateKey > nextEndDateKey
-      )
-      .map((session) => session.id);
-
-    if (scheduledSessionIdsToDelete.length > 0) {
-      await tx.scheduledSession.deleteMany({
-        where: {
-          id: {
-            in: scheduledSessionIdsToDelete,
-          },
-        },
-      });
-    }
-
-    const updatedCycle = await tx.trainingCycle.update({
-      where: { id: cycle.id },
-      data: {
-        startDate: parseDateInput(normalizedStartDateKey),
-        endDate: parseDateInput(nextEndDateKey),
-        durationWeeks: nextDurationWeeks,
-      },
-      include: {
-        plans: {
-          orderBy: { versionNumber: 'desc' },
-          include: fullPlanInclude,
-        },
-      },
-    });
-
-    const nextDraftPlan = pickLatestDraft(updatedCycle.plans);
-    const visiblePlan = nextDraftPlan || pickLatestPublished(updatedCycle.plans);
 
     return {
-      cycleId: updatedCycle.id,
-      planId: nextDraftPlan?.id || draftPlan.id,
+      cycleId: cycle.id,
+      planId: draftPlan.id,
       cycle: {
-        id: updatedCycle.id,
-        startDate: toDateKey(updatedCycle.startDate),
-        endDate: toDateKey(updatedCycle.endDate),
-        durationWeeks: updatedCycle.durationWeeks,
+        id: cycle.id,
+        startDate: toDateKey(cycle.startDate),
+        endDate: toDateKey(cycle.endDate),
+        durationWeeks: cycle.durationWeeks,
         timezone: effectiveTimezone,
-        temporalStatus: deriveTemporalStatus(updatedCycle, effectiveTimezone),
+        temporalStatus: deriveTemporalStatus(cycle, effectiveTimezone),
       },
-      visiblePlanId: visiblePlan?.id || null,
-      status: nextDraftPlan?.status || visiblePlan?.status || 'DRAFT',
-      builderPayload: visiblePlan ? buildCycleBuilderPayload(updatedCycle, visiblePlan) : null,
-      temporalStatus: deriveTemporalStatus(updatedCycle, effectiveTimezone),
+      visiblePlanId: draftPlan.id,
+      status: draftPlan.status,
+      builderPayload: buildCycleBuilderPayload(cycle, draftPlan),
+      draftTimeline: serializeTimeline(draftTimeline),
+      temporalStatus: deriveTemporalStatus(cycle, effectiveTimezone),
       timezone: effectiveTimezone,
       draftState: {
         effectiveTimezone,
@@ -3441,134 +3509,14 @@ async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
 }
 
 async function rescheduleUpcomingCycle(cycleId, payload = {}) {
-  const prisma = getPrisma();
   const userId = normalizeOptionalString(payload.userId);
   await assertUserExists(userId);
 
-  return prisma.$transaction(async (tx) => {
-    const cycle = await loadCycleForUser(tx, cycleId, userId);
-    const effectiveTimezone = resolveEffectiveTimezone(cycle.timezone, payload.timezone, DEFAULT_TIMEZONE);
-    const temporalStatus = deriveTemporalStatus(cycle, effectiveTimezone);
-    const todayDateKey = getTodayDateKey(effectiveTimezone);
-
-    if (temporalStatus !== 'upcoming') {
-      throw new ApiError(400, 'VALIDATION_ERROR', 'Only upcoming cycles can be rescheduled');
-    }
-
-    const { startDateKey: normalizedStartDateKey, endDateKey: nextEndDateKey, durationWeeks: nextDurationWeeks } =
-      normalizeCanonicalMultiWeekDateRange(
-        payload.newStartDate,
-        payload.durationWeeks,
-        payload.newEndDate || payload.endDate,
-        'newStartDate',
-        'newEndDate'
-      );
-
-    ensureNotPastDate(normalizedStartDateKey, todayDateKey, 'startDate');
-    ensureNotPastDate(nextEndDateKey, todayDateKey, 'endDate');
-
-    if (nextDurationWeeks > cycle.durationWeeks) {
-      throw new ApiError(
-        400,
-        'VALIDATION_ERROR',
-        'Extending a cycle beyond its current structure is not supported yet'
-      );
-    }
-
-    const existingCycles = await tx.trainingCycle.findMany({
-      where: { userId },
-      select: { id: true, startDate: true, endDate: true },
-    });
-    validateNoOverlap(existingCycles, normalizedStartDateKey, nextEndDateKey, cycle.id);
-
-    let draftPlan = await normalizeSingleDraft(tx, cycle.id);
-    const publishedPlan = pickLatestPublished(cycle.plans);
-
-    if (!draftPlan && publishedPlan) {
-      const sourceDocument = clonePlanDocument(publishedPlan);
-      const latestPlan = cycle.plans[0];
-
-      draftPlan = await tx.plan.create({
-        data: {
-          trainingCycleId: cycle.id,
-          parentPlanId: publishedPlan.id,
-          name: sourceDocument.name,
-          versionNumber: (latestPlan?.versionNumber ?? 0) + 1,
-          sourceType: publishedPlan.sourceType || 'USER',
-          status: 'DRAFT',
-          weeks: {
-            create: buildPlanCreateWeeksInput(sourceDocument.weeks),
-          },
-        },
-        include: fullPlanInclude,
-      });
-    }
-
-    if (draftPlan) {
-      const trimmedDocument = trimDocumentWeeks(
-        validateCycleDocument(clonePlanDocument(draftPlan), 'draft'),
-        nextDurationWeeks
-      );
-
-      await tx.workout.deleteMany({
-        where: {
-          planWeek: {
-            planId: draftPlan.id,
-          },
-        },
-      });
-
-      await tx.planWeek.deleteMany({
-        where: {
-          planId: draftPlan.id,
-        },
-      });
-
-      draftPlan = await tx.plan.update({
-        where: { id: draftPlan.id },
-        data: {
-          weeks: {
-            create: buildPlanCreateWeeksInput(trimmedDocument.weeks),
-          },
-        },
-        include: fullPlanInclude,
-      });
-    }
-
-    const updatedCycle = await tx.trainingCycle.update({
-      where: { id: cycle.id },
-      data: {
-        startDate: parseDateInput(normalizedStartDateKey),
-        endDate: parseDateInput(nextEndDateKey),
-        durationWeeks: nextDurationWeeks,
-      },
-      include: {
-        plans: {
-          orderBy: { versionNumber: 'desc' },
-          include: fullPlanInclude,
-        },
-      },
-    });
-
-    const nextDraftPlan = pickLatestDraft(updatedCycle.plans);
-    const visiblePlan = nextDraftPlan || pickLatestPublished(updatedCycle.plans);
-
-    return {
-      cycleId: updatedCycle.id,
-      cycle: {
-        id: updatedCycle.id,
-        startDate: toDateKey(updatedCycle.startDate),
-        endDate: toDateKey(updatedCycle.endDate),
-        durationWeeks: updatedCycle.durationWeeks,
-        timezone: effectiveTimezone,
-      },
-      visiblePlanId: visiblePlan?.id || null,
-      status: visiblePlan?.status || 'DRAFT',
-      builderPayload: visiblePlan ? buildCycleBuilderPayload(updatedCycle, visiblePlan) : null,
-      temporalStatus: deriveTemporalStatus(updatedCycle, effectiveTimezone),
-      timezone: effectiveTimezone,
-    };
-  });
+  throw new ApiError(
+    400,
+    'VALIDATION_ERROR',
+    'Use the draft timeline endpoint to reschedule cycle drafts'
+  );
 }
 
 async function deleteCycle(cycleId, payload = {}) {
