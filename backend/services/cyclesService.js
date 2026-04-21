@@ -1,6 +1,7 @@
 const { getPrisma } = require('../lib/prisma');
 const { ApiError } = require('./usersService');
 const { regenerateScheduledSessionsForPublishedCycle } = require('./scheduledSessionsService');
+const { validateAndNormalizeCardioBlocks } = require('./cardioPrescription');
 const {
   normalizeNullableNumber,
   normalizeNullableInteger,
@@ -39,7 +40,7 @@ const DAY_OF_WEEK = new Set([
   'SATURDAY',
   'SUNDAY',
 ]);
-const BLOCK_TYPES = new Set(['SINGLE', 'SUPERSET', 'GIANT_SET', 'CIRCUIT']);
+const BLOCK_TYPES = new Set(['SINGLE', 'SUPERSET', 'GIANT_SET', 'CIRCUIT', 'CARDIO']);
 const BLOCK_REST_STRATEGIES = new Set(['NONE', 'AFTER_EXERCISE', 'AFTER_ROUND']);
 const SET_TYPES = new Set([
   'WARMUP',
@@ -79,6 +80,8 @@ const fullPlanInclude = {
                       equipmentCategory: true,
                       bodyParts: true,
                       targetMuscles: true,
+                      trainingType: true,
+                      cardioModality: true,
                     },
                   },
                   setTemplates: {
@@ -620,6 +623,7 @@ function normalizeWorkoutsInput(workouts = []) {
               defaultTargetRir: normalizeNumeric(exercise.defaultTargetRir),
               defaultTargetRpe: normalizeNumeric(exercise.defaultTargetRpe),
               intensificationMethod: exercise.intensificationMethod ?? 'NONE',
+              cardioPrescription: exercise.cardioPrescription ?? null,
               notes: normalizeOptionalString(exercise.notes),
               setTemplates: Array.isArray(exercise.setTemplates)
                 ? exercise.setTemplates.map((setTemplate, setIndex) => ({
@@ -835,7 +839,7 @@ async function assertKnownExerciseIds(exerciseIds = []) {
   const ids = Array.from(new Set(exerciseIds.filter(Boolean)));
 
   if (!ids.length) {
-    return;
+    return new Map();
   }
 
   const exercises = await prisma.exercise.findMany({
@@ -844,7 +848,11 @@ async function assertKnownExerciseIds(exerciseIds = []) {
         in: ids,
       },
     },
-    select: { exerciseId: true },
+    select: {
+      exerciseId: true,
+      trainingType: true,
+      cardioModality: true,
+    },
   });
 
   const existingIds = new Set(exercises.map((exercise) => exercise.exerciseId));
@@ -853,6 +861,8 @@ async function assertKnownExerciseIds(exerciseIds = []) {
       throw new ApiError(400, 'VALIDATION_ERROR', `Unknown exerciseId: ${exerciseId}`);
     }
   });
+
+  return new Map(exercises.map((exercise) => [exercise.exerciseId, exercise]));
 }
 
 function serializePlan(plan) {
@@ -883,6 +893,7 @@ function serializePlan(plan) {
               defaultTargetRir: blockExercise.defaultTargetRir,
               defaultTargetRpe: blockExercise.defaultTargetRpe,
               intensificationMethod: blockExercise.intensificationMethod,
+              cardioPrescription: blockExercise.cardioPrescription,
               notes: blockExercise.notes,
               bodyParts: blockExercise.exercise?.bodyParts || [],
               muscleFocus: blockExercise.exercise?.targetMuscles || [],
@@ -925,6 +936,19 @@ function toBuilderExercise(exercise, index) {
 }
 
 function toBuilderBlock(block) {
+  if (block.blockType === 'CARDIO') {
+    const cardioExercise = block.exercises[0];
+
+    return {
+      id: block.id,
+      type: 'cardio',
+      exercise: cardioExercise?.exerciseName || cardioExercise?.exercise?.name || '',
+      exerciseId: cardioExercise?.exerciseId || null,
+      cardioPrescription: cardioExercise?.cardioPrescription || null,
+      notes: block.notes || cardioExercise?.notes || '',
+    };
+  }
+
   if (block.blockType === 'SUPERSET') {
     const exercises = block.exercises.map(toBuilderExercise);
 
@@ -1092,6 +1116,7 @@ function createComparableWorkout(workout) {
         defaultTargetRir: normalizeNullableNumber(exercise.defaultTargetRir),
         defaultTargetRpe: normalizeNullableNumber(exercise.defaultTargetRpe),
         intensificationMethod: exercise.intensificationMethod || null,
+        cardioPrescription: exercise.cardioPrescription || null,
         notes: exercise.notes || null,
         setTemplates: (exercise.setTemplates || []).map((setTemplate) => ({
           setIndex: setTemplate.setIndex,
@@ -1227,6 +1252,7 @@ function normalizeExerciseForPersistence(exercise = {}, orderIndex, options = {}
     defaultTargetRir: normalizeNullableNumber(exercise.defaultTargetRir),
     defaultTargetRpe: normalizeNullableNumber(exercise.defaultTargetRpe),
     intensificationMethod: exercise.intensificationMethod || 'NONE',
+    cardioPrescription: exercise.cardioPrescription ?? null,
     notes: normalizeOptionalString(exercise.notes),
     setTemplates: (Array.isArray(exercise.setTemplates) ? exercise.setTemplates : [])
       .slice()
@@ -1361,6 +1387,7 @@ function buildDraftMutationDocument(plan) {
             defaultTargetRir: exercise.defaultTargetRir,
             defaultTargetRpe: exercise.defaultTargetRpe,
             intensificationMethod: exercise.intensificationMethod,
+            cardioPrescription: exercise.cardioPrescription,
             notes: exercise.notes,
             setTemplates: (Array.isArray(exercise.setTemplates) ? exercise.setTemplates : []).map((setTemplate) => ({
               id: setTemplate.id,
@@ -1429,6 +1456,7 @@ function normalizeWorkoutBlockFields(workout) {
         defaultTargetRir: normalizeNullableNumber(exercise.defaultTargetRir),
         defaultTargetRpe: normalizeNullableNumber(exercise.defaultTargetRpe),
         intensificationMethod: exercise.intensificationMethod || 'NONE',
+        cardioPrescription: exercise.cardioPrescription || null,
         notes: exercise.notes || null,
         setTemplates: (Array.isArray(exercise.setTemplates) ? exercise.setTemplates : []).map((setTemplate) => ({
           setIndex: setTemplate.setIndex,
@@ -1467,6 +1495,7 @@ function buildWorkoutBlocksCreateInput(blocks = []) {
         defaultTargetRir: exercise.defaultTargetRir ?? undefined,
         defaultTargetRpe: exercise.defaultTargetRpe ?? undefined,
         intensificationMethod: exercise.intensificationMethod ?? undefined,
+        cardioPrescription: exercise.cardioPrescription ?? undefined,
         notes: exercise.notes ?? undefined,
         setTemplates: {
           create: exercise.setTemplates.map((setTemplate) => ({
@@ -1548,6 +1577,7 @@ function clonePlanDocument(plan) {
             defaultTargetRir: normalizeNullableNumber(exercise.defaultTargetRir),
             defaultTargetRpe: normalizeNullableNumber(exercise.defaultTargetRpe),
             intensificationMethod: exercise.intensificationMethod,
+            cardioPrescription: exercise.cardioPrescription,
             notes: exercise.notes,
             setTemplates: exercise.setTemplates.map((setTemplate) => ({
               setIndex: setTemplate.setIndex,
@@ -1904,6 +1934,7 @@ function buildDocumentFromWeeklyVersion(version, durationWeeks, workoutDayAssign
         defaultTargetRir: exercise.defaultTargetRir,
         defaultTargetRpe: exercise.defaultTargetRpe,
         intensificationMethod: exercise.intensificationMethod,
+        cardioPrescription: exercise.cardioPrescription,
         notes: exercise.notes,
         setTemplates: exercise.setTemplates.map((setTemplate) => ({
           setIndex: setTemplate.setIndex,
@@ -2029,7 +2060,13 @@ async function createPlanForCycle(cycleId, payload) {
   }
 
   const document = validateCycleDocument(payload, payload.status === 'PUBLISHED' ? 'publish' : 'draft');
-  await assertKnownExerciseIds(collectExerciseIdsFromWeeks(document.weeks));
+  const exerciseById = await assertKnownExerciseIds(collectExerciseIdsFromWeeks(document.weeks));
+  document.weeks.forEach((week, weekIndex) => {
+    validateAndNormalizeCardioBlocks(week.workouts, exerciseById, {
+      mode: payload.status === 'PUBLISHED' ? 'publish' : 'draft',
+      path: `weeks[${weekIndex}].workouts`,
+    });
+  });
 
   const cycle = await prisma.trainingCycle.findUnique({
     where: { id: cycleId },
@@ -2144,6 +2181,14 @@ async function createCycleFromWeeklyPlan(payload) {
     durationWeeks,
     workoutDayAssignments
   );
+  validateCycleDocument(document, 'publish');
+  const exerciseById = await assertKnownExerciseIds(collectExerciseIdsFromWeeks(document.weeks));
+  document.weeks.forEach((week, weekIndex) => {
+    validateAndNormalizeCardioBlocks(week.workouts, exerciseById, {
+      mode: 'publish',
+      path: `weeks[${weekIndex}].workouts`,
+    });
+  });
   const created = await prisma.$transaction(async (tx) => {
     const cycle = await tx.trainingCycle.create({
       data: {
@@ -2850,11 +2895,17 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
 
   try {
     const document = validateCycleDocument(payload, 'draft');
+    phase = 'validate_exercise_ids';
+    const exerciseById = await assertKnownExerciseIds(collectExerciseIdsFromWeeks(document.weeks));
+    document.weeks.forEach((week, weekIndex) => {
+      validateAndNormalizeCardioBlocks(week.workouts, exerciseById, {
+        mode: 'draft',
+        path: `weeks[${weekIndex}].workouts`,
+      });
+    });
     const normalizedIncomingDocument = normalizeCycleDocumentForPersistence(document, {
       includeIds: true,
     });
-    phase = 'validate_exercise_ids';
-    await assertKnownExerciseIds(collectExerciseIdsFromWeeks(document.weeks));
 
     return await prisma.$transaction(async (tx) => {
       phase = 'load_cycle';
@@ -3200,7 +3251,13 @@ async function publishCycleDraft(cycleId, payload = {}) {
         phase = 'validate_publish_document';
 
         validateCycleDocument(sourceDocument, 'publish');
-        await assertKnownExerciseIds(collectExerciseIdsFromWeeks(sourceDocument.weeks));
+        const exerciseById = await assertKnownExerciseIds(collectExerciseIdsFromWeeks(sourceDocument.weeks));
+        sourceDocument.weeks.forEach((week, weekIndex) => {
+          validateAndNormalizeCardioBlocks(week.workouts, exerciseById, {
+            mode: 'publish',
+            path: `weeks[${weekIndex}].workouts`,
+          });
+        });
 
         if (publishedPlan) {
           phase = 'supersede_previous_published_plan';

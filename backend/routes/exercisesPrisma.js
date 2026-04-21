@@ -69,6 +69,8 @@ function buildSearchText(exercise) {
     exercise.trainingType,
     exercise.movementPattern,
     exercise.mechanicType,
+    exercise.cardioModality,
+    exercise.cardioImpactLevel,
   ]
     .filter(Boolean)
     .map((value) => String(value).toLowerCase())

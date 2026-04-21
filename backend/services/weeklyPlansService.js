@@ -1,6 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { getPrisma } = require('../lib/prisma');
 const { ApiError } = require('./usersService');
+const { validateAndNormalizeCardioBlocks } = require('./cardioPrescription');
 
 const WEEKLY_PLAN_SOURCE_TYPES = new Set(['MANUAL', 'AI']);
 const WEEKLY_PLAN_VERSION_STATUSES = new Set([
@@ -9,7 +10,7 @@ const WEEKLY_PLAN_VERSION_STATUSES = new Set([
   'SUPERSEDED',
   'ARCHIVED',
 ]);
-const BLOCK_TYPES = new Set(['SINGLE', 'SUPERSET', 'GIANT_SET', 'CIRCUIT']);
+const BLOCK_TYPES = new Set(['SINGLE', 'SUPERSET', 'GIANT_SET', 'CIRCUIT', 'CARDIO']);
 const BLOCK_REST_STRATEGIES = new Set(['NONE', 'AFTER_EXERCISE', 'AFTER_ROUND']);
 const SET_TYPES = new Set([
   'WARMUP',
@@ -259,6 +260,7 @@ function computeWeeklyPlanWorkoutMetrics(workout) {
       estimatedDurationMinutes: 0,
       totalTUTMinutes: 0,
       totalTUTSeconds: 0,
+      hasContent: false,
       muscleDistribution: finalizeDistribution(createDistributionAccumulator(), 0),
     };
   }
@@ -271,6 +273,26 @@ function computeWeeklyPlanWorkoutMetrics(workout) {
 
   workout.blocks.forEach((block) => {
     const exercises = normalizeArray(block.exercises);
+
+    if (block.blockType === 'CARDIO') {
+      const cardioExercise = exercises[0];
+      const durationMinutes = normalizeInt(
+        cardioExercise?.cardioPrescription?.durationMinutes,
+        0
+      );
+
+      if (
+        !cardioExercise?.exerciseId ||
+        !String(cardioExercise.exerciseName || '').trim() ||
+        durationMinutes <= 0
+      ) {
+        return;
+      }
+
+      exerciseCount += 1;
+      totalDurationSeconds += durationMinutes * 60;
+      return;
+    }
 
     if (block.blockType === 'SINGLE') {
       const primaryExercise = exercises[0];
@@ -370,13 +392,14 @@ function computeWeeklyPlanWorkoutMetrics(workout) {
     estimatedDurationMinutes: roundDisplayMinutes(totalDurationSeconds),
     totalTUTMinutes: roundDisplayMinutes(totalTUTSeconds),
     totalTUTSeconds,
+    hasContent: exerciseCount > 0,
     muscleDistribution: finalizeDistribution(distribution, setCount),
   };
 }
 
 function aggregateWeeklyPlanMetrics(workouts = []) {
   const workoutMetrics = workouts.map((workout) => computeWeeklyPlanWorkoutMetrics(workout));
-  const nonEmptyWorkouts = workoutMetrics.filter((metrics) => metrics.setCount > 0);
+  const nonEmptyWorkouts = workoutMetrics.filter((metrics) => metrics.hasContent);
   const distribution = createDistributionAccumulator();
 
   const totalExerciseCount = workoutMetrics.reduce((sum, metrics) => sum + metrics.exerciseCount, 0);
@@ -445,6 +468,7 @@ function normalizeExercisesInput(exercises = []) {
       ? String(exercise.intensificationMethod).toUpperCase()
       : null,
     notes: normalizeOptionalString(exercise.notes),
+    cardioPrescription: exercise.cardioPrescription ?? null,
     setTemplates: normalizeSetTemplatesInput(exercise.setTemplates),
   }));
 }
@@ -620,7 +644,7 @@ async function assertKnownExerciseIds(exerciseIds = []) {
   const ids = Array.from(new Set(exerciseIds.filter(Boolean)));
 
   if (!ids.length) {
-    return;
+    return new Map();
   }
 
   const exercises = await prisma.exercise.findMany({
@@ -629,7 +653,11 @@ async function assertKnownExerciseIds(exerciseIds = []) {
         in: ids,
       },
     },
-    select: { exerciseId: true },
+    select: {
+      exerciseId: true,
+      trainingType: true,
+      cardioModality: true,
+    },
   });
 
   const existingIds = new Set(exercises.map((exercise) => exercise.exerciseId));
@@ -638,6 +666,8 @@ async function assertKnownExerciseIds(exerciseIds = []) {
       throw new ApiError(400, 'VALIDATION_ERROR', `Unknown exerciseId: ${exerciseId}`);
     }
   });
+
+  return new Map(exercises.map((exercise) => [exercise.exerciseId, exercise]));
 }
 
 function collectExerciseIds(workouts = []) {
@@ -681,6 +711,7 @@ function toWorkoutCreateInput(workouts) {
             defaultTargetRir: exercise.defaultTargetRir ?? undefined,
             defaultTargetRpe: exercise.defaultTargetRpe ?? undefined,
             intensificationMethod: exercise.intensificationMethod ?? undefined,
+            cardioPrescription: exercise.cardioPrescription ?? undefined,
             notes: exercise.notes ?? undefined,
             setTemplates: {
               create: exercise.setTemplates.map((setTemplate) => ({
@@ -721,6 +752,8 @@ const weeklyPlanVersionInclude = {
                   name: true,
                   bodyParts: true,
                   muscleFocus: true,
+                  trainingType: true,
+                  cardioModality: true,
                 },
               },
               setTemplates: {
@@ -776,6 +809,19 @@ function mapVersionToBuilderPayload(parent, version) {
         id: workout.id,
         name: workout.name,
         blocks: workout.blocks.map((block) => {
+          if (block.blockType === 'CARDIO') {
+            const exercise = block.exercises[0];
+
+            return {
+              id: block.id,
+              type: 'cardio',
+              exercise: exercise?.exerciseName || '',
+              exerciseId: exercise?.exerciseId || null,
+              cardioPrescription: exercise?.cardioPrescription || null,
+              notes: block.notes || exercise?.notes || '',
+            };
+          }
+
           if (block.blockType === 'SINGLE') {
             const exercise = block.exercises[0];
             const setTemplates = normalizeArray(exercise?.setTemplates);
@@ -883,6 +929,25 @@ function mapVisibleParentToDetails(parent, userId) {
         totalTUTMinutes: metrics.totalTUTMinutes,
       },
       blocks: workout.blocks.map((block) => {
+        if (block.blockType === 'CARDIO') {
+          const exercise = block.exercises[0];
+          return {
+            id: block.id,
+            type: 'cardio',
+            orderIndex: block.orderIndex,
+            exercise: {
+              exerciseId: exercise?.exerciseId || exercise?.exercise?.exerciseId || '',
+              name:
+                exercise?.exerciseName ||
+                exercise?.exercise?.name ||
+                'Unknown exercise',
+              imageUrl: null,
+            },
+            prescription: exercise?.cardioPrescription || null,
+            notes: block.notes || exercise?.notes || null,
+          };
+        }
+
         if (block.blockType === 'SINGLE') {
           const exercise = block.exercises[0];
           const setTemplates = normalizeArray(exercise?.setTemplates);
@@ -978,7 +1043,11 @@ async function createWeeklyPlan(payload) {
   );
 
   await assertUserExists(userId);
-  await assertKnownExerciseIds(collectExerciseIds(document.workouts));
+  const exerciseById = await assertKnownExerciseIds(collectExerciseIds(document.workouts));
+  validateAndNormalizeCardioBlocks(document.workouts, exerciseById, {
+    mode: 'draft',
+    path: 'workouts',
+  });
 
   const parent = await prisma.$transaction(async (tx) => {
     const createdParent = await tx.weeklyPlanParent.create({
@@ -1094,6 +1163,7 @@ function cloneWorkoutTree(workouts = []) {
         defaultTargetRir: exercise.defaultTargetRir,
         defaultTargetRpe: exercise.defaultTargetRpe,
         intensificationMethod: exercise.intensificationMethod,
+        cardioPrescription: exercise.cardioPrescription,
         notes: exercise.notes,
         setTemplates: exercise.setTemplates.map((setTemplate) => ({
           id: createStableId('wpset'),
@@ -1198,7 +1268,11 @@ async function updateWeeklyPlanDraft(weeklyPlanParentId, versionId, payload) {
   }
 
   const document = validateDraftDocument(payload, 'draft');
-  await assertKnownExerciseIds(collectExerciseIds(document.workouts));
+  const exerciseById = await assertKnownExerciseIds(collectExerciseIds(document.workouts));
+  validateAndNormalizeCardioBlocks(document.workouts, exerciseById, {
+    mode: 'draft',
+    path: 'workouts',
+  });
 
   const updatedParent = await prisma.$transaction(async (tx) => {
     const draft = await tx.weeklyPlanVersion.findFirst({
@@ -1263,7 +1337,7 @@ async function publishWeeklyPlanDraft(weeklyPlanParentId, payload) {
     throw new ApiError(400, 'VALIDATION_ERROR', 'No draft available to publish');
   }
 
-  validateDraftDocument(
+  const publishDocument = validateDraftDocument(
     {
       name: parent.latestDraftVersion.name,
       sessionsPerWeek: parent.latestDraftVersion.sessionsPerWeek,
@@ -1295,6 +1369,7 @@ async function publishWeeklyPlanDraft(weeklyPlanParentId, payload) {
             defaultTargetRir: exercise.defaultTargetRir,
             defaultTargetRpe: exercise.defaultTargetRpe,
             intensificationMethod: exercise.intensificationMethod,
+            cardioPrescription: exercise.cardioPrescription,
             notes: exercise.notes,
             setTemplates: exercise.setTemplates.map((setTemplate) => ({
               id: setTemplate.id,
@@ -1316,6 +1391,11 @@ async function publishWeeklyPlanDraft(weeklyPlanParentId, payload) {
     },
     'publish'
   );
+  const exerciseById = await assertKnownExerciseIds(collectExerciseIds(publishDocument.workouts));
+  validateAndNormalizeCardioBlocks(publishDocument.workouts, exerciseById, {
+    mode: 'publish',
+    path: 'workouts',
+  });
 
   const response = await prisma.$transaction(async (tx) => {
     const now = new Date();

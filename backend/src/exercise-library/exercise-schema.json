@@ -1,7 +1,15 @@
 {
-    "requiredFields": [
+    "commonRequiredFields": [
       "exerciseId",
       "name",
+      "trainingType",
+      "keywords",
+      "overview",
+      "coachingCues",
+      "commonMistakes",
+      "status"
+    ],
+    "strengthRequiredFields": [
       "equipmentCategory",
       "equipmentNeeded",
       "movementPattern",
@@ -13,17 +21,37 @@
       "mechanicType",
       "unilateralType",
       "difficulty",
-      "trainingType",
-      "keywords",
-      "overview",
-      "coachingCues",
-      "commonMistakes",
       "isSupersetFriendly",
-      "fatigueScore",
-      "status"
+      "fatigueScore"
+    ],
+    "cardioRequiredFields": [
+      "equipmentCategory",
+      "equipmentNeeded",
+      "difficulty",
+      "cardioModality",
+      "cardioImpactLevel",
+      "cardioFatigueScore",
+      "lowerBodyFatigueBias"
     ],
     "optionalFields": [
-      "aliases"
+      "aliases",
+      "equipmentCategory",
+      "equipmentNeeded",
+      "movementPattern",
+      "bodyParts",
+      "muscleFocus",
+      "targetMuscles",
+      "secondaryMuscles",
+      "muscleActivation",
+      "mechanicType",
+      "unilateralType",
+      "difficulty",
+      "isSupersetFriendly",
+      "fatigueScore",
+      "cardioModality",
+      "cardioImpactLevel",
+      "cardioFatigueScore",
+      "lowerBodyFatigueBias"
     ],
     "fieldTypes": {
       "exerciseId": "string",
@@ -47,12 +75,18 @@
       "commonMistakes": "string[]",
       "isSupersetFriendly": "boolean",
       "fatigueScore": "integer",
+      "cardioModality": "enum:cardioModality",
+      "cardioImpactLevel": "enum:cardioImpactLevel",
+      "cardioFatigueScore": "integer",
+      "lowerBodyFatigueBias": "enum:lowerBodyFatigueBias",
       "status": "enum:status"
     },
     "rules": [
       "exerciseId must be unique",
       "exerciseId must start with exr_",
       "exerciseId must use snake_case",
+      "strength exercises must include the existing strength fields",
+      "cardio exercises must include equipmentCategory, equipmentNeeded, difficulty, cardioModality, cardioImpactLevel, cardioFatigueScore, lowerBodyFatigueBias",
       "equipmentNeeded must contain at least 1 item",
       "bodyParts must contain at least 1 item",
       "muscleFocus may be empty",

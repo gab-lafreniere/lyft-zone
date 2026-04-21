@@ -6,6 +6,15 @@ const BASE_DIR = __dirname;
 const defaultExercisesPath = path.join(BASE_DIR, 'exercises.json');
 const defaultSchemaPath = path.join(BASE_DIR, 'exercise-schema.json');
 const defaultEnumsPath = path.join(BASE_DIR, 'exercise-enums.json');
+const ALLOWED_CARDIO_EXERCISES = new Map([
+  ['exr_treadmill_walk', 'Treadmill Walk'],
+  ['exr_incline_treadmill_walk', 'Incline Treadmill Walk'],
+  ['exr_stationary_bike', 'Stationary Bike'],
+  ['exr_recumbent_bike', 'Recumbent Bike'],
+  ['exr_stair_climber', 'Stair Climber'],
+  ['exr_elliptical', 'Elliptical'],
+  ['exr_rowing_machine', 'Rowing Machine'],
+]);
 
 function readJson(filePath) {
   try {
@@ -209,9 +218,26 @@ function validateExercise(exercise, index, schema, enums, issues) {
     return;
   }
 
-  const requiredFields = schema.requiredFields || [];
+  const trainingType = typeof exercise.trainingType === 'string' ? exercise.trainingType : null;
+  const isCardio = trainingType === 'cardio';
+  const commonRequiredFields = schema.commonRequiredFields || [];
+  const strengthRequiredFields = schema.strengthRequiredFields || [];
+  const cardioRequiredFields = schema.cardioRequiredFields || [];
+  const legacyRequiredFields = schema.requiredFields || [];
+  const requiredFields = commonRequiredFields.length
+    ? [
+        ...commonRequiredFields,
+        ...(isCardio ? cardioRequiredFields : strengthRequiredFields),
+      ]
+    : legacyRequiredFields;
   const optionalFields = schema.optionalFields || [];
-  const allowedFields = new Set([...requiredFields, ...optionalFields]);
+  const allowedFields = new Set([
+    ...legacyRequiredFields,
+    ...commonRequiredFields,
+    ...strengthRequiredFields,
+    ...cardioRequiredFields,
+    ...optionalFields,
+  ]);
   const fieldTypes = schema.fieldTypes || {};
 
   for (const field of requiredFields) {
@@ -250,105 +276,141 @@ function validateExercise(exercise, index, schema, enums, issues) {
     }
   }
 
-  const arrayMinOneFields = ['equipmentNeeded', 'bodyParts', 'targetMuscles'];
-  for (const fieldName of arrayMinOneFields) {
-    if (fieldName in exercise) {
-      if (!Array.isArray(exercise[fieldName]) || exercise[fieldName].length < 1) {
-        addIssue(issues, 'error', scope, `${fieldName} doit contenir au moins 1 item.`, exercise);
-      }
-    }
-  }
-
-  if (Array.isArray(exercise.muscleFocus) && hasDuplicates(exercise.muscleFocus)) {
-    addIssue(
-      issues,
-      'error',
-      scope,
-      `muscleFocus contient des doublons: ${getDuplicates(exercise.muscleFocus).join(', ')}`,
-      exercise
-    );
-  }
-
-  if (Array.isArray(exercise.targetMuscles) && hasDuplicates(exercise.targetMuscles)) {
-    addIssue(
-      issues,
-      'error',
-      scope,
-      `targetMuscles contient des doublons: ${getDuplicates(exercise.targetMuscles).join(', ')}`,
-      exercise
-    );
-  }
-
-  if (Array.isArray(exercise.secondaryMuscles) && hasDuplicates(exercise.secondaryMuscles)) {
-    addIssue(
-      issues,
-      'error',
-      scope,
-      `secondaryMuscles contient des doublons: ${getDuplicates(exercise.secondaryMuscles).join(', ')}`,
-      exercise
-    );
-  }
-
-  if (Array.isArray(exercise.targetMuscles) && Array.isArray(exercise.secondaryMuscles)) {
-    const overlap = exercise.targetMuscles.filter((muscle) => exercise.secondaryMuscles.includes(muscle));
-    if (overlap.length > 0) {
+  if (isCardio) {
+    if (!ALLOWED_CARDIO_EXERCISES.has(exercise.exerciseId)) {
+      addIssue(issues, 'error', scope, 'exerciseId cardio hors scope Phase 1.', exercise);
+    } else if (ALLOWED_CARDIO_EXERCISES.get(exercise.exerciseId) !== exercise.name) {
       addIssue(
         issues,
         'error',
         scope,
-        `targetMuscles et secondaryMuscles ne doivent pas se chevaucher. Chevauchement: ${[...new Set(overlap)].join(', ')}`,
+        `name cardio invalide pour ${exercise.exerciseId}. Attendu: ${ALLOWED_CARDIO_EXERCISES.get(exercise.exerciseId)}`,
         exercise
       );
     }
   }
 
-  if (isPlainObject(exercise.muscleActivation)) {
-    const targetMuscles = Array.isArray(exercise.targetMuscles) ? exercise.targetMuscles : [];
-    const secondaryMuscles = Array.isArray(exercise.secondaryMuscles) ? exercise.secondaryMuscles : [];
-    const allowedActivationKeys = new Set([...targetMuscles, ...secondaryMuscles]);
+  if ('equipmentNeeded' in exercise) {
+    if (!Array.isArray(exercise.equipmentNeeded) || exercise.equipmentNeeded.length < 1) {
+      addIssue(issues, 'error', scope, 'equipmentNeeded doit contenir au moins 1 item.', exercise);
+    }
+  }
 
-    for (const key of Object.keys(exercise.muscleActivation)) {
-      if (!allowedActivationKeys.has(key)) {
-        addIssue(
-          issues,
-          'error',
-          scope,
-          `muscleActivation contient la clé ${key}, qui n'existe ni dans targetMuscles ni dans secondaryMuscles.`,
-          exercise
-        );
+  if (!isCardio) {
+    const arrayMinOneFields = ['bodyParts', 'targetMuscles'];
+    for (const fieldName of arrayMinOneFields) {
+      if (fieldName in exercise) {
+        if (!Array.isArray(exercise[fieldName]) || exercise[fieldName].length < 1) {
+          addIssue(issues, 'error', scope, `${fieldName} doit contenir au moins 1 item.`, exercise);
+        }
       }
     }
 
-    for (const targetMuscle of targetMuscles) {
-      if (!(targetMuscle in exercise.muscleActivation)) {
-        addIssue(
-          issues,
-          'error',
-          scope,
-          `Chaque targetMuscle doit exister dans muscleActivation. Manquant: ${targetMuscle}`,
-          exercise
-        );
-      }
-    }
-
-    const hasPrimaryActivation = targetMuscles.some(
-      (muscle) => exercise.muscleActivation[muscle] === 1.0
-    );
-
-    if (targetMuscles.length > 0 && !hasPrimaryActivation) {
+    if (Array.isArray(exercise.muscleFocus) && hasDuplicates(exercise.muscleFocus)) {
       addIssue(
         issues,
         'error',
         scope,
-        'Au moins un target muscle doit avoir une activation de 1.0.',
+        `muscleFocus contient des doublons: ${getDuplicates(exercise.muscleFocus).join(', ')}`,
         exercise
       );
     }
+
+    if (Array.isArray(exercise.targetMuscles) && hasDuplicates(exercise.targetMuscles)) {
+      addIssue(
+        issues,
+        'error',
+        scope,
+        `targetMuscles contient des doublons: ${getDuplicates(exercise.targetMuscles).join(', ')}`,
+        exercise
+      );
+    }
+
+    if (Array.isArray(exercise.secondaryMuscles) && hasDuplicates(exercise.secondaryMuscles)) {
+      addIssue(
+        issues,
+        'error',
+        scope,
+        `secondaryMuscles contient des doublons: ${getDuplicates(exercise.secondaryMuscles).join(', ')}`,
+        exercise
+      );
+    }
+
+    if (Array.isArray(exercise.targetMuscles) && Array.isArray(exercise.secondaryMuscles)) {
+      const overlap = exercise.targetMuscles.filter((muscle) => exercise.secondaryMuscles.includes(muscle));
+      if (overlap.length > 0) {
+        addIssue(
+          issues,
+          'error',
+          scope,
+          `targetMuscles et secondaryMuscles ne doivent pas se chevaucher. Chevauchement: ${[...new Set(overlap)].join(', ')}`,
+          exercise
+        );
+      }
+    }
+
+    if (isPlainObject(exercise.muscleActivation)) {
+      const targetMuscles = Array.isArray(exercise.targetMuscles) ? exercise.targetMuscles : [];
+      const secondaryMuscles = Array.isArray(exercise.secondaryMuscles) ? exercise.secondaryMuscles : [];
+      const allowedActivationKeys = new Set([...targetMuscles, ...secondaryMuscles]);
+
+      for (const key of Object.keys(exercise.muscleActivation)) {
+        if (!allowedActivationKeys.has(key)) {
+          addIssue(
+            issues,
+            'error',
+            scope,
+            `muscleActivation contient la clé ${key}, qui n'existe ni dans targetMuscles ni dans secondaryMuscles.`,
+            exercise
+          );
+        }
+      }
+
+      for (const targetMuscle of targetMuscles) {
+        if (!(targetMuscle in exercise.muscleActivation)) {
+          addIssue(
+            issues,
+            'error',
+            scope,
+            `Chaque targetMuscle doit exister dans muscleActivation. Manquant: ${targetMuscle}`,
+            exercise
+          );
+        }
+      }
+
+      const hasPrimaryActivation = targetMuscles.some(
+        (muscle) => exercise.muscleActivation[muscle] === 1.0
+      );
+
+      if (targetMuscles.length > 0 && !hasPrimaryActivation) {
+        addIssue(
+          issues,
+          'error',
+          scope,
+          'Au moins un target muscle doit avoir une activation de 1.0.',
+          exercise
+        );
+      }
+    }
+
+    if ('fatigueScore' in exercise) {
+      if (!Number.isInteger(exercise.fatigueScore) || exercise.fatigueScore < 1 || exercise.fatigueScore > 5) {
+        addIssue(issues, 'error', scope, 'fatigueScore doit être un entier entre 1 et 5.', exercise);
+      }
+    }
   }
 
-  if ('fatigueScore' in exercise) {
-    if (!Number.isInteger(exercise.fatigueScore) || exercise.fatigueScore < 1 || exercise.fatigueScore > 5) {
-      addIssue(issues, 'error', scope, 'fatigueScore doit être un entier entre 1 et 5.', exercise);
+  if (isCardio) {
+    if (
+      !Number.isInteger(exercise.cardioFatigueScore) ||
+      exercise.cardioFatigueScore < 1 ||
+      exercise.cardioFatigueScore > 5
+    ) {
+      addIssue(issues, 'error', scope, 'cardioFatigueScore doit être un entier entre 1 et 5.', exercise);
+    }
+
+    if (!['low', 'moderate', 'high'].includes(exercise.lowerBodyFatigueBias)) {
+      addIssue(issues, 'error', scope, 'lowerBodyFatigueBias doit être low, moderate ou high.', exercise);
     }
   }
 

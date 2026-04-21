@@ -49,6 +49,10 @@ function toExerciseRecord(exercise) {
     commonMistakes: exercise.commonMistakes,
     isSupersetFriendly: exercise.isSupersetFriendly,
     fatigueScore: exercise.fatigueScore,
+    cardioModality: exercise.cardioModality ?? null,
+    cardioImpactLevel: exercise.cardioImpactLevel ?? null,
+    cardioFatigueScore: exercise.cardioFatigueScore ?? null,
+    lowerBodyFatigueBias: exercise.lowerBodyFatigueBias ?? null,
     status: exercise.status,
   };
 }

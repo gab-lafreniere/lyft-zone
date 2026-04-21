@@ -8,6 +8,20 @@
     "difficulty": ["beginner", "intermediate", "advanced"],
   
     "trainingType": ["strength", "warmup", "mobility", "cardio", "plyometric"],
+
+    "cardioModality": [
+      "treadmill_walk",
+      "incline_treadmill_walk",
+      "stationary_bike",
+      "recumbent_bike",
+      "stair_climber",
+      "elliptical",
+      "rowing_machine"
+    ],
+
+    "cardioImpactLevel": ["low", "moderate"],
+
+    "lowerBodyFatigueBias": ["low", "moderate", "high"],
   
     "movementPattern": [
       "horizontal_push",
@@ -51,6 +65,7 @@
       "selectorized_machine",
       "plate_loaded_machine",
       "assisted_machine",
+      "cardio_machine",
       "other"
     ],
   
@@ -161,7 +176,14 @@
       "step_platform",
       "stability_ball",
   
-      "bodyweight"
+      "bodyweight",
+
+      "treadmill",
+      "stationary_bike",
+      "recumbent_bike",
+      "stair_climber",
+      "elliptical",
+      "rowing_machine"
     ],
   
     "bodyParts": [
