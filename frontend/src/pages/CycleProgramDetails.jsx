@@ -65,15 +65,34 @@ export default function CycleProgramDetails() {
     };
   }, [cycleId]);
 
+  const publishedWeeks = useMemo(() => {
+    // This page is outside the builder: builderPayload is usable only under
+    // the GET /api/cycles/:cycleId published-only response contract.
+    const weeks = details?.builderPayload?.weeks;
+    return Array.isArray(weeks) ? weeks : [];
+  }, [details?.builderPayload?.weeks]);
+
+  const displayedWeeks = useMemo(
+    () =>
+      publishedWeeks.length > 0
+        ? publishedWeeks
+        : Array.from({
+          length: Math.max(0, Number(details?.cycle?.durationWeeks || 0)),
+        }).map((_, index) => ({
+          id: null,
+          weekNumber: index + 1,
+        })),
+    [details?.cycle?.durationWeeks, publishedWeeks]
+  );
+
   const summary = useMemo(() => {
-    const weeks = details?.builderPayload?.weeks || [];
-    const firstWeek = weeks[0] || null;
+    const firstWeek = publishedWeeks[0] || null;
 
     return {
-      weeks: weeks.length,
+      weeks: Number(details?.cycle?.durationWeeks || 0) || publishedWeeks.length,
       workoutsPerWeek: firstWeek?.workouts?.length || 0,
     };
-  }, [details]);
+  }, [details?.cycle?.durationWeeks, publishedWeeks]);
 
   const handleEdit = async () => {
     setIsOpeningDraft(true);
@@ -137,10 +156,10 @@ export default function CycleProgramDetails() {
               <p className="text-[10px] font-bold uppercase tracking-widest text-primary">
                 {cycle.temporalStatus}
               </p>
-              <h2 className="mt-1 text-2xl font-bold">{details.builderPayload?.programName || cycle.name}</h2>
+              <h2 className="mt-1 text-2xl font-bold">{cycle.name}</h2>
             </div>
             <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-600">
-              {details.draftPlanId ? "draft available" : "published"}
+              {details.draftPlanId ? "unpublished draft exists" : "published"}
             </span>
           </div>
 
@@ -220,7 +239,7 @@ export default function CycleProgramDetails() {
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500">Weeks</h3>
           <div className="mt-4 grid grid-cols-4 gap-2">
-            {(details.builderPayload?.weeks || []).map((week) => (
+            {displayedWeeks.map((week) => (
               <div
                 key={week.id || week.weekNumber}
                 className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-center text-xs font-semibold text-slate-600"

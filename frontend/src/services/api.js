@@ -322,6 +322,8 @@ export async function getProgramOverviewV2() {
 }
 
 function normalizeCycleLibraryItem(item) {
+  // This only reshapes published-only overview cards for the library UI.
+  // Do not merge draft builder payloads with canonical cycle fields here.
   return {
     id: item?.cycleId || item?.id,
     name: item?.name || 'Untitled cycle',
@@ -368,6 +370,8 @@ export async function getCycleDetails(cycleId) {
   return readJsonResponse(response);
 }
 
+// Draft/published separation is backend-owned. These builder wrappers return
+// responses as-is; screens decide which backend field is authoritative.
 export async function openOrCreateCycleEditDraft(cycleId, options = {}) {
   const userId = await ensureCurrentUserId();
   const response = await fetch(`${BACKEND_URL}/api/cycles/${cycleId}/edit-draft`, {
@@ -432,6 +436,7 @@ export async function publishCycleDraft(cycleId, options = {}) {
 }
 
 export async function rescheduleUpcomingCycle(cycleId, payload) {
+  // Deprecated for timeline truth: UI must use draft timeline save + publish.
   const userId = await ensureCurrentUserId();
   const response = await fetch(`${BACKEND_URL}/api/cycles/${cycleId}/reschedule`, {
     method: 'POST',

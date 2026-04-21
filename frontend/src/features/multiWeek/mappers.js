@@ -217,6 +217,7 @@ export function mapCycleBuilderPayload(response) {
         })
       ),
       draftState: response.draftState || null,
+      draftTimeline: response.draftTimeline || null,
     },
     programDraft,
     cycleDraft: programDraft,

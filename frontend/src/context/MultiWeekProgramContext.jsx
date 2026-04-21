@@ -205,6 +205,7 @@ function createInitialDraftMetadata() {
     saveState: "idle",
     lastPersistedSignature: "",
     draftState: null,
+    draftTimeline: null,
     allowCrossDayDraft: false,
     lastSaveErrorMessage: null,
     lastSaveErrorCode: null,

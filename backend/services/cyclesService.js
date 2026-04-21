@@ -2159,7 +2159,7 @@ async function createCycleFromWeeklyPlan(payload) {
       },
     });
 
-    const publishedPlan = await tx.plan.create({
+    const basePublishedPlan = await tx.plan.create({
       data: {
         trainingCycleId: cycle.id,
         name: document.name,
@@ -2170,12 +2170,10 @@ async function createCycleFromWeeklyPlan(payload) {
         endDate: parseDateInput(endDateKey),
         durationWeeks,
         publishedAt: new Date(),
-        weeks: {
-          create: buildPlanCreateWeeksInput(document.weeks),
-        },
       },
-      include: fullPlanInclude,
     });
+
+    const publishedPlan = await appendPlanWeeks(tx, basePublishedPlan.id, document.weeks);
 
     return { cycle, publishedPlan };
   });

@@ -56,6 +56,9 @@ Le produit repose sur deux niveaux distincts:
 1. Weekly Plan (template hebdomadaire)
 2. Training Cycle (multi-week)
 
+- Dans un cycle, la structure versionnée est portée par les versions de Plan (draft / published)
+- Ces versions de Plan contiennent la structure du programme et sa timeline draft
+
 --------------------------------------------------
 WEEKLY PLAN (TEMPLATE)
 --------------------------------------------------
@@ -118,8 +121,38 @@ Règles:
 
 Draft et édition:
 - Un cycle peut être édité via un draft
-- Le draft permet de modifier les semaines futures
+- Le draft permet de modifier:
+  - la structure des semaines
+  - la timeline (durée et dates)
 - Les modifications sont limitées pour préserver l’historique réel
+
+Publish:
+
+- Le publish est le seul moment où:
+  - la structure du cycle
+  - la timeline (dates + durée)
+  deviennent canoniques
+
+- Le publish:
+  - met à jour TrainingCycle
+  - déclenche la régénération des scheduled sessions
+
+Règle fondamentale de timeline:
+
+- La timeline d’un cycle existe en deux versions distinctes:
+  1. Timeline draft (stockée sur Plan)
+  2. Timeline canonical published (stockée sur TrainingCycle)
+
+- Toute modification de timeline via le builder:
+  - modifie uniquement la timeline draft
+  - ne modifie jamais TrainingCycle
+
+- La timeline canonical (TrainingCycle):
+  - ne peut être modifiée qu’au moment du publish
+  - représente la seule vérité globale visible hors builder
+
+- Conséquence produit:
+  - Les modifications de timeline ne sont jamais visibles globalement tant qu’elles ne sont pas publiées
 
 --------------------------------------------------
 RELATION ENTRE PLAN ET CYCLE
@@ -185,6 +218,10 @@ Planification:
 - Weekly plan
 - Training cycle
 - Scheduled sessions
+
+- Les scheduled sessions:
+  - ne sont jamais modifiées lors d’un save draft
+  - sont uniquement mises à jour après un publish
 
 Exécution:
 - Séances réellement effectuées par l’utilisateur
