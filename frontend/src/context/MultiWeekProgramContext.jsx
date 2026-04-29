@@ -13,10 +13,12 @@ import {
 } from "../features/multiWeek/occurrence";
 import { mapCycleBuilderPayload, mapMultiWeekDraftToApi } from "../features/multiWeek/mappers";
 import { openOrCreateCycleEditDraft, updateCycleDraft } from "../services/api";
+import { attachBlockUiKeys, createBlockUiKey } from "../utils/blockUiKeys";
 import { getDuplicateWorkoutName } from "../utils/duplicateWorkoutName";
 
 const MultiWeekProgramContext = createContext(null);
 export const MAX_BLOCK_SET_COUNT = 10;
+const DEFAULT_CARDIO_DURATION_MINUTES = 20;
 const DAY_OF_WEEK = [
   "MONDAY",
   "TUESDAY",
@@ -105,6 +107,7 @@ function normalizeSupersetBlock(block) {
 function createDefaultSingleBlock() {
   return {
     id: createId("block"),
+    uiKey: createBlockUiKey(),
     type: "single",
     exercise: "",
     exerciseId: null,
@@ -133,6 +136,7 @@ function createEmptySupersetExercise(label, setCount = 2) {
 function createDefaultSupersetBlock() {
   return normalizeSupersetBlock({
     id: createId("block"),
+    uiKey: createBlockUiKey(),
     type: "superset",
     sets: 2,
     rest: "120s",
@@ -141,6 +145,39 @@ function createDefaultSupersetBlock() {
       createEmptySupersetExercise("A2", 2),
     ],
   });
+}
+
+function createSingleBlockFromExercise(exercise) {
+  return {
+    id: createId("block"),
+    uiKey: createBlockUiKey(),
+    type: "single",
+    exercise: exercise.name,
+    exerciseId: exercise.exerciseId,
+    bodyParts: Array.isArray(exercise.bodyParts) ? exercise.bodyParts : [],
+    muscleFocus: Array.isArray(exercise.muscleFocus) ? exercise.muscleFocus : [],
+    tempo: "3010",
+    rest: "120s",
+    sets: createSetRows(2, createSingleSetRow),
+    notes: "",
+  };
+}
+
+function createCardioBlockFromExercise(exercise) {
+  return {
+    id: createId("block"),
+    uiKey: createBlockUiKey(),
+    type: "cardio",
+    exerciseId: exercise.exerciseId,
+    exercise,
+    cardioPrescription: {
+      durationMinutes: DEFAULT_CARDIO_DURATION_MINUTES,
+      heartRateTargetMode: undefined,
+      heartRateTargetValue: null,
+      machineSettings: [],
+      notes: "",
+    },
+  };
 }
 
 function createWorkout(name, withTemplateBlocks = true) {
@@ -161,6 +198,7 @@ function cloneWorkoutForDuplicate(workout, name = workout.name) {
     blocks: (workout.blocks || []).map((block) => ({
       ...block,
       id: createId("block"),
+      uiKey: createBlockUiKey(),
       exercises:
         block.type === "superset"
           ? (block.exercises || []).map((exercise) => ({
@@ -175,6 +213,45 @@ function cloneWorkoutForDuplicate(workout, name = workout.name) {
         : block.sets,
     })),
   };
+}
+
+function moveArrayItem(items, fromIndex, toIndex) {
+  if (
+    !Array.isArray(items) ||
+    fromIndex === toIndex ||
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= items.length ||
+    toIndex >= items.length
+  ) {
+    return items;
+  }
+
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
+}
+
+function attachUiKeysToWeeks(nextWeeks = [], previousWeeks = []) {
+  const previousWorkoutsById = new Map();
+
+  previousWeeks.forEach((week) => {
+    (week.workouts || []).forEach((workout) => {
+      previousWorkoutsById.set(workout.id, workout);
+    });
+  });
+
+  return nextWeeks.map((week) => ({
+    ...week,
+    workouts: (week.workouts || []).map((workout) => ({
+      ...workout,
+      blocks: attachBlockUiKeys(
+        workout.blocks || [],
+        previousWorkoutsById.get(workout.id)?.blocks || []
+      ),
+    })),
+  }));
 }
 
 function getDayIndex(day) {
@@ -319,6 +396,10 @@ export function MultiWeekProgramProvider({ children }) {
     const nextState = mapCycleBuilderPayload(response);
     setMultiWeekDraft((prev) => ({
       ...nextState.programDraft,
+      weeks: attachUiKeysToWeeks(
+        nextState.programDraft.weeks || [],
+        prev.weeks || []
+      ),
       selectedWeek: resolvePreservedSelectedWeek(prev.selectedWeek, nextState.programDraft),
     }));
     setDraftMetadata({
@@ -474,6 +555,10 @@ export function MultiWeekProgramProvider({ children }) {
       const nextState = mapCycleBuilderPayload(response);
       setMultiWeekDraft((prev) => ({
         ...nextState.programDraft,
+        weeks: attachUiKeysToWeeks(
+          nextState.programDraft.weeks || [],
+          prev.weeks || []
+        ),
         selectedWeek: resolvePreservedSelectedWeek(prev.selectedWeek, nextState.programDraft),
       }));
       setDraftMetadata((prev) => ({
@@ -747,6 +832,48 @@ export function MultiWeekProgramProvider({ children }) {
               }
               : workout
           ),
+        };
+      })
+    );
+  }, []);
+
+  const reorderBlocks = useCallback((workoutId, fromIndex, toIndex) => {
+    setMultiWeekDraft((prev) =>
+      updateSelectedWeekDraft(prev, (week) => {
+        const targetWorkout = week.workouts.find((workout) => workout.id === workoutId);
+        if (
+          isLockedActiveCycleWorkoutOccurrence({
+            draft: prev,
+            metadata: draftMetadataRef.current,
+            weekNumber: week.weekNumber,
+            workout: targetWorkout,
+          })
+        ) {
+          return week;
+        }
+
+        return {
+          ...week,
+          workouts: week.workouts.map((workout) => {
+            if (workout.id !== workoutId) {
+              return workout;
+            }
+
+            const nextBlocks = moveArrayItem(
+              workout.blocks || [],
+              Number(fromIndex),
+              Number(toIndex)
+            );
+
+            if (nextBlocks === workout.blocks) {
+              return workout;
+            }
+
+            return {
+              ...workout,
+              blocks: nextBlocks,
+            };
+          }),
         };
       })
     );
@@ -1272,18 +1399,10 @@ export function MultiWeekProgramProvider({ children }) {
       return;
     }
 
-    const block = {
-      id: createId("block"),
-      type: "single",
-      exercise: exercise.name,
-      exerciseId: exercise.exerciseId,
-      bodyParts: Array.isArray(exercise.bodyParts) ? exercise.bodyParts : [],
-      muscleFocus: Array.isArray(exercise.muscleFocus) ? exercise.muscleFocus : [],
-      tempo: "3010",
-      rest: "120s",
-      sets: createSetRows(2, createSingleSetRow),
-      notes: "",
-    };
+    const block =
+      String(exercise.trainingType || "").toLowerCase() === "cardio"
+        ? createCardioBlockFromExercise(exercise)
+        : createSingleBlockFromExercise(exercise);
 
     setMultiWeekDraft((prev) =>
       updateSelectedWeekDraft(prev, (week) => {
@@ -1342,6 +1461,7 @@ export function MultiWeekProgramProvider({ children }) {
 
                 return {
                   id: block.id,
+                  uiKey: block.uiKey || createBlockUiKey(),
                   type: "superset",
                   sets: Math.max(1, block.sets.length || 1),
                   rest: block.rest,
@@ -1457,6 +1577,7 @@ export function MultiWeekProgramProvider({ children }) {
       duplicateWorkouts,
       removeWorkouts,
       updateBlock,
+      reorderBlocks,
       updateSupersetExercise,
       updateSupersetSetCount,
       removeBlock,
@@ -1487,6 +1608,7 @@ export function MultiWeekProgramProvider({ children }) {
       duplicateWorkouts,
       removeWorkouts,
       updateBlock,
+      reorderBlocks,
       updateSupersetExercise,
       updateSupersetSetCount,
       removeBlock,

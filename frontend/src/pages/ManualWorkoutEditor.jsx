@@ -1,4 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  closestCenter,
+  DndContext,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { MAX_BLOCK_SET_COUNT } from "../context/ManualProgramContext";
 import { useEditableProgram } from "../context/EditableProgramContext";
@@ -10,6 +24,7 @@ import {
 import { getCycleWorkoutEditorPath } from "../features/multiWeek/routes";
 import { resolveBackTarget } from "../features/weeklyPlans/navigation";
 import { fetchExercises } from "../services/api";
+import { resolveCardioModality } from "../utils/cardioModality";
 import { computeWorkoutMetrics } from "../utils/workoutMetrics";
 
 function normalizeTempoValue(value) {
@@ -255,6 +270,156 @@ function getRirButtonClasses(value) {
   }
 }
 
+const CARDIO_HEART_RATE_MODE_OPTIONS = [
+  { value: "none", label: "None" },
+  { value: "avg_bpm", label: "BPM" },
+  { value: "zone", label: "Zone" },
+];
+
+function getBlockUiKey(workoutId, block, blockIndex) {
+  const normalizedUiKey = String(block?.uiKey || "").trim();
+
+  if (normalizedUiKey) {
+    return normalizedUiKey;
+  }
+
+  return `${String(workoutId || "").trim() || "workout"}:index:${blockIndex}`;
+}
+
+function SortableBlock({ sortableId, disabled = false, children }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: sortableId,
+    disabled,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return children({
+    setNodeRef,
+    style,
+    isDragging,
+    handleAttributes: attributes,
+    handleListeners: listeners,
+    setHandleRef: setActivatorNodeRef,
+  });
+}
+
+const CARDIO_MACHINE_SETTINGS_BY_MODALITY = {
+  treadmill_walk: [
+    { value: "speed", label: "Speed" },
+    { value: "incline", label: "Incline" },
+  ],
+  incline_treadmill_walk: [
+    { value: "speed", label: "Speed" },
+    { value: "incline", label: "Incline" },
+  ],
+  stationary_bike: [{ value: "resistance", label: "Resistance" }],
+  recumbent_bike: [{ value: "resistance", label: "Resistance" }],
+  stair_climber: [{ value: "level", label: "Level" }],
+  elliptical: [{ value: "resistance", label: "Resistance" }],
+  rowing_machine: [{ value: "pace", label: "Pace" }],
+};
+
+function getExerciseTrainingType(exercise) {
+  return String(exercise?.trainingType || "").trim().toLowerCase();
+}
+
+function getCardioModality(block) {
+  return String(
+    block?.exercise?.cardioModality ||
+      block?.cardioModality ||
+      resolveCardioModality(block?.exerciseId || block?.exercise?.exerciseId) ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function getCardioMachineSettingOptions(block, currentKey = "") {
+  const modalityOptions =
+    CARDIO_MACHINE_SETTINGS_BY_MODALITY[getCardioModality(block)] || [];
+  const normalizedCurrentKey = String(currentKey || "").trim().toLowerCase();
+
+  if (
+    modalityOptions.length === 0 &&
+    normalizedCurrentKey &&
+    !modalityOptions.some((option) => option.value === normalizedCurrentKey)
+  ) {
+    return [
+      ...modalityOptions,
+      { value: normalizedCurrentKey, label: normalizedCurrentKey },
+    ];
+  }
+
+  return modalityOptions;
+}
+
+function getCardioMachineSettingLabel(block, key = "") {
+  return (
+    getCardioMachineSettingOptions(block, key).find((option) => option.value === key)
+      ?.label || key
+  );
+}
+
+function getUsedCardioMachineSettingKeys(machineSettings = []) {
+  return new Set(
+    machineSettings
+      .map((setting) => String(setting?.key || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function getAvailableCardioMachineSettingOptions(block, machineSettings = []) {
+  const usedKeys = getUsedCardioMachineSettingKeys(machineSettings);
+
+  return getCardioMachineSettingOptions(block).filter(
+    (option) => !usedKeys.has(option.value)
+  );
+}
+
+function getCardioBlockExerciseName(block) {
+  if (block?.exercise && typeof block.exercise === "object") {
+    return block.exercise.name || "Cardio";
+  }
+
+  return block?.exercise || "Cardio";
+}
+
+function getCardioPrescription(block) {
+  const prescription = block?.cardioPrescription || {};
+
+  return {
+    durationMinutes: prescription.durationMinutes ?? "",
+    heartRateTargetMode: prescription.heartRateTargetMode,
+    heartRateTargetValue: prescription.heartRateTargetValue ?? "",
+    machineSettings: Array.isArray(prescription.machineSettings)
+      ? prescription.machineSettings.slice(0, 2).map((setting) => ({
+          key: String(setting?.key || "").trim().toLowerCase(),
+          value: String(setting?.value ?? ""),
+        }))
+      : [],
+    notes: prescription.notes ?? "",
+  };
+}
+
+function clampCardioNumber(value, min, max, fallback) {
+  const parsed = Number(value);
+  const safeValue = Number.isFinite(parsed) ? parsed : fallback;
+
+  return Math.min(max, Math.max(min, safeValue));
+}
+
 function formatMinutes(value) {
   return `${value}m`;
 }
@@ -307,6 +472,7 @@ export default function ManualWorkoutEditor() {
   const [isLoadingExercises, setIsLoadingExercises] = useState(false);
   const [exerciseError, setExerciseError] = useState("");
   const [activeSearchTarget, setActiveSearchTarget] = useState(null);
+  const [activeSortableId, setActiveSortableId] = useState(null);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -320,6 +486,7 @@ export default function ManualWorkoutEditor() {
     setSelectedWeek,
     updateWorkoutName,
     updateBlock,
+    reorderBlocks,
     updateSupersetExercise,
     updateSupersetSetCount,
     removeBlock,
@@ -331,6 +498,14 @@ export default function ManualWorkoutEditor() {
     assignSupersetExercise,
     hasIncompleteSupersets,
   } = useEditableProgram();
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 180, tolerance: 8 },
+    })
+  );
   const parsedWeekNumber = Number(weekNumber);
   const parsedOrderIndex = Number(orderIndex);
   const hasCanonicalMultiWeekRoute =
@@ -401,6 +576,15 @@ export default function ManualWorkoutEditor() {
       programDraft.workouts[0]
     );
   }, [multiWeekWorkoutMatch, programDraft.isMultiWeek, programDraft.workouts, workoutId]);
+  const sortableBlockIds = useMemo(() => {
+    if (!workout) {
+      return [];
+    }
+
+    return (workout.blocks || []).map((block, blockIndex) =>
+      getBlockUiKey(workout.id, block, blockIndex)
+    );
+  }, [workout]);
 
   useEffect(() => {
     if (!programDraft.isMultiWeek || hasCanonicalMultiWeekRoute || !multiWeekWorkoutMatch?.workout) {
@@ -586,6 +770,15 @@ export default function ManualWorkoutEditor() {
   const rankedExerciseResults = useMemo(
     () => rankExercises(exerciseResults, debouncedSearchQuery),
     [exerciseResults, debouncedSearchQuery]
+  );
+  const visibleExerciseResults = useMemo(
+    () =>
+      activeSearchTarget
+        ? rankedExerciseResults.filter(
+            (exercise) => getExerciseTrainingType(exercise) !== "cardio"
+          )
+        : rankedExerciseResults,
+    [activeSearchTarget, rankedExerciseResults]
   );
   const workoutMetrics = useMemo(() => computeWorkoutMetrics(workout), [workout]);
   const visibleMuscleDistribution = useMemo(
@@ -805,12 +998,14 @@ export default function ManualWorkoutEditor() {
       return;
     }
 
+    const lastBlockIndex = workout.blocks.length - 1;
     const lastBlock = workout.blocks[workout.blocks.length - 1];
-    setOpenBlockId(lastBlock.id);
+    const lastBlockUiKey = getBlockUiKey(workout.id, lastBlock, lastBlockIndex);
+    setOpenBlockId(lastBlockUiKey);
 
     const frameId = window.requestAnimationFrame(() => {
       document
-        .querySelector(`[data-block-id="${lastBlock.id}"]`)
+        .querySelector(`[data-block-id="${lastBlockUiKey}"]`)
         ?.scrollIntoView({ behavior: "smooth", block: "start" });
       setPendingScrollToLastBlock(false);
     });
@@ -842,15 +1037,59 @@ export default function ManualWorkoutEditor() {
     navigate("/program/manual-builder");
   };
 
-  const toggleBlock = (blockId) => {
-    setOpenBlockId((prev) => (prev === blockId ? null : blockId));
+  const toggleBlock = (blockUiKey) => {
+    setOpenBlockId((prev) => (prev === blockUiKey ? null : blockUiKey));
   };
 
-  const toggleSupersetExercise = (blockId, exerciseIndex) => {
+  const toggleSupersetExercise = (blockUiKey, exerciseIndex) => {
     setOpenSupersetExerciseByBlock((prev) => ({
       ...prev,
-      [blockId]: prev[blockId] === exerciseIndex ? null : exerciseIndex,
+      [blockUiKey]: prev[blockUiKey] === exerciseIndex ? null : exerciseIndex,
     }));
+  };
+
+  const handleBlockDragStart = (event) => {
+    const nextActiveSortableId = String(event.active?.id || "").trim();
+
+    if (!nextActiveSortableId) {
+      return;
+    }
+
+    setActiveSortableId(nextActiveSortableId);
+    setOpenBlockId(null);
+    setOpenSupersetExerciseByBlock((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, nextActiveSortableId)) {
+        return prev;
+      }
+
+      const nextState = { ...prev };
+      delete nextState[nextActiveSortableId];
+      return nextState;
+    });
+  };
+
+  const handleBlockDragCancel = () => {
+    setActiveSortableId(null);
+  };
+
+  const handleBlockDragEnd = (event) => {
+    const activeId = String(event.active?.id || "").trim();
+    const overId = String(event.over?.id || "").trim();
+
+    setActiveSortableId(null);
+
+    if (!activeId || !overId || activeId === overId || !workout) {
+      return;
+    }
+
+    const fromIndex = sortableBlockIds.findIndex((sortableId) => sortableId === activeId);
+    const toIndex = sortableBlockIds.findIndex((sortableId) => sortableId === overId);
+
+    if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
+      return;
+    }
+
+    reorderBlocks(workout.id, fromIndex, toIndex);
   };
 
   const scrollToTop = () => {
@@ -1045,6 +1284,85 @@ export default function ManualWorkoutEditor() {
       delete nextDrafts[fieldKey];
       return nextDrafts;
     });
+  };
+
+  const updateCardioPrescription = (block, updates) => {
+    const currentPrescription = getCardioPrescription(block);
+    updateBlock(workout.id, block.id, {
+      cardioPrescription: {
+        ...currentPrescription,
+        ...updates,
+      },
+    });
+  };
+
+  const updateCardioMachineSetting = (block, settingIndex, updates) => {
+    const currentPrescription = getCardioPrescription(block);
+    const nextSettings = currentPrescription.machineSettings.map((setting, index) =>
+      index === settingIndex ? { ...setting, ...updates } : setting
+    );
+
+    updateCardioPrescription(block, { machineSettings: nextSettings });
+  };
+
+  const addCardioMachineSetting = (block) => {
+    const currentPrescription = getCardioPrescription(block);
+    const nextOption = getAvailableCardioMachineSettingOptions(
+      block,
+      currentPrescription.machineSettings
+    )[0];
+
+    if (currentPrescription.machineSettings.length >= 2 || !nextOption) {
+      return;
+    }
+
+    updateCardioPrescription(block, {
+      machineSettings: [
+        ...currentPrescription.machineSettings,
+        { key: nextOption.value, value: "" },
+      ],
+    });
+  };
+
+  const removeCardioMachineSetting = (block, settingIndex) => {
+    const currentPrescription = getCardioPrescription(block);
+    updateCardioPrescription(block, {
+      machineSettings: currentPrescription.machineSettings.filter(
+        (_, index) => index !== settingIndex
+      ),
+    });
+  };
+
+  const updateCardioHeartRateMode = (block, mode) => {
+    updateCardioPrescription(block, {
+      heartRateTargetMode: mode === "none" ? undefined : mode,
+      heartRateTargetValue:
+        mode === "avg_bpm" ? 140 : mode === "zone" ? 2 : null,
+    });
+  };
+
+  const stepCardioBpm = (block, direction) => {
+    const currentPrescription = getCardioPrescription(block);
+    const nextValue = clampCardioNumber(
+      (Number(currentPrescription.heartRateTargetValue) || 140) + direction * 10,
+      80,
+      200,
+      140
+    );
+
+    updateCardioPrescription(block, { heartRateTargetValue: nextValue });
+  };
+
+  const stepCardioZone = (block, direction) => {
+    const currentPrescription = getCardioPrescription(block);
+    const nextValue = clampCardioNumber(
+      (Number(currentPrescription.heartRateTargetValue) || 2) + direction,
+      1,
+      5,
+      2
+    );
+
+    updateCardioPrescription(block, { heartRateTargetValue: nextValue });
   };
 
   return (
@@ -1249,13 +1567,13 @@ export default function ManualWorkoutEditor() {
                     <p className="px-2 py-3 text-sm text-red-500">{exerciseError}</p>
                   )}
 
-                  {!isLoadingExercises && !exerciseError && rankedExerciseResults.length === 0 && (
+                  {!isLoadingExercises && !exerciseError && visibleExerciseResults.length === 0 && (
                     <p className="px-2 py-3 text-sm text-slate-500">No exercises found.</p>
                   )}
 
                   {!isLoadingExercises &&
                     !exerciseError &&
-                    rankedExerciseResults.map((exercise) => (
+                    visibleExerciseResults.map((exercise) => (
                       <button
                         key={exercise.exerciseId}
                         type="button"
@@ -1362,26 +1680,56 @@ export default function ManualWorkoutEditor() {
               </p>
             </div>
           )}
-          {workout.blocks.map((block) => {
-            const isCollapsed = openBlockId !== block.id;
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleBlockDragStart}
+            onDragCancel={handleBlockDragCancel}
+            onDragEnd={handleBlockDragEnd}
+          >
+            <SortableContext
+              items={sortableBlockIds}
+              strategy={verticalListSortingStrategy}
+            >
+              {workout.blocks.map((block, blockIndex) => {
+                const blockUiKey = getBlockUiKey(workout.id, block, blockIndex);
+                const isCollapsed = openBlockId !== blockUiKey;
+                const isActiveDraggedBlock = activeSortableId === blockUiKey;
 
-            if (block.type === "superset") {
-              const isIncompleteSuperset = block.exercises.some(
-                (exercise) => !String(exercise.exerciseId || "").trim()
-              );
+                if (block.type === "superset") {
+                  const isIncompleteSuperset = block.exercises.some(
+                    (exercise) => !String(exercise.exerciseId || "").trim()
+                  );
 
-              return (
-                <section
-                  key={block.id}
-                  data-superset-block={block.id}
-                  data-block-id={block.id}
-                  className={[
-                    "overflow-hidden rounded-xl border-2 shadow-sm",
-                    isIncompleteSuperset
-                      ? "border-amber-300 bg-amber-50/70"
-                      : "border-primary/20 bg-primary/5",
-                  ].join(" ")}
-                >
+                  return (
+                    <SortableBlock
+                      key={blockUiKey}
+                      sortableId={blockUiKey}
+                      disabled={isPastWorkoutOccurrenceLocked}
+                    >
+                      {({
+                        setNodeRef,
+                        style,
+                        isDragging,
+                        handleAttributes,
+                        handleListeners,
+                        setHandleRef,
+                      }) => (
+                        <section
+                          ref={setNodeRef}
+                          style={style}
+                          data-superset-block={block.id}
+                          data-block-id={blockUiKey}
+                          className={[
+                            "overflow-hidden rounded-xl border-2 shadow-sm",
+                            isIncompleteSuperset
+                              ? "border-amber-300 bg-amber-50/70"
+                              : "border-primary/20 bg-primary/5",
+                            isDragging || isActiveDraggedBlock
+                              ? "opacity-80 shadow-xl ring-1 ring-slate-200"
+                              : "",
+                          ].join(" ")}
+                        >
                   <div
                     className={[
                       "flex items-center justify-between gap-2 border-b p-4",
@@ -1391,9 +1739,19 @@ export default function ManualWorkoutEditor() {
                     ].join(" ")}
                   >
                     <div className="flex items-center gap-3 select-none">
-                      <span className="material-symbols-outlined cursor-grab text-primary/60">
-                        drag_indicator
-                      </span>
+                      <button
+                        type="button"
+                        ref={setHandleRef}
+                        disabled={isPastWorkoutOccurrenceLocked}
+                        {...handleAttributes}
+                        {...handleListeners}
+                        className="touch-none text-primary/60 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                        aria-label="Reorder block"
+                      >
+                        <span className="material-symbols-outlined cursor-grab">
+                          drag_indicator
+                        </span>
+                      </button>
                       <div className="flex flex-col">
                         <h3 className="font-bold leading-tight text-slate-900">
                           Superset Block
@@ -1409,7 +1767,7 @@ export default function ManualWorkoutEditor() {
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => toggleBlock(block.id)}
+                        onClick={() => toggleBlock(blockUiKey)}
                         className="text-slate-400 transition-colors hover:text-primary"
                       >
                         <span className="material-symbols-outlined">
@@ -1433,7 +1791,7 @@ export default function ManualWorkoutEditor() {
                       {block.exercises.map((exercise, exerciseIndex) => {
                         const exerciseKey = `${block.id}-${exerciseIndex}`;
                         const exerciseCollapsed =
-                          openSupersetExerciseByBlock[block.id] !== exerciseIndex;
+                          openSupersetExerciseByBlock[blockUiKey] !== exerciseIndex;
 
                         return (
                           <div key={exerciseKey}>
@@ -1471,7 +1829,7 @@ export default function ManualWorkoutEditor() {
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    toggleSupersetExercise(block.id, exerciseIndex)
+                                    toggleSupersetExercise(blockUiKey, exerciseIndex)
                                   }
                                   className="text-slate-300 hover:text-slate-500"
                                 >
@@ -1731,24 +2089,405 @@ export default function ManualWorkoutEditor() {
                       </div>
                     </div>
                   )}
-                </section>
-              );
-            }
+                        </section>
+                      )}
+                    </SortableBlock>
+                  );
+                }
 
-            const canRemoveSingleSet = block.sets.length > 1;
-            const canAddSingleSet = block.sets.length < MAX_BLOCK_SET_COUNT;
+                if (block.type === "cardio") {
+                  const cardioPrescription = getCardioPrescription(block);
+                  const heartRateMode =
+                    cardioPrescription.heartRateTargetMode || "none";
+                  const showHeartRateValue = heartRateMode !== "none";
+                  const usedMachineSettingKeys = getUsedCardioMachineSettingKeys(
+                    cardioPrescription.machineSettings
+                  );
+                  const availableMachineSettingOptions = getAvailableCardioMachineSettingOptions(
+                    block,
+                    cardioPrescription.machineSettings
+                  );
+                  const canAddMachineSetting =
+                    cardioPrescription.machineSettings.length < 2 &&
+                    availableMachineSettingOptions.length > 0;
 
-            return (
-              <section
-                key={block.id}
-                data-block-id={block.id}
-                className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
-              >
+                  return (
+                    <SortableBlock
+                      key={blockUiKey}
+                      sortableId={blockUiKey}
+                      disabled={isPastWorkoutOccurrenceLocked}
+                    >
+                      {({
+                        setNodeRef,
+                        style,
+                        isDragging,
+                        handleAttributes,
+                        handleListeners,
+                        setHandleRef,
+                      }) => (
+                        <section
+                          ref={setNodeRef}
+                          style={style}
+                          data-block-id={blockUiKey}
+                          className={[
+                            "overflow-hidden rounded-xl border border-emerald-200 bg-white shadow-sm",
+                            isDragging || isActiveDraggedBlock
+                              ? "opacity-80 shadow-xl ring-1 ring-emerald-200"
+                              : "",
+                          ].join(" ")}
+                        >
+                  <div className="flex items-center justify-between gap-2 border-b border-emerald-100 bg-emerald-50/70 p-4">
+                    <div className="flex items-center gap-3 select-none">
+                      <button
+                        type="button"
+                        ref={setHandleRef}
+                        disabled={isPastWorkoutOccurrenceLocked}
+                        {...handleAttributes}
+                        {...handleListeners}
+                        className="touch-none text-emerald-500 transition-colors hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                        aria-label="Reorder block"
+                      >
+                        <span className="material-symbols-outlined cursor-grab">
+                          drag_indicator
+                        </span>
+                      </button>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">
+                          Cardio
+                        </p>
+                        <p className="font-bold text-slate-900">
+                          {getCardioBlockExerciseName(block)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleBlock(blockUiKey)}
+                        className="text-slate-400 transition-colors hover:text-emerald-600"
+                      >
+                        <span className="material-symbols-outlined">
+                          {isCollapsed ? "expand_more" : "expand_less"}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => removeBlock(workout.id, block.id)}
+                        disabled={isPastWorkoutOccurrenceLocked}
+                        className="text-slate-400 transition-colors hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <span className="material-symbols-outlined">delete</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {!isCollapsed && (
+                    <div className="space-y-3 p-4">
+                      <div className="grid gap-3 sm:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)]">
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                            Duration
+                          </label>
+                          <div className="mt-2 flex items-center gap-2">
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              min="1"
+                              step="1"
+                              disabled={isPastWorkoutOccurrenceLocked}
+                              value={cardioPrescription.durationMinutes}
+                              onChange={(e) =>
+                                updateCardioPrescription(block, {
+                                  durationMinutes:
+                                    e.target.value === "" ? "" : Number(e.target.value),
+                                })
+                              }
+                              className="h-10 min-w-0 flex-1 rounded-md border-slate-200 bg-white px-3 text-base font-bold text-slate-800 focus:border-primary focus:ring-primary"
+                            />
+                            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                              min
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                            HR Target
+                          </p>
+                          <div className="mt-2 grid grid-cols-3 rounded-lg border border-slate-200 bg-white p-1">
+                            {CARDIO_HEART_RATE_MODE_OPTIONS.map((option) => {
+                              const isSelected = heartRateMode === option.value;
+
+                              return (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  disabled={isPastWorkoutOccurrenceLocked}
+                                  onClick={() => updateCardioHeartRateMode(block, option.value)}
+                                  className={[
+                                    "h-9 rounded-md text-xs font-black uppercase tracking-wider transition-all select-none",
+                                    isSelected
+                                      ? "bg-emerald-500 text-white shadow-sm"
+                                      : "text-slate-500 hover:bg-emerald-50 hover:text-emerald-700",
+                                    isPastWorkoutOccurrenceLocked
+                                      ? "cursor-not-allowed opacity-50"
+                                      : "",
+                                  ].join(" ")}
+                                >
+                                  {option.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+
+                      {showHeartRateValue && (
+                        <div className="rounded-lg border border-emerald-100 bg-emerald-50/50 p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">
+                              {heartRateMode === "zone" ? "Zone" : "Avg BPM"}
+                            </p>
+                            {heartRateMode === "avg_bpm" && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                +/- 10
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex h-12 items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
+                            <button
+                              type="button"
+                              disabled={isPastWorkoutOccurrenceLocked}
+                              onClick={() =>
+                                heartRateMode === "zone"
+                                  ? stepCardioZone(block, -1)
+                                  : stepCardioBpm(block, -1)
+                              }
+                              className="flex h-full w-14 items-center justify-center border-r border-slate-200 text-slate-500 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                              aria-label={
+                                heartRateMode === "zone" ? "Decrease zone" : "Decrease BPM"
+                              }
+                            >
+                              <span className="material-symbols-outlined text-lg">remove</span>
+                            </button>
+
+                            {heartRateMode === "zone" ? (
+                              <span className="flex-1 text-center text-lg font-black text-slate-800">
+                                {clampCardioNumber(
+                                  cardioPrescription.heartRateTargetValue,
+                                  1,
+                                  5,
+                                  2
+                                )}
+                              </span>
+                            ) : (
+                              <input
+                                type="number"
+                                inputMode="numeric"
+                                min="80"
+                                max="200"
+                                step="1"
+                                disabled={isPastWorkoutOccurrenceLocked}
+                                value={cardioPrescription.heartRateTargetValue || 140}
+                                onChange={(e) =>
+                                  updateCardioPrescription(block, {
+                                    heartRateTargetValue:
+                                      e.target.value === ""
+                                        ? null
+                                        : clampCardioNumber(
+                                            Number(e.target.value),
+                                            80,
+                                            200,
+                                            140
+                                          ),
+                                  })
+                                }
+                                className="h-full min-w-0 flex-1 border-none bg-white px-2 text-center text-lg font-black text-slate-800 focus:ring-0"
+                              />
+                            )}
+
+                            <button
+                              type="button"
+                              disabled={isPastWorkoutOccurrenceLocked}
+                              onClick={() =>
+                                heartRateMode === "zone"
+                                  ? stepCardioZone(block, 1)
+                                  : stepCardioBpm(block, 1)
+                              }
+                              className="flex h-full w-14 items-center justify-center border-l border-slate-200 text-slate-500 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                              aria-label={
+                                heartRateMode === "zone" ? "Increase zone" : "Increase BPM"
+                              }
+                            >
+                              <span className="material-symbols-outlined text-lg">add</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                            Machine settings
+                          </p>
+                          {canAddMachineSetting && (
+                            <button
+                              type="button"
+                              disabled={isPastWorkoutOccurrenceLocked}
+                              onClick={() => addCardioMachineSetting(block)}
+                              className="inline-flex h-8 items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <span className="material-symbols-outlined text-sm">add</span>
+                              Add setting
+                            </button>
+                          )}
+                        </div>
+
+                        {cardioPrescription.machineSettings.length > 0 && (
+                          <div className="space-y-2">
+                            {cardioPrescription.machineSettings.map((setting, settingIndex) => (
+                              <div
+                                key={`${block.id}-machine-${settingIndex}`}
+                                className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.25rem] gap-2"
+                              >
+                                {getCardioMachineSettingOptions(block, setting.key).length <= 1 ? (
+                                  <div className="flex h-10 min-w-0 items-center rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-bold text-emerald-700">
+                                    <span className="truncate">
+                                      {getCardioMachineSettingLabel(block, setting.key)}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="flex min-w-0 items-center rounded-lg border border-slate-200 bg-slate-50 p-1">
+                                    {getCardioMachineSettingOptions(block, setting.key).map(
+                                      (option) => {
+                                        const isSelected = option.value === setting.key;
+                                        const isUnavailable =
+                                          option.value !== setting.key &&
+                                          usedMachineSettingKeys.has(option.value);
+
+                                        return (
+                                          <button
+                                            key={option.value}
+                                            type="button"
+                                            disabled={
+                                              isPastWorkoutOccurrenceLocked || isUnavailable
+                                            }
+                                            onClick={() =>
+                                              updateCardioMachineSetting(block, settingIndex, {
+                                                key: option.value,
+                                              })
+                                            }
+                                            className={[
+                                              "flex-1 rounded-md px-2 py-2 text-xs font-black uppercase tracking-wider transition-colors",
+                                              isSelected
+                                                ? "bg-emerald-500 text-white shadow-sm"
+                                                : "text-slate-500 hover:bg-white hover:text-emerald-700",
+                                              isPastWorkoutOccurrenceLocked || isUnavailable
+                                                ? "cursor-not-allowed opacity-40"
+                                                : "",
+                                            ].join(" ")}
+                                          >
+                                            {option.label}
+                                          </button>
+                                        );
+                                      }
+                                    )}
+                                  </div>
+                                )}
+
+                                <input
+                                  type="text"
+                                  disabled={isPastWorkoutOccurrenceLocked}
+                                  value={setting.value}
+                                  onChange={(e) =>
+                                    updateCardioMachineSetting(block, settingIndex, {
+                                      value: e.target.value,
+                                    })
+                                  }
+                                  placeholder="Value"
+                                  className="h-10 min-w-0 rounded-lg border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700 focus:border-primary focus:ring-primary"
+                                />
+
+                                <button
+                                  type="button"
+                                  disabled={isPastWorkoutOccurrenceLocked}
+                                  onClick={() => removeCardioMachineSetting(block, settingIndex)}
+                                  className="flex h-10 w-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+                                  aria-label="Remove machine setting"
+                                >
+                                  <span className="material-symbols-outlined text-lg">
+                                    close
+                                  </span>
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <textarea
+                        disabled={isPastWorkoutOccurrenceLocked}
+                        value={cardioPrescription.notes}
+                        onChange={(e) =>
+                          updateCardioPrescription(block, { notes: e.target.value })
+                        }
+                        placeholder="Cardio notes..."
+                        className="min-h-[56px] w-full resize-none rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm focus:border-primary focus:ring-1 focus:ring-primary"
+                      />
+                    </div>
+                  )}
+                        </section>
+                      )}
+                    </SortableBlock>
+                  );
+                }
+
+                const canRemoveSingleSet = block.sets.length > 1;
+                const canAddSingleSet = block.sets.length < MAX_BLOCK_SET_COUNT;
+
+                return (
+                  <SortableBlock
+                    key={blockUiKey}
+                    sortableId={blockUiKey}
+                    disabled={isPastWorkoutOccurrenceLocked}
+                  >
+                    {({
+                      setNodeRef,
+                      style,
+                      isDragging,
+                      handleAttributes,
+                      handleListeners,
+                      setHandleRef,
+                    }) => (
+                      <section
+                        ref={setNodeRef}
+                        style={style}
+                        data-block-id={blockUiKey}
+                        className={[
+                          "overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm",
+                          isDragging || isActiveDraggedBlock
+                            ? "opacity-80 shadow-xl ring-1 ring-slate-200"
+                            : "",
+                        ].join(" ")}
+                      >
                 <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/50 p-4">
                   <div className="flex items-center gap-3 select-none">
-                    <span className="material-symbols-outlined cursor-grab text-slate-400">
-                      drag_indicator
-                    </span>
+                    <button
+                      type="button"
+                      ref={setHandleRef}
+                      disabled={isPastWorkoutOccurrenceLocked}
+                      {...handleAttributes}
+                      {...handleListeners}
+                      className="touch-none text-slate-400 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label="Reorder block"
+                    >
+                      <span className="material-symbols-outlined cursor-grab">
+                        drag_indicator
+                      </span>
+                    </button>
                     <p className="font-bold text-slate-900">{block.exercise}</p>
                   </div>
 
@@ -1765,7 +2504,7 @@ export default function ManualWorkoutEditor() {
 
                     <button
                       type="button"
-                      onClick={() => toggleBlock(block.id)}
+                      onClick={() => toggleBlock(blockUiKey)}
                       className="text-slate-400 transition-colors hover:text-primary"
                     >
                       <span className="material-symbols-outlined">
@@ -1963,9 +2702,13 @@ export default function ManualWorkoutEditor() {
                     </div>
                   </>
                 )}
-              </section>
-            );
-          })}
+                      </section>
+                    )}
+                  </SortableBlock>
+                );
+              })}
+            </SortableContext>
+          </DndContext>
         </div>
       </main>
 

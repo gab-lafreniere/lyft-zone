@@ -41,6 +41,17 @@ function getSetReps(set) {
   return Number.isFinite(reps) && reps > 0 ? reps : 0;
 }
 
+function getCardioDurationSeconds(block) {
+  const durationMinutes = Number(block?.cardioPrescription?.durationMinutes);
+  return Number.isFinite(durationMinutes) && durationMinutes > 0
+    ? durationMinutes * 60
+    : 0;
+}
+
+function getCardioExerciseId(block) {
+  return block?.exerciseId || block?.exercise?.exerciseId || null;
+}
+
 function createEmptyDistribution(totalRealSets = 0) {
   return SUPPORTED_BODY_PARTS.map(({ key, label }) => ({
     key,
@@ -122,6 +133,16 @@ export function computeWorkoutMetrics(workout) {
   const distribution = createDistributionAccumulator();
 
   workout.blocks.forEach((block) => {
+    if (block.type === "cardio") {
+      if (!getCardioExerciseId(block)) {
+        return;
+      }
+
+      exerciseCount += 1;
+      totalDurationSeconds += getCardioDurationSeconds(block);
+      return;
+    }
+
     if (block.type === "single") {
       if (!block.exerciseId) {
         return;
@@ -205,6 +226,9 @@ export function computeWorkoutMetrics(workout) {
 export function aggregateWorkoutMetrics(workouts = []) {
   const workoutMetrics = workouts.map((workout) => computeWorkoutMetrics(workout));
   const nonEmptyWorkouts = workoutMetrics.filter((metrics) => metrics.setCount > 0);
+  const contentfulDurationWorkouts = workoutMetrics.filter(
+    (metrics) => metrics.exerciseCount > 0 || metrics.estimatedDurationMinutes > 0
+  );
   const distribution = createDistributionAccumulator();
 
   const totalExerciseCount = workoutMetrics.reduce(
@@ -232,8 +256,8 @@ export function aggregateWorkoutMetrics(workouts = []) {
     totalExerciseCount,
     totalSetCount,
     averageDurationMinutes:
-      nonEmptyWorkouts.length > 0
-        ? Math.round(totalDurationMinutes / nonEmptyWorkouts.length)
+      contentfulDurationWorkouts.length > 0
+        ? Math.round(totalDurationMinutes / contentfulDurationWorkouts.length)
         : 0,
     averageTUTMinutes:
       nonEmptyWorkouts.length > 0

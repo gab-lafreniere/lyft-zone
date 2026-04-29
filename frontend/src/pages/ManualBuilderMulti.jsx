@@ -175,6 +175,10 @@ function formatMinutes(value) {
   return `${value}m`;
 }
 
+function hasCardioBlock(workout) {
+  return (workout?.blocks || []).some((block) => block.type === "cardio");
+}
+
 function getMetricBarWidth(value, maxValue) {
   if (value <= 0 || maxValue <= 0) {
     return "0%";
@@ -375,6 +379,10 @@ export default function ManualBuilderMulti() {
     () => aggregateWorkoutMetrics(selectedWeek?.workouts || []),
     [selectedWeek]
   );
+  const selectedWeekHasCardio = useMemo(
+    () => (selectedWeek?.workouts || []).some(hasCardioBlock),
+    [selectedWeek]
+  );
 
   const weeklyVolumeData = useMemo(() => {
     const weeks = programDraft.weeks || [];
@@ -408,7 +416,7 @@ export default function ManualBuilderMulti() {
         ),
       },
       {
-        label: "Sets",
+        label: selectedWeekHasCardio ? "Strength sets" : "Sets",
         value: String(selectedWeekMetrics.totalSetCount),
         width: getMetricBarWidth(
           selectedWeekMetrics.totalSetCount,
@@ -426,7 +434,7 @@ export default function ManualBuilderMulti() {
         width: getMetricBarWidth(selectedWeekMetrics.averageTUTMinutes, 60),
       },
     ],
-    [programDraft.sessionsPerWeek, selectedWeekMetrics]
+    [programDraft.sessionsPerWeek, selectedWeekHasCardio, selectedWeekMetrics]
   );
 
   const weekdayRows = useMemo(() => {
@@ -502,7 +510,9 @@ export default function ManualBuilderMulti() {
         isFutureOccurrence,
         workout: {
           ...workout,
-          meta: `${metrics.exerciseCount} exercises • ${metrics.setCount} sets • ~${metrics.estimatedDurationMinutes} min • ${metrics.totalTUTMinutes}m TUT`,
+          meta: `${metrics.exerciseCount} exercises • ${metrics.setCount} ${
+            hasCardioBlock(workout) ? "strength sets" : "sets"
+          } • ~${metrics.estimatedDurationMinutes} min • ${metrics.totalTUTMinutes}m TUT`,
         },
         targetDayUp: index > 0 ? WEEKDAY_ROWS[index - 1].day : null,
         targetDayDown: index < WEEKDAY_ROWS.length - 1 ? WEEKDAY_ROWS[index + 1].day : null,

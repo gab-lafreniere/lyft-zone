@@ -1,3 +1,5 @@
+import { resolveCardioModality } from "../../utils/cardioModality";
+
 function normalizeStringArray(value) {
   return Array.isArray(value)
     ? value.map((entry) => String(entry || "").trim()).filter(Boolean)
@@ -22,6 +24,36 @@ function parseRestSeconds(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function getExerciseName(value) {
+  if (value && typeof value === "object") {
+    return String(value.name || "").trim();
+  }
+
+  return String(value || "").trim();
+}
+
+function normalizeMachineSettings(value) {
+  return Array.isArray(value)
+    ? value
+        .slice(0, 2)
+        .map((setting) => ({
+          key: String(setting?.key || "").trim().toLowerCase(),
+          value: String(setting?.value ?? ""),
+        }))
+        .filter((setting) => setting.key || setting.value)
+    : [];
+}
+
+function normalizeCardioPrescriptionForApi(value = {}) {
+  return {
+    durationMinutes: normalizeNumeric(value.durationMinutes, null),
+    heartRateTargetMode: value.heartRateTargetMode || undefined,
+    heartRateTargetValue: normalizeNumeric(value.heartRateTargetValue, null),
+    machineSettings: normalizeMachineSettings(value.machineSettings),
+    notes: value.notes ? String(value.notes) : null,
+  };
+}
+
 function createSetTemplateFromSingleSet(set, index, block, notes = null) {
   const reps = normalizeNumeric(set?.reps, null);
   const rir = normalizeNumeric(set?.rpe, 2);
@@ -39,6 +71,42 @@ function createSetTemplateFromSingleSet(set, index, block, notes = null) {
     tempo: normalizeTempoValue(block.tempo),
     restSeconds: parseRestSeconds(block.rest),
     notes,
+  };
+}
+
+function mapCardioBlockToApi(block, index) {
+  const cardioPrescription = normalizeCardioPrescriptionForApi(
+    block.cardioPrescription || {}
+  );
+
+  return {
+    id: block.id,
+    orderIndex: index + 1,
+    blockType: "CARDIO",
+    label: null,
+    roundCount: null,
+    restStrategy: "NONE",
+    restSeconds: null,
+    notes: null,
+    exercises: [
+      {
+        id: block.exerciseRowId,
+        exerciseId: block.exerciseId || block.exercise?.exerciseId || null,
+        exerciseName: getExerciseName(block.exercise),
+        bodyParts: [],
+        muscleFocus: [],
+        orderIndex: 1,
+        executionNotes: null,
+        defaultTempo: null,
+        defaultRestSeconds: null,
+        defaultTargetRir: null,
+        defaultTargetRpe: null,
+        intensificationMethod: "NONE",
+        notes: cardioPrescription.notes,
+        setTemplates: [],
+        cardioPrescription,
+      },
+    ],
   };
 }
 
@@ -144,6 +212,10 @@ export function mapMultiWeekDraftToApi(programDraft) {
         estimatedDurationMinutes: null,
         notes: null,
         blocks: (workout.blocks || []).map((block, blockIndex) => {
+          if (block.type === "cardio") {
+            return mapCardioBlockToApi(block, blockIndex);
+          }
+
           if (block.type === "superset") {
             return mapSupersetBlockToApi(block, blockIndex);
           }
@@ -166,6 +238,29 @@ export function mapCycleBuilderPayload(response) {
     workouts: (week.workouts || []).map((workout) => ({
       ...workout,
       blocks: (workout.blocks || []).map((block) => {
+        if (block.type === "cardio") {
+          const resolvedExerciseId =
+            block.exerciseId || block.exercise?.exerciseId || null;
+
+          return {
+            ...block,
+            exercise:
+              block.exercise && typeof block.exercise === "object"
+                ? {
+                    ...block.exercise,
+                    cardioModality: resolveCardioModality(
+                      resolvedExerciseId,
+                      block.exercise.cardioModality
+                    ),
+                  }
+                : {
+                    exerciseId: resolvedExerciseId,
+                    name: block.exercise || "",
+                    cardioModality: resolveCardioModality(resolvedExerciseId),
+                  },
+          };
+        }
+
         if (block.type === "superset") {
           return {
             ...block,

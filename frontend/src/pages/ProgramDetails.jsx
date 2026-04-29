@@ -14,16 +14,31 @@ import {
 } from "../services/api";
 
 function formatMinutes(value) {
-    return `${value}m`;
+  return `${value}m`;
+}
+
+function formatCardioHeartRateTarget(prescription) {
+  const mode = prescription?.heartRateTargetMode || "none";
+  const value = prescription?.heartRateTargetValue;
+
+  if (mode === "avg_bpm") {
+    return value ? `${value} bpm` : "Avg BPM";
   }
-  
-  function getMetricBarWidth(value, maxValue) {
-    if (value <= 0 || maxValue <= 0) {
-      return "0%";
-    }
-  
-    return `${Math.max(8, Math.min(100, (value / maxValue) * 100))}%`;
+
+  if (mode === "zone") {
+    return value ? `Zone ${value}` : "Zone";
   }
+
+  return "None";
+}
+
+function getMetricBarWidth(value, maxValue) {
+  if (value <= 0 || maxValue <= 0) {
+    return "0%";
+  }
+
+  return `${Math.max(8, Math.min(100, (value / maxValue) * 100))}%`;
+}
 
 export default function ProgramDetails() {
   const navigate = useNavigate();
@@ -339,6 +354,83 @@ export default function ProgramDetails() {
 
             <div className="space-y-4">
               {activeWorkout.blocks.map((block) => {
+                if (block.type === "cardio") {
+                  const cardioPrescription = block.cardioPrescription || {};
+                  const machineSettings = Array.isArray(cardioPrescription.machineSettings)
+                    ? cardioPrescription.machineSettings.slice(0, 2)
+                    : [];
+                  const notes = cardioPrescription.notes || block.notes;
+
+                  return (
+                    <div
+                      key={block.id}
+                      className="rounded-xl border border-emerald-200 bg-white p-5 shadow-sm"
+                    >
+                      <div className="relative mb-4 flex items-center gap-4">
+                        <div className="absolute -left-1 -top-1 flex size-8 items-center justify-center rounded-lg bg-emerald-600 text-sm font-bold text-white">
+                          {block.orderIndex}
+                        </div>
+
+                        <img
+                          src={block.exercise.imageUrl}
+                          alt={block.exercise.name}
+                          className="ml-10 h-16 w-16 rounded-lg border border-slate-200 bg-white object-contain p-1"
+                        />
+
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">
+                            Cardio
+                          </p>
+                          <h4 className="text-xl font-bold">{block.exercise.name}</h4>
+                        </div>
+                      </div>
+
+                      <div className="mb-4 grid grid-cols-2 gap-2 border-y border-slate-200 py-4">
+                        <div className="text-center">
+                          <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                            Duration
+                          </p>
+                          <p className="text-base font-bold text-primary">
+                            {cardioPrescription.durationMinutes || 0} min
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                            HR Target
+                          </p>
+                          <p className="text-base font-bold">
+                            {formatCardioHeartRateTarget(cardioPrescription)}
+                          </p>
+                        </div>
+                      </div>
+
+                      {machineSettings.length > 0 && (
+                        <div className="mb-4 flex flex-wrap gap-2">
+                          {machineSettings.map((setting, settingIndex) => (
+                            <span
+                              key={`${block.id}-setting-${settingIndex}`}
+                              className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700"
+                            >
+                              {setting.key}: {setting.value}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {notes && (
+                        <div className="flex items-start gap-3 rounded-lg bg-primary/5 p-3">
+                          <span className="material-symbols-outlined text-[18px] text-primary">
+                            info
+                          </span>
+                          <p className="text-[11px] italic leading-relaxed text-slate-600">
+                            Note: {notes}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
                 if (block.type === "single") {
                   return (
                     <div

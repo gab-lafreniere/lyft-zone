@@ -56,6 +56,10 @@ function validatePlanName(value) {
   return String(value || "").trim() ? "" : "Plan name is required";
 }
 
+function hasCardioBlock(workout) {
+  return (workout?.blocks || []).some((block) => block.type === "cardio");
+}
+
 export default function ManualBuilder() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -171,6 +175,10 @@ export default function ManualBuilder() {
     () => aggregateWorkoutMetrics(programDraft.workouts),
     [programDraft.workouts]
   );
+  const hasCardio = useMemo(
+    () => programDraft.workouts.some(hasCardioBlock),
+    [programDraft.workouts]
+  );
   const topStats = useMemo(
     () => [
       {
@@ -182,7 +190,7 @@ export default function ManualBuilder() {
         ),
       },
       {
-        label: "Sets",
+        label: hasCardio ? "Strength sets" : "Sets",
         value: String(weeklyMetrics.totalSetCount),
         width: getMetricBarWidth(
           weeklyMetrics.totalSetCount,
@@ -200,7 +208,7 @@ export default function ManualBuilder() {
         width: getMetricBarWidth(weeklyMetrics.averageTUTMinutes, 60),
       },
     ],
-    [sessionsPerWeek, weeklyMetrics]
+    [hasCardio, sessionsPerWeek, weeklyMetrics]
   );
 
   const workoutCards = useMemo(
@@ -210,7 +218,8 @@ export default function ManualBuilder() {
 
         return {
           ...workout,
-          meta: `${metrics.exerciseCount} exercises • ${metrics.setCount} sets • ~${metrics.estimatedDurationMinutes} min • ${metrics.totalTUTMinutes}m TUT`,
+          meta: `${metrics.exerciseCount} exercises • ${metrics.setCount} ${hasCardioBlock(workout) ? "Sets" : "sets"
+            } • ~${metrics.estimatedDurationMinutes} min • ${metrics.totalTUTMinutes}m TUT`,
         };
       }),
     [programDraft.workouts]
@@ -373,7 +382,7 @@ export default function ManualBuilder() {
       );
       setDeleteProgramError(
         error.message ||
-          "Unable to delete this weekly plan."
+        "Unable to delete this weekly plan."
       );
     } finally {
       setIsDeletingProgram(false);
@@ -444,7 +453,7 @@ export default function ManualBuilder() {
     } catch (error) {
       setPublishAndTransformError(
         error.message ||
-          "Unable to publish and transform this weekly plan."
+        "Unable to publish and transform this weekly plan."
       );
     } finally {
       setIsPublishingAndTransforming(false);
@@ -679,10 +688,10 @@ export default function ManualBuilder() {
                   isEditMode
                     ? toggleWorkoutSelection(workout.id)
                     : navigate(`/program/manual-builder/workout/${workout.id}`, {
-                        state: {
-                          from: `${location.pathname}${location.search || ""}`,
-                        },
-                      })
+                      state: {
+                        from: `${location.pathname}${location.search || ""}`,
+                      },
+                    })
                 }
                 className={[
                   "group flex w-full items-start gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition-colors",

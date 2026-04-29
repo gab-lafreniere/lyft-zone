@@ -8,10 +8,12 @@ import {
 } from "react";
 import { mapProgramDraftToWeeklyPlanUpdate, mapBuilderPayloadToProgramDraft } from "../features/weeklyPlans/mappers";
 import { updateWeeklyPlanDraft } from "../services/api";
+import { attachBlockUiKeys, createBlockUiKey } from "../utils/blockUiKeys";
 import { getDuplicateWorkoutName } from "../utils/duplicateWorkoutName";
 
 const ManualProgramContext = createContext(null);
 export const MAX_BLOCK_SET_COUNT = 10;
+const DEFAULT_CARDIO_DURATION_MINUTES = 20;
 
 function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -91,6 +93,7 @@ function normalizeSupersetBlock(block) {
 function createDefaultSingleBlock() {
   return {
     id: createId("block"),
+    uiKey: createBlockUiKey(),
     type: "single",
     exercise: "Barbell Back Squat",
     exerciseId: null,
@@ -106,6 +109,7 @@ function createDefaultSingleBlock() {
 function createDefaultSupersetBlock() {
   return normalizeSupersetBlock({
     id: createId("block"),
+    uiKey: createBlockUiKey(),
     type: "superset",
     sets: 2,
     rest: "120s",
@@ -143,6 +147,7 @@ function createDefaultSupersetBlock() {
 function createSingleBlockFromExercise(exercise) {
   return {
     id: createId("block"),
+    uiKey: createBlockUiKey(),
     type: "single",
     exercise: exercise.name,
     exerciseId: exercise.exerciseId,
@@ -152,6 +157,23 @@ function createSingleBlockFromExercise(exercise) {
     rest: "120s",
     sets: createSetRows(2, createSingleSetRow),
     notes: "",
+  };
+}
+
+function createCardioBlockFromExercise(exercise) {
+  return {
+    id: createId("block"),
+    uiKey: createBlockUiKey(),
+    type: "cardio",
+    exerciseId: exercise.exerciseId,
+    exercise,
+    cardioPrescription: {
+      durationMinutes: DEFAULT_CARDIO_DURATION_MINUTES,
+      heartRateTargetMode: undefined,
+      heartRateTargetValue: null,
+      machineSettings: [],
+      notes: "",
+    },
   };
 }
 
@@ -186,6 +208,7 @@ function cloneWorkoutForDuplicate(workout, name = workout.name) {
     blocks: (workout.blocks || []).map((block) => ({
       ...block,
       id: createId("block"),
+      uiKey: createBlockUiKey(),
       exercises:
         block.type === "superset"
           ? (block.exercises || []).map((exercise) => ({
@@ -200,6 +223,38 @@ function cloneWorkoutForDuplicate(workout, name = workout.name) {
         : block.sets,
     })),
   };
+}
+
+function moveArrayItem(items, fromIndex, toIndex) {
+  if (
+    !Array.isArray(items) ||
+    fromIndex === toIndex ||
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= items.length ||
+    toIndex >= items.length
+  ) {
+    return items;
+  }
+
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
+}
+
+function attachUiKeysToWorkouts(nextWorkouts = [], previousWorkouts = []) {
+  const previousWorkoutsById = new Map(
+    previousWorkouts.map((workout) => [workout.id, workout])
+  );
+
+  return nextWorkouts.map((workout) => ({
+    ...workout,
+    blocks: attachBlockUiKeys(
+      workout.blocks || [],
+      previousWorkoutsById.get(workout.id)?.blocks || []
+    ),
+  }));
 }
 
 function canMoveSelectedWorkouts(workouts, selectedIds, direction) {
@@ -438,13 +493,18 @@ export function ManualProgramProvider({ children }) {
       return;
     }
 
+    const block =
+      String(exercise.trainingType || "").toLowerCase() === "cardio"
+        ? createCardioBlockFromExercise(exercise)
+        : createSingleBlockFromExercise(exercise);
+
     setProgramDraft((prev) => ({
       ...prev,
       workouts: prev.workouts.map((workout) =>
         workout.id === workoutId
           ? {
               ...workout,
-              blocks: [...workout.blocks, createSingleBlockFromExercise(exercise)],
+              blocks: [...workout.blocks, block],
             }
           : workout
       ),
@@ -468,6 +528,7 @@ export function ManualProgramProvider({ children }) {
 
             return {
               id: block.id,
+              uiKey: block.uiKey || createBlockUiKey(),
               type: "superset",
               sets: Math.max(1, block.sets.length || 1),
               rest: block.rest,
@@ -803,7 +864,13 @@ export function ManualProgramProvider({ children }) {
 
   const hydrateProgramDraft = useCallback((response, options = {}) => {
     const nextState = mapBuilderPayloadToProgramDraft(response);
-    setProgramDraft(nextState.programDraft);
+    setProgramDraft((prev) => ({
+      ...nextState.programDraft,
+      workouts: attachUiKeysToWorkouts(
+        nextState.programDraft.workouts || [],
+        prev.workouts || []
+      ),
+    }));
     setDraftMetadata({
       ...createInitialDraftMetadata(),
       ...nextState.metadata,
@@ -835,6 +902,32 @@ export function ManualProgramProvider({ children }) {
             }
           : workout
       ),
+    }));
+  }, []);
+
+  const reorderBlocks = useCallback((workoutId, fromIndex, toIndex) => {
+    setProgramDraft((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((workout) => {
+        if (workout.id !== workoutId) {
+          return workout;
+        }
+
+        const nextBlocks = moveArrayItem(
+          workout.blocks || [],
+          Number(fromIndex),
+          Number(toIndex)
+        );
+
+        if (nextBlocks === workout.blocks) {
+          return workout;
+        }
+
+        return {
+          ...workout,
+          blocks: nextBlocks,
+        };
+      }),
     }));
   }, []);
 
@@ -920,6 +1013,7 @@ export function ManualProgramProvider({ children }) {
       toggleMultiWeek,
       setSelectedWeek,
       updateBlock,
+      reorderBlocks,
       updateSupersetExercise,
       hasIncompleteSupersets,
       draftMetadata,
@@ -951,6 +1045,7 @@ export function ManualProgramProvider({ children }) {
       toggleMultiWeek,
       setSelectedWeek,
       updateBlock,
+      reorderBlocks,
       updateSupersetExercise,
       hasIncompleteSupersets,
       draftMetadata,
