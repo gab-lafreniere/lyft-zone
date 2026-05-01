@@ -546,6 +546,14 @@ Limites:
 - Résultats non exhaustifs (recherche bornée)
 
 ==================================================
+RÈGLES MÉTIER ET VALIDATIONS
+==================================================
+- Toutes les règles critiques vivent côté backend.
+- Le frontend peut refléter les règles pour l’UX, mais ne doit jamais être la source de vérité.
+- Les règles métier doivent être centralisées dans des services/domain helpers réutilisables.
+- Toute règle utilisée par le builder, le wizard ou les settings doit être validée côté backend avant persistance.
+
+==================================================
 LIMITES CONNUES ACTUELLES
 ==================================================
 
@@ -1086,3 +1094,953 @@ Plus tard:
 - ai_proposals
 - plan_constraints_snapshots
 - progress_snapshots
+
+==================================================
+Arborescence menu settings
+==================================================
+
+--------------------------------------------------
+V3 - Version complète
+--------------------------------------------------
+
+Settings
+│
+├── Account
+│   ├── Profile
+│   │   ├── Name
+│   │   ├── Email
+│   │   ├── Username
+│   │   └── Profile Picture
+│   │
+│   ├── Login & Security
+│   │   ├── Password (if email auth)
+│   │   ├── Two-Factor Authentication (2FA)
+│   │   ├── Active Sessions
+│   │   └── Device History
+│   │
+│   └── Connected Accounts
+│       ├── Google (connect / unlink)
+│       └── Apple (connect / unlink)
+│
+├── Subscription
+│   ├── Current Plan
+│   │   ├── Plan Type (Free / Trial / Pro / AI Coach)
+│   │   ├── Trial Remaining Days
+│   │   └── Upgrade CTA
+│   │
+│   ├── Billing
+│   │   ├── Payment Method
+│   │   ├── Invoices
+│   │   └── Cancel / Pause Subscription
+│   │
+│   └── Plan Features
+│       ├── Included Features
+│       └── Locked Features (Upsell)
+│
+├── Training Profile
+│   │
+│   ├── Goals
+│   │   ├── Primary Goal
+│   │   │   ├── Hypertrophy
+│   │   │   ├── Strength
+│   │   │   └── Mixed
+│   │   └── Muscle Priorities
+│   │       ├── Focus Areas [Primary Focus (1 max), Secondary Focus (0–2 max, optional)]
+│   │       │   ├── Chest
+│   │       │   │   └── upper chest
+│   │       │   │
+│   │       │   ├── Shoulders
+│   │       │   │   ├── front delts
+│   │       │   │   ├── side delts
+│   │       │   │   └── rear delts
+│   │       │   │
+│   │       │   ├── Back
+│   │       │   │   ├── lats
+│   │       │   │   └── upper back
+│   │       │   │
+│   │       │   ├── Arms
+│   │       │   │   ├── Biceps
+│   │       │   │   │   ├── biceps long head
+│   │       │   │   │   └── biceps short head
+│   │       │   │   │
+│   │       │   │   ├── Triceps
+│   │       │   │   │   ├── triceps long head
+│   │       │   │   │   └── triceps lateral head
+│   │       │   │   │
+│   │       │   │   └── forearms
+│   │       │   │
+│   │       │   ├── Legs
+│   │       │   │   ├── quadriceps
+│   │       │   │   ├── hamstrings
+│   │       │   │   ├── Glutes
+│   │       │   │   │   ├── glute max
+│   │       │   │   │   └── glute med
+│   │       │   │   ├── adductors
+│   │       │   │   └── Calves
+│   │       │   │       ├── gastrocnemius
+│   │       │   │       └── soleus
+│   │       │   │
+│   │       │   └── Core
+│   │       │       ├── Abs
+│   │       │       │   ├── upper abs
+│   │       │       │   └── lower abs
+│   │       │       ├── obliques
+│   │       │       └── lower back
+│   │       │
+│   │       └── Deprioritized Areas (optional, max 1)
+│   │           ├── Chest
+│   │           ├── Back
+│   │           ├── Shoulders
+│   │           ├── Arms
+│   │           ├── Legs
+│   │           ├── Core
+│   │           │
+│   │           ├── Biceps
+│   │           ├── Triceps
+│   │           ├── Forearms
+│   │           │
+│   │           ├── Quadriceps
+│   │           ├── Hamstrings
+│   │           ├── Glutes
+│   │           ├── Calves
+│   │           │
+│   │           ├── Abs
+│   │           └── Obliques
+│   │
+│   ├── Experience
+│   │   ├── Beginner
+│   │   ├── Intermediate
+│   │   └── Advanced
+│   │
+│   ├── Availability
+│   │   ├── Sessions per Week
+│   │   └── Duration per Session
+│   │
+│   ├── Environment
+│   │   ├── Training Environment
+│   │   │   ├── Gym
+│   │   │   └── Home
+│   │   │
+│   │   ├── Equipment Setup
+│   │   │   ├── Full Gym
+│   │   │   ├── Limited Gym
+│   │   │   ├── Home Gym
+│   │   │   └── Minimal
+│   │   │
+│   │   └── Equipment
+│   │       │
+│   │       ├── Bodyweight
+│   │       │   ├── bodyweight
+│   │       │   ├── pull_up_bar
+│   │       │   ├── dip_station
+│   │       │   ├── gymnastic_rings
+│   │       │   ├── push_up_handles
+│   │       │   └── parallettes
+│   │       │
+│   │       ├── Free Weights
+│   │       │   ├── dumbbells
+│   │       │   ├── kettlebell
+│   │       │   ├── weight_plates
+│   │       │   ├── olympic_barbell
+│   │       │   ├── ez_bar
+│   │       │   ├── straight_bar
+│   │       │   ├── trap_bar
+│   │       │   └── safety_squat_bar
+│   │       │
+│   │       ├── Benches & Racks
+│   │       │   ├── flat_bench
+│   │       │   ├── adjustable_bench
+│   │       │   ├── incline_bench
+│   │       │   ├── decline_bench
+│   │       │   ├── preacher_bench
+│   │       │   ├── bench_press_rack
+│   │       │   ├── squat_rack
+│   │       │   └── power_rack
+│   │       │
+│   │       ├── Cable Station
+│   │       │   ├── cable_machine
+│   │       │   ├── d_handle
+│   │       │   ├── rope_attachment
+│   │       │   ├── straight_bar_attachment
+│   │       │   ├── ez_bar_attachment
+│   │       │   ├── v_bar_attachment
+│   │       │   ├── lat_pulldown_bar
+│   │       │   └── ankle_strap
+│   │       │
+│   │       ├── Smith Machine
+│   │       │   └── smith_machine
+│   │       │
+│   │       ├── Bands
+│   │       │   ├── resistance_band
+│   │       │   ├── mini_band
+│   │       │   └── loop_band
+│   │       │
+│   │       ├── Selectorized Machines
+│   │       │   ├── selectorized_chest_press
+│   │       │   ├── selectorized_incline_press
+│   │       │   ├── selectorized_shoulder_press
+│   │       │   ├── selectorized_lateral_raise
+│   │       │   ├── selectorized_lat_pulldown
+│   │       │   ├── selectorized_seated_row
+│   │       │   ├── selectorized_pec_deck
+│   │       │   ├── selectorized_reverse_pec_deck
+│   │       │   ├── selectorized_preacher_curl
+│   │       │   ├── selectorized_triceps_extension
+│   │       │   ├── selectorized_leg_extension
+│   │       │   ├── selectorized_seated_leg_curl
+│   │       │   ├── selectorized_lying_leg_curl
+│   │       │   ├── selectorized_standing_leg_curl
+│   │       │   ├── selectorized_hip_abduction
+│   │       │   ├── selectorized_hip_adduction
+│   │       │   ├── selectorized_glute_kickback
+│   │       │   └── selectorized_ab_crunch
+│   │       │
+│   │       ├── Plate Loaded Machines
+│   │       │   ├── plate_loaded_chest_press
+│   │       │   ├── plate_loaded_row
+│   │       │   ├── plate_loaded_high_row
+│   │       │   ├── plate_loaded_lat_pulldown
+│   │       │   ├── plate_loaded_leg_press
+│   │       │   ├── plate_loaded_hack_squat
+│   │       │   ├── plate_loaded_pendulum_squat
+│   │       │   ├── plate_loaded_hip_thrust
+│   │       │   └── plate_loaded_shrug
+│   │       │
+│   │       ├── Lower Body Specialty Machines
+│   │       │   ├── belt_squat_machine
+│   │       │   ├── v_squat_machine
+│   │       │   ├── standing_calf_raise_machine
+│   │       │   ├── seated_calf_raise_machine
+│   │       │   ├── donkey_calf_raise_machine
+│   │       │   ├── glute_ham_developer
+│   │       │   └── back_extension_bench
+│   │       │
+│   │       ├── Assisted Machines
+│   │       │   ├── assisted_pull_up_machine
+│   │       │   └── assisted_dip_machine
+│   │       │
+│   │       ├── Cardio Machines
+│   │       │   ├── treadmill
+│   │       │   ├── stationary_bike
+│   │       │   ├── recumbent_bike
+│   │       │   ├── stair_climber
+│   │       │   ├── elliptical
+│   │       │   └── rowing_machine
+│   │       │
+│   │       └── Accessories
+│   │           ├── ab_wheel
+│   │           ├── stability_ball
+│   │           ├── step_platform
+│   │           └── dip_machine
+│   │
+│   ├── Movement Constraints
+│   │   ├── Pain Description
+│   │   │   └── Free text prompt
+│   │   │
+│   │   ├── Affected Area
+│   │   │   ├── Shoulder
+│   │   │   ├── Elbow
+│   │   │   ├── Wrist
+│   │   │   ├── Lower Back
+│   │   │   ├── Hip
+│   │   │   ├── Knee
+│   │   │   ├── Ankle
+│   │   │   └── Neck / Upper Back
+│   │   │
+│   │   ├── Pain Severity
+│   │   │   ├── Mild
+│   │   │   ├── Moderate
+│   │   │   └── Severe
+│   │   │
+│   │   ├── Training Rule
+│   │   │   ├── Avoid Completely
+│   │   │   ├── Reduce / Modify
+│   │   │   └── Allow if Pain-Free
+│   │   │
+│   │   └── AI Detected Movement Constraints
+│   │       └── User Confirmed Movement Patterns
+│   │
+│   ├── Exercise Preference
+│   │   └── Equipment Bias
+│   │       ├── Machines
+│   │       ├── Free Weights
+│   │       └── No Preference
+│   │
+│   ├── Cardio Profile
+│   │   ├── Cardio Role
+│   │   │   ├── None
+│   │   │   ├── Warm-up Only
+│   │   │   ├── Cardio Sessions
+│   │   │   └── Warm-up & Cardio
+│   │   │
+│   │   └── Preferred Modalities
+│   │
+│   └── Physical Notes (optional)
+│
+├── AI Coaching
+│   ├── Mode
+│   │   └── AI Coach (on/off)
+│   │
+│   ├── AI Behavior
+│   │   └── Autonomy Level
+│   │       ├── Manual (always approve)
+│   │       ├── Assisted (suggest + approve)
+│   │       └── Automatic (auto-apply + notify)
+│   │
+│   └── Change History (future)
+│       ├── AI Changes Log
+│       └── User Changes Log
+│
+├── Workout Experience
+│   └── Rest & Timing
+│       ├── Default Rest Timer
+│       └── Sound / Vibration Alerts
+│
+├── Interface
+│   ├── Display
+│   │   └── Theme (Dark / Light / System)
+│   │
+│   └── Units
+│       ├── Weight (kg / lbs)
+│       └── Height (cm / ft)
+│
+├── Notifications
+│   ├── Workout Reminders
+│   │   ├── Enable / Disable
+│   │   └── Reminder Timing
+│   │
+│   ├── Program Alerts
+│   │   ├── Cycle Starting Soon
+│   │   └── Week Change
+│   │
+│   ├── AI Notifications
+│   │   ├── Suggestions Ready
+│   │   └── Program Updated
+│   │
+│   └── System Notifications
+│       └── General Updates
+│
+├── Privacy & Data
+│   ├── Data Usage
+│   │   └── What Data is Stored
+│   │
+│   ├── AI Data Usage
+│   │   ├── Use Performance Data for AI
+│   │   └── Use Images for AI Analysis (future)
+│   │
+│   ├── Export Data
+│   │   └── Download User Data
+│   │
+│   └── Delete Account
+│       └── Permanent Account Deletion
+│
+├── Integrations
+│   ├── Health Apps
+│   │   ├── Apple Health
+│   │   └── Google Fit
+│   │
+│   ├── Wearables
+│   │   ├── Garmin
+│   │   ├── Whoop
+│   │   └── Other Devices
+│   │
+│   └── Third-party Services
+│       └── Future Integrations
+│
+└── Support
+    ├── Help Center
+    ├── Contact Support
+    ├── Report a Bug
+    ├── Request a custom exercise
+    └── Send Feedback
+
+Règles backend:
+
+Muscle Priorities
+- Primary = weight 1.0
+- Secondary = weight 0.6–0.7
+- Deprioritized = weight 0.3–0.4
+
+- Focus = bias positif (jamais exclusion)
+- Deprioritized = réduction volume + fréquence
+
+- Impossible:
+  focus X + deprioritize parent de X
+
+- Si micro-focus:
+  parent reste actif (entraînement normal)
+
+- Deprioritized Areas ne peut pas cibler un micro-focus
+- Deprioritized Areas accepte seulement regions ou major groups
+- Si focus X + deprioritize sibling Y est demandé, le backend valide selon une matrice biomécanique
+
+
+
+
+--------------------------------------------------
+V2 - Version profil utilisateur exploitable
+--------------------------------------------------
+
+Settings
+│
+├── Account
+│   ├── Profile
+│   │   ├── Name
+│   │   ├── Email
+│   │   ├── Username
+│   │   └── Profile Picture
+│   │
+│   ├── Login & Security
+│   │   ├── Password (if email auth)
+│   │   ├── Two-Factor Authentication (2FA)
+│   │   ├── Active Sessions
+│   │   └── Device History
+│   │
+│   └── Connected Accounts
+│       ├── Google (connect / unlink)
+│       └── Apple (connect / unlink)
+│
+├── Training Profile
+│   │
+│   ├── Goals
+│   │   ├── Primary Goal
+│   │   │   ├── Hypertrophy
+│   │   │   ├── Strength
+│   │   │   └── Mixed
+│   │   └── Muscle Priorities
+│   │       ├── Focus Areas [Primary Focus (1 max), Secondary Focus (0–2 max, optional)]
+│   │       │   ├── Chest
+│   │       │   │   └── upper chest
+│   │       │   │
+│   │       │   ├── Shoulders
+│   │       │   │   ├── front delts
+│   │       │   │   ├── side delts
+│   │       │   │   └── rear delts
+│   │       │   │
+│   │       │   ├── Back
+│   │       │   │   ├── lats
+│   │       │   │   └── upper back
+│   │       │   │
+│   │       │   ├── Arms
+│   │       │   │   ├── Biceps
+│   │       │   │   │   ├── biceps long head
+│   │       │   │   │   └── biceps short head
+│   │       │   │   │
+│   │       │   │   ├── Triceps
+│   │       │   │   │   ├── triceps long head
+│   │       │   │   │   └── triceps lateral head
+│   │       │   │   │
+│   │       │   │   └── forearms
+│   │       │   │
+│   │       │   ├── Legs
+│   │       │   │   ├── quadriceps
+│   │       │   │   ├── hamstrings
+│   │       │   │   ├── Glutes
+│   │       │   │   │   ├── glute max
+│   │       │   │   │   └── glute med
+│   │       │   │   ├── adductors
+│   │       │   │   └── Calves
+│   │       │   │       ├── gastrocnemius
+│   │       │   │       └── soleus
+│   │       │   │
+│   │       │   └── Core
+│   │       │       ├── Abs
+│   │       │       │   ├── upper abs
+│   │       │       │   └── lower abs
+│   │       │       ├── obliques
+│   │       │       └── lower back
+│   │       │
+│   │       └── Deprioritized Areas (optional, max 1)
+│   │           ├── Chest
+│   │           ├── Back
+│   │           ├── Shoulders
+│   │           ├── Arms
+│   │           ├── Legs
+│   │           ├── Core
+│   │           │
+│   │           ├── Biceps
+│   │           ├── Triceps
+│   │           ├── Forearms
+│   │           │
+│   │           ├── Quadriceps
+│   │           ├── Hamstrings
+│   │           ├── Glutes
+│   │           ├── Calves
+│   │           │
+│   │           ├── Abs
+│   │           └── Obliques
+│   │
+│   ├── Experience
+│   │   ├── Beginner
+│   │   ├── Intermediate
+│   │   └── Advanced
+│   │
+│   ├── Availability
+│   │   ├── Sessions per Week
+│   │   └── Duration per Session
+│   │
+│   ├── Environment
+│   │   ├── Training Environment
+│   │   │   ├── Gym
+│   │   │   └── Home
+│   │   │
+│   │   ├── Equipment Setup
+│   │   │   ├── Full Gym
+│   │   │   ├── Limited Gym
+│   │   │   ├── Home Gym
+│   │   │   └── Minimal
+│   │   │
+│   │   └── Equipment
+│   │       │
+│   │       ├── Bodyweight
+│   │       │   ├── bodyweight
+│   │       │   ├── pull_up_bar
+│   │       │   ├── dip_station
+│   │       │   ├── gymnastic_rings
+│   │       │   ├── push_up_handles
+│   │       │   └── parallettes
+│   │       │
+│   │       ├── Free Weights
+│   │       │   ├── dumbbells
+│   │       │   ├── kettlebell
+│   │       │   ├── weight_plates
+│   │       │   ├── olympic_barbell
+│   │       │   ├── ez_bar
+│   │       │   ├── straight_bar
+│   │       │   ├── trap_bar
+│   │       │   └── safety_squat_bar
+│   │       │
+│   │       ├── Benches & Racks
+│   │       │   ├── flat_bench
+│   │       │   ├── adjustable_bench
+│   │       │   ├── incline_bench
+│   │       │   ├── decline_bench
+│   │       │   ├── preacher_bench
+│   │       │   ├── bench_press_rack
+│   │       │   ├── squat_rack
+│   │       │   └── power_rack
+│   │       │
+│   │       ├── Cable Station
+│   │       │   ├── cable_machine
+│   │       │   ├── d_handle
+│   │       │   ├── rope_attachment
+│   │       │   ├── straight_bar_attachment
+│   │       │   ├── ez_bar_attachment
+│   │       │   ├── v_bar_attachment
+│   │       │   ├── lat_pulldown_bar
+│   │       │   └── ankle_strap
+│   │       │
+│   │       ├── Smith Machine
+│   │       │   └── smith_machine
+│   │       │
+│   │       ├── Bands
+│   │       │   ├── resistance_band
+│   │       │   ├── mini_band
+│   │       │   └── loop_band
+│   │       │
+│   │       ├── Selectorized Machines
+│   │       │   ├── selectorized_chest_press
+│   │       │   ├── selectorized_incline_press
+│   │       │   ├── selectorized_shoulder_press
+│   │       │   ├── selectorized_lateral_raise
+│   │       │   ├── selectorized_lat_pulldown
+│   │       │   ├── selectorized_seated_row
+│   │       │   ├── selectorized_pec_deck
+│   │       │   ├── selectorized_reverse_pec_deck
+│   │       │   ├── selectorized_preacher_curl
+│   │       │   ├── selectorized_triceps_extension
+│   │       │   ├── selectorized_leg_extension
+│   │       │   ├── selectorized_seated_leg_curl
+│   │       │   ├── selectorized_lying_leg_curl
+│   │       │   ├── selectorized_standing_leg_curl
+│   │       │   ├── selectorized_hip_abduction
+│   │       │   ├── selectorized_hip_adduction
+│   │       │   ├── selectorized_glute_kickback
+│   │       │   └── selectorized_ab_crunch
+│   │       │
+│   │       ├── Plate Loaded Machines
+│   │       │   ├── plate_loaded_chest_press
+│   │       │   ├── plate_loaded_row
+│   │       │   ├── plate_loaded_high_row
+│   │       │   ├── plate_loaded_lat_pulldown
+│   │       │   ├── plate_loaded_leg_press
+│   │       │   ├── plate_loaded_hack_squat
+│   │       │   ├── plate_loaded_pendulum_squat
+│   │       │   ├── plate_loaded_hip_thrust
+│   │       │   └── plate_loaded_shrug
+│   │       │
+│   │       ├── Lower Body Specialty Machines
+│   │       │   ├── belt_squat_machine
+│   │       │   ├── v_squat_machine
+│   │       │   ├── standing_calf_raise_machine
+│   │       │   ├── seated_calf_raise_machine
+│   │       │   ├── donkey_calf_raise_machine
+│   │       │   ├── glute_ham_developer
+│   │       │   └── back_extension_bench
+│   │       │
+│   │       ├── Assisted Machines
+│   │       │   ├── assisted_pull_up_machine
+│   │       │   └── assisted_dip_machine
+│   │       │
+│   │       ├── Cardio Machines
+│   │       │   ├── treadmill
+│   │       │   ├── stationary_bike
+│   │       │   ├── recumbent_bike
+│   │       │   ├── stair_climber
+│   │       │   ├── elliptical
+│   │       │   └── rowing_machine
+│   │       │
+│   │       └── Accessories
+│   │           ├── ab_wheel
+│   │           ├── stability_ball
+│   │           ├── step_platform
+│   │           └── dip_machine
+│   │
+│   ├── Movement Constraints
+│   │   ├── Pain Description
+│   │   │   └── Free text prompt
+│   │   │
+│   │   ├── Affected Area
+│   │   │   ├── Shoulder
+│   │   │   ├── Elbow
+│   │   │   ├── Wrist
+│   │   │   ├── Lower Back
+│   │   │   ├── Hip
+│   │   │   ├── Knee
+│   │   │   ├── Ankle
+│   │   │   └── Neck / Upper Back
+│   │   │
+│   │   ├── Pain Severity
+│   │   │   ├── Mild
+│   │   │   ├── Moderate
+│   │   │   └── Severe
+│   │   │
+│   │   ├── Training Rule
+│   │   │   ├── Avoid Completely
+│   │   │   ├── Reduce / Modify
+│   │   │   └── Allow if Pain-Free
+│   │   │
+│   │   └── AI Detected Movement Constraints
+│   │       └── User Confirmed Movement Patterns
+│   │
+│   ├── Exercise Preference
+│   │   └── Equipment Bias
+│   │       ├── Machines
+│   │       ├── Free Weights
+│   │       └── No Preference
+│   │
+│   ├── Cardio Profile
+│   │   ├── Cardio Role
+│   │   │   ├── None
+│   │   │   ├── Warm-up Only
+│   │   │   ├── Cardio Sessions
+│   │   │   └── Warm-up & Cardio
+│   │   │
+│   │   └── Preferred Modalities
+│   │
+│   └── Physical Notes (optional)
+│
+├── AI Coaching
+│   ├── Mode
+│   │   └── AI Coach (on/off)
+│   │
+│   ├── AI Behavior
+│   │   └── Autonomy Level
+│   │       ├── Manual (always approve)
+│   │       ├── Assisted (suggest + approve)
+│   │       └── Automatic (auto-apply + notify)
+│   │
+│   └── Change History (future)
+│       ├── AI Changes Log
+│       └── User Changes Log
+│
+├── Workout Experience
+│   └── Rest & Timing
+│       ├── Default Rest Timer
+│       └── Sound / Vibration Alerts
+│
+├── Interface
+│   └── Units
+│       ├── Weight (kg / lbs)
+│       └── Height (cm / ft)
+│
+└── Privacy & Data
+    └── Delete Account
+        └── Permanent Account Deletion
+
+--------------------------------------------------
+V1 - Version AI Builder ready.
+--------------------------------------------------
+
+Settings
+│
+├── Account
+│   ├── Profile
+│   │   ├── Name
+│   │   ├── Email (fictif dev exemple)
+│   │   ├── Username
+│   │   └── Profile Picture
+│
+├── Training Profile
+│   │
+│   ├── Goals
+│   │   ├── Primary Goal
+│   │   │   ├── Hypertrophy
+│   │   │   ├── Strength
+│   │   │   └── Mixed
+│   │   └── Muscle Priorities
+│   │       ├── Focus Areas [Primary Focus (1 max), Secondary Focus (0–2 max, optional)]
+│   │       │   ├── Chest
+│   │       │   │   └── upper chest
+│   │       │   │
+│   │       │   ├── Shoulders
+│   │       │   │   ├── front delts
+│   │       │   │   ├── side delts
+│   │       │   │   └── rear delts
+│   │       │   │
+│   │       │   ├── Back
+│   │       │   │   ├── lats
+│   │       │   │   └── upper back
+│   │       │   │
+│   │       │   ├── Arms
+│   │       │   │   ├── Biceps
+│   │       │   │   │   ├── biceps long head
+│   │       │   │   │   └── biceps short head
+│   │       │   │   │
+│   │       │   │   ├── Triceps
+│   │       │   │   │   ├── triceps long head
+│   │       │   │   │   └── triceps lateral head
+│   │       │   │   │
+│   │       │   │   └── forearms
+│   │       │   │
+│   │       │   ├── Legs
+│   │       │   │   ├── quadriceps
+│   │       │   │   ├── hamstrings
+│   │       │   │   ├── Glutes
+│   │       │   │   │   ├── glute max
+│   │       │   │   │   └── glute med
+│   │       │   │   ├── adductors
+│   │       │   │   └── Calves
+│   │       │   │       ├── gastrocnemius
+│   │       │   │       └── soleus
+│   │       │   │
+│   │       │   └── Core
+│   │       │       ├── Abs
+│   │       │       │   ├── upper abs
+│   │       │       │   └── lower abs
+│   │       │       ├── obliques
+│   │       │       └── lower back
+│   │       │
+│   │       └── Deprioritized Areas (optional, max 1)
+│   │           ├── Chest
+│   │           ├── Back
+│   │           ├── Shoulders
+│   │           ├── Arms
+│   │           ├── Legs
+│   │           ├── Core
+│   │           │
+│   │           ├── Biceps
+│   │           ├── Triceps
+│   │           ├── Forearms
+│   │           │
+│   │           ├── Quadriceps
+│   │           ├── Hamstrings
+│   │           ├── Glutes
+│   │           ├── Calves
+│   │           │
+│   │           ├── Abs
+│   │           └── Obliques
+│   │
+│   ├── Experience
+│   │   ├── Beginner
+│   │   ├── Intermediate
+│   │   └── Advanced
+│   │
+│   ├── Availability
+│   │   ├── Sessions per Week
+│   │   └── Duration per Session
+│   │
+│   ├── Environment
+│   │   ├── Training Environment
+│   │   │   ├── Gym
+│   │   │   └── Home
+│   │   │
+│   │   ├── Equipment Setup
+│   │   │   ├── Full Gym
+│   │   │   ├── Limited Gym
+│   │   │   ├── Home Gym
+│   │   │   └── Minimal
+│   │   │
+│   │   └── Equipment
+│   │       │
+│   │       ├── Bodyweight
+│   │       │   ├── bodyweight
+│   │       │   ├── pull_up_bar
+│   │       │   ├── dip_station
+│   │       │   ├── gymnastic_rings
+│   │       │   ├── push_up_handles
+│   │       │   └── parallettes
+│   │       │
+│   │       ├── Free Weights
+│   │       │   ├── dumbbells
+│   │       │   ├── kettlebell
+│   │       │   ├── weight_plates
+│   │       │   ├── olympic_barbell
+│   │       │   ├── ez_bar
+│   │       │   ├── straight_bar
+│   │       │   ├── trap_bar
+│   │       │   └── safety_squat_bar
+│   │       │
+│   │       ├── Benches & Racks
+│   │       │   ├── flat_bench
+│   │       │   ├── adjustable_bench
+│   │       │   ├── incline_bench
+│   │       │   ├── decline_bench
+│   │       │   ├── preacher_bench
+│   │       │   ├── bench_press_rack
+│   │       │   ├── squat_rack
+│   │       │   └── power_rack
+│   │       │
+│   │       ├── Cable Station
+│   │       │   ├── cable_machine
+│   │       │   ├── d_handle
+│   │       │   ├── rope_attachment
+│   │       │   ├── straight_bar_attachment
+│   │       │   ├── ez_bar_attachment
+│   │       │   ├── v_bar_attachment
+│   │       │   ├── lat_pulldown_bar
+│   │       │   └── ankle_strap
+│   │       │
+│   │       ├── Smith Machine
+│   │       │   └── smith_machine
+│   │       │
+│   │       ├── Bands
+│   │       │   ├── resistance_band
+│   │       │   ├── mini_band
+│   │       │   └── loop_band
+│   │       │
+│   │       ├── Selectorized Machines
+│   │       │   ├── selectorized_chest_press
+│   │       │   ├── selectorized_incline_press
+│   │       │   ├── selectorized_shoulder_press
+│   │       │   ├── selectorized_lateral_raise
+│   │       │   ├── selectorized_lat_pulldown
+│   │       │   ├── selectorized_seated_row
+│   │       │   ├── selectorized_pec_deck
+│   │       │   ├── selectorized_reverse_pec_deck
+│   │       │   ├── selectorized_preacher_curl
+│   │       │   ├── selectorized_triceps_extension
+│   │       │   ├── selectorized_leg_extension
+│   │       │   ├── selectorized_seated_leg_curl
+│   │       │   ├── selectorized_lying_leg_curl
+│   │       │   ├── selectorized_standing_leg_curl
+│   │       │   ├── selectorized_hip_abduction
+│   │       │   ├── selectorized_hip_adduction
+│   │       │   ├── selectorized_glute_kickback
+│   │       │   └── selectorized_ab_crunch
+│   │       │
+│   │       ├── Plate Loaded Machines
+│   │       │   ├── plate_loaded_chest_press
+│   │       │   ├── plate_loaded_row
+│   │       │   ├── plate_loaded_high_row
+│   │       │   ├── plate_loaded_lat_pulldown
+│   │       │   ├── plate_loaded_leg_press
+│   │       │   ├── plate_loaded_hack_squat
+│   │       │   ├── plate_loaded_pendulum_squat
+│   │       │   ├── plate_loaded_hip_thrust
+│   │       │   └── plate_loaded_shrug
+│   │       │
+│   │       ├── Lower Body Specialty Machines
+│   │       │   ├── belt_squat_machine
+│   │       │   ├── v_squat_machine
+│   │       │   ├── standing_calf_raise_machine
+│   │       │   ├── seated_calf_raise_machine
+│   │       │   ├── donkey_calf_raise_machine
+│   │       │   ├── glute_ham_developer
+│   │       │   └── back_extension_bench
+│   │       │
+│   │       ├── Assisted Machines
+│   │       │   ├── assisted_pull_up_machine
+│   │       │   └── assisted_dip_machine
+│   │       │
+│   │       ├── Cardio Machines
+│   │       │   ├── treadmill
+│   │       │   ├── stationary_bike
+│   │       │   ├── recumbent_bike
+│   │       │   ├── stair_climber
+│   │       │   ├── elliptical
+│   │       │   └── rowing_machine
+│   │       │
+│   │       └── Accessories
+│   │           ├── ab_wheel
+│   │           ├── stability_ball
+│   │           ├── step_platform
+│   │           └── dip_machine
+│   │
+│   ├── Movement Constraints
+│   │   ├── Pain Description
+│   │   │   └── Free text prompt
+│   │   │
+│   │   ├── Affected Area
+│   │   │   ├── Shoulder
+│   │   │   ├── Elbow
+│   │   │   ├── Wrist
+│   │   │   ├── Lower Back
+│   │   │   ├── Hip
+│   │   │   ├── Knee
+│   │   │   ├── Ankle
+│   │   │   └── Neck / Upper Back
+│   │   │
+│   │   ├── Pain Severity
+│   │   │   ├── Mild
+│   │   │   ├── Moderate
+│   │   │   └── Severe
+│   │   │
+│   │   ├── Training Rule
+│   │   │   ├── Avoid Completely
+│   │   │   ├── Reduce / Modify
+│   │   │   └── Allow if Pain-Free
+│   │   │
+│   │   └── AI Detected Movement Constraints
+│   │       └── User Confirmed Movement Patterns
+│   │
+│   ├── Exercise Preference
+│   │   └── Equipment Bias
+│   │       ├── Machines
+│   │       ├── Free Weights
+│   │       └── No Preference
+│   │
+│   ├── Cardio Profile
+│   │   ├── Cardio Role
+│   │   │   ├── None
+│   │   │   ├── Warm-up Only
+│   │   │   ├── Cardio Sessions
+│   │   │   └── Warm-up & Cardio
+│   │   │
+│   │   └── Preferred Modalities
+│   │
+│   └── Physical Notes (optional)
+│
+├── AI Coaching
+│   ├── Mode
+│   │   └── AI Coach (on/off)
+│   │
+│   ├── AI Behavior
+│   │   └── Autonomy Level
+│   │       ├── Manual (always approve)
+│   │       ├── Assisted (suggest + approve)
+│   │       └── Automatic (auto-apply + notify)
+│   │
+│   └── Change History (future)
+│       ├── AI Changes Log
+│       └── User Changes Log
+│
+├── Workout Experience
+│   └── Rest & Timing
+│       ├── Default Rest Timer
+│       └── Sound / Vibration Alerts
+│
+└── Interface
+    └── Units
+        ├── Weight (kg / lbs)
+        └── Height (cm / ft)
