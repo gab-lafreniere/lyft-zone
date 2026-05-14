@@ -133,6 +133,7 @@ model Exercise {
   cardioImpactLevel  String?
   cardioFatigueScore Int?
   lowerBodyFatigueBias String?
+  jointStressTags    Json            @default("[]")
   status             String
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt

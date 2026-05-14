@@ -336,6 +336,16 @@ function validateExercise(exercise, index, schema, enums, issues) {
       );
     }
 
+    if (Array.isArray(exercise.jointStressTags) && hasDuplicates(exercise.jointStressTags)) {
+      addIssue(
+        issues,
+        'error',
+        scope,
+        `jointStressTags contient des doublons: ${getDuplicates(exercise.jointStressTags).join(', ')}`,
+        exercise
+      );
+    }
+
     if (Array.isArray(exercise.targetMuscles) && Array.isArray(exercise.secondaryMuscles)) {
       const overlap = exercise.targetMuscles.filter((muscle) => exercise.secondaryMuscles.includes(muscle));
       if (overlap.length > 0) {

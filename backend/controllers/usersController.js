@@ -1,4 +1,10 @@
-const { ApiError, createUser, upsertUserProfile } = require('../services/usersService');
+const {
+  ApiError,
+  createUser,
+  getUserSettings,
+  upsertUserProfile,
+  updateTrainingProfileSettings,
+} = require('../services/usersService');
 
 function handleError(res, error) {
   if (error instanceof ApiError) {
@@ -6,6 +12,7 @@ function handleError(res, error) {
       error: {
         code: error.code,
         message: error.message,
+        details: error.details || undefined,
       },
     });
   }
@@ -37,7 +44,27 @@ async function upsertUserProfileHandler(req, res) {
   }
 }
 
+async function getUserSettingsHandler(req, res) {
+  try {
+    const settings = await getUserSettings(req.params.userId);
+    return res.status(200).json(settings);
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
+async function updateTrainingProfileSettingsHandler(req, res) {
+  try {
+    const settings = await updateTrainingProfileSettings(req.params.userId, req.body || {});
+    return res.status(200).json(settings);
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
 module.exports = {
   createUserHandler,
+  getUserSettingsHandler,
   upsertUserProfileHandler,
+  updateTrainingProfileSettingsHandler,
 };

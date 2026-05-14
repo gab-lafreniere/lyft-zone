@@ -53,6 +53,7 @@ function toExerciseRecord(exercise) {
     cardioImpactLevel: exercise.cardioImpactLevel ?? null,
     cardioFatigueScore: exercise.cardioFatigueScore ?? null,
     lowerBodyFatigueBias: exercise.lowerBodyFatigueBias ?? null,
+    jointStressTags: exercise.jointStressTags ?? [],
     status: exercise.status,
   };
 }
