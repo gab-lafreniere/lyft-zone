@@ -39,6 +39,7 @@ async function readJsonResponse(response) {
         `API error ${response.status}`
     );
     error.code = json?.error?.code || json?.code || null;
+    error.details = json?.error?.details || null;
     throw error;
   }
 
@@ -185,6 +186,27 @@ export async function getWeeklyPlanById(weeklyPlanParentId) {
     `${BACKEND_URL}/api/weekly-plans/${weeklyPlanParentId}?${new URLSearchParams({
       userId,
     }).toString()}`
+  );
+
+  return readJsonResponse(response);
+}
+
+export async function getUserSettings() {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(`${BACKEND_URL}/api/users/${userId}/settings`);
+
+  return readJsonResponse(response);
+}
+
+export async function updateTrainingProfileSettings(trainingProfileDraft) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/users/${userId}/settings/training-profile`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(trainingProfileDraft),
+    }
   );
 
   return readJsonResponse(response);

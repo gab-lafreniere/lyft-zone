@@ -907,6 +907,7 @@ Données par exercice:
 - commonMistakes
 - isSupersetFriendly
 - fatigueScore
+- jointStressTags
 - status
 
 Assets visuels:
@@ -916,6 +917,11 @@ Assets visuels:
 
 L’IA n’invente jamais d’exercices.
 Elle ne travaille que sur la base interne.
+
+jointStressTags:
+- Tags de contraintes mécaniques utilisés pour adapter ou filtrer les exercices en cas de douleur/inconfort
+- Ne représentent pas un diagnostic médical
+- Utilisés comme signaux de prudence pour substitution ou modification d’exercice
 
 ==================================================
 RÈGLES D’IDENTITÉ DES DONNÉES
@@ -1358,7 +1364,12 @@ Settings
 │   │   │   └── Allow if Pain-Free
 │   │   │
 │   │   └── AI Detected Movement Constraints
-│   │       └── User Confirmed Movement Patterns
+│   │       ├── L’IA peut proposer des contraintes basées sur
+│   │       │   ├── movementPattern
+│   │       │   ├── jointStressTags
+│   │       │   └── exercices spécifiques
+│   │       ├── L’utilisateur doit confirmer avant application
+│   │       └── Le système adapte ou remplace les exercices, sans poser de diagnostic médical
 │   │
 │   ├── Exercise Preference
 │   │   └── Equipment Bias
@@ -1721,7 +1732,12 @@ Settings
 │   │   │   └── Allow if Pain-Free
 │   │   │
 │   │   └── AI Detected Movement Constraints
-│   │       └── User Confirmed Movement Patterns
+│   │       ├── L’IA peut proposer des contraintes basées sur
+│   │       │   ├── movementPattern
+│   │       │   ├── jointStressTags
+│   │       │   └── exercices spécifiques
+│   │       ├── L’utilisateur doit confirmer avant application
+│   │       └── Le système adapte ou remplace les exercices, sans poser de diagnostic médical
 │   │
 │   ├── Exercise Preference
 │   │   └── Equipment Bias
@@ -2002,7 +2018,12 @@ Settings
 │   │   │   └── Allow if Pain-Free
 │   │   │
 │   │   └── AI Detected Movement Constraints
-│   │       └── User Confirmed Movement Patterns
+│   │       ├── L’IA peut proposer des contraintes basées sur
+│   │       │   ├── movementPattern
+│   │       │   ├── jointStressTags
+│   │       │   └── exercices spécifiques
+│   │       ├── L’utilisateur doit confirmer avant application
+│   │       └── Le système adapte ou remplace les exercices, sans poser de diagnostic médical
 │   │
 │   ├── Exercise Preference
 │   │   └── Equipment Bias
@@ -2044,3 +2065,21 @@ Settings
     └── Units
         ├── Weight (kg / lbs)
         └── Height (cm / ft)
+
+==================================================
+STRUCTURE DOMAIN BACKEND (V1)
+==================================================
+
+Nouvelles règles métier backend à centraliser:
+- `backend/src/domain/trainingProfile/`
+- `backend/src/domain/programGeneration/`
+- `backend/src/domain/exercises/`
+
+Principes:
+- le backend reste la source de vérité pour toutes les validations critiques
+- le frontend peut refléter les règles pour l’UX, mais ne remplace jamais la validation backend
+- les nouvelles règles de profil et de génération doivent vivre dans `domain`, pas dans les gros services legacy
+
+Persistance v1:
+- `userProfile.onboardingSnapshot` devient la source canonique du nouveau Training Profile
+- `trainingPreferences`, `equipmentContext`, `constraints` et `musclePriorities` sont des miroirs écrits depuis cette source canonique

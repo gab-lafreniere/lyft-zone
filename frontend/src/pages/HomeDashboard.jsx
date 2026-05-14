@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getHomeDashboard } from "../services/api";
+import SettingsDrawer from "../features/settings/SettingsDrawer";
 
 function getLocalDateInput() {
   const today = new Date();
@@ -42,6 +43,7 @@ export default function HomeDashboard() {
   const [error, setError] = useState("");
   const [selectedDate, setSelectedDate] = useState(() => getLocalDateInput());
   const [fixedScheduleDays, setFixedScheduleDays] = useState([]);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 4);
@@ -147,6 +149,7 @@ export default function HomeDashboard() {
               type="button"
               className="glass flex size-10 items-center justify-center rounded-full text-slate-700 shadow-sm"
               aria-label="Settings"
+              onClick={() => setIsSettingsOpen(true)}
             >
               <span className="material-symbols-outlined text-[22px]">settings</span>
             </button>
@@ -401,6 +404,11 @@ export default function HomeDashboard() {
 
         <div className="h-[calc(64px+max(8px,env(safe-area-inset-bottom)))]"></div>
       </main>
+
+      <SettingsDrawer
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+      />
     </div>
   );
 }
