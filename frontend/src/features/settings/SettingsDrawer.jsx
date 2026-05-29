@@ -9,12 +9,15 @@ import SettingsReadonlyScreen from "./SettingsReadonlyScreen";
 import SettingsStackHeader from "./SettingsStackHeader";
 import TrainingProfileSectionScreen from "./TrainingProfileSectionScreen";
 import {
+  SETTINGS_ROOT_GROUPS,
   SETTINGS_ROOT_ITEMS,
+  TRAINING_PROFILE_MENU_GROUPS,
   TRAINING_PROFILE_MENU_ITEMS,
   findSettingsRootItem,
   findTrainingProfileMenuItem,
   getTrainingProfileHasErrors,
   getTrainingProfileSectionErrorMap,
+  resolveSettingsMenuGroups,
 } from "./settingsOptions";
 import {
   createRootNavigationStack,
@@ -33,6 +36,9 @@ import {
   toTrainingProfilePayload,
 } from "./settingsMappers";
 import { validateTrainingProfileDraft } from "./settingsValidation";
+
+const AUTOSAVE_DEBOUNCE_MS = 700;
+const SAVED_FLASH_MS = 2500;
 
 function ReadonlyRow({ label, value }) {
   return (
@@ -63,19 +69,31 @@ function formatBooleanLabel(value) {
   return value ? "On" : "Off";
 }
 
+function serializeTrainingProfileDraft(trainingProfileDraft) {
+  return JSON.stringify(trainingProfileDraft || null);
+}
+
 export default function SettingsDrawer({ isOpen, onClose }) {
   const [settingsData, setSettingsData] = useState(null);
   const [trainingProfileDraft, setTrainingProfileDraft] = useState(null);
   const [initialTrainingProfileDraft, setInitialTrainingProfileDraft] = useState(null);
   const [navigationStack, setNavigationStack] = useState(createRootNavigationStack);
   const [isLoading, setIsLoading] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const [isAutoSavePending, setIsAutoSavePending] = useState(false);
   const [loadError, setLoadError] = useState("");
-  const [saveError, setSaveError] = useState("");
-  const [saveSuccess, setSaveSuccess] = useState("");
+  const [autosaveError, setAutosaveError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
   const [formErrors, setFormErrors] = useState([]);
-  const [hasTriedSave, setHasTriedSave] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  const [showSavedFeedback, setShowSavedFeedback] = useState(false);
+  const autosaveTimerRef = useRef(null);
+  const savedFlashTimerRef = useRef(null);
+  const latestDraftRef = useRef(null);
+  const inFlightSnapshotRef = useRef("");
+  const queuedSnapshotRef = useRef("");
+  const lastFailedSnapshotRef = useRef("");
+  const closeAfterSaveRef = useRef(false);
   const scrollContainerRef = useRef(null);
 
   const currentScreen = getCurrentScreen(navigationStack);
@@ -89,6 +107,14 @@ export default function SettingsDrawer({ isOpen, onClose }) {
     () => getTrainingProfileHasErrors(fieldErrors),
     [fieldErrors]
   );
+  const settingsRootGroups = useMemo(
+    () => resolveSettingsMenuGroups(SETTINGS_ROOT_GROUPS, SETTINGS_ROOT_ITEMS),
+    []
+  );
+  const trainingProfileMenuGroups = useMemo(
+    () => resolveSettingsMenuGroups(TRAINING_PROFILE_MENU_GROUPS, TRAINING_PROFILE_MENU_ITEMS),
+    []
+  );
 
   const hasUnsavedChanges = useMemo(
     () =>
@@ -97,6 +123,259 @@ export default function SettingsDrawer({ isOpen, onClose }) {
       !areTrainingProfilesEqual(trainingProfileDraft, initialTrainingProfileDraft),
     [initialTrainingProfileDraft, trainingProfileDraft]
   );
+
+  const autosaveStatus = useMemo(() => {
+    if (autosaveError) {
+      return { label: "Could not save", tone: "error" };
+    }
+
+    if (isAutoSavePending || isAutoSaving) {
+      return { label: "Saving...", tone: "neutral" };
+    }
+
+    if (showSavedFeedback && lastSavedAt) {
+      return { label: "Saved", tone: "success" };
+    }
+
+    return null;
+  }, [autosaveError, isAutoSavePending, isAutoSaving, lastSavedAt, showSavedFeedback]);
+
+  const clearAutosaveTimer = useCallback(() => {
+    if (autosaveTimerRef.current) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+  }, []);
+
+  const clearSavedFlashTimer = useCallback(() => {
+    if (savedFlashTimerRef.current) {
+      window.clearTimeout(savedFlashTimerRef.current);
+      savedFlashTimerRef.current = null;
+    }
+  }, []);
+
+  const showSavedFlash = useCallback(() => {
+    clearSavedFlashTimer();
+    setShowSavedFeedback(true);
+    savedFlashTimerRef.current = window.setTimeout(() => {
+      setShowSavedFeedback(false);
+      savedFlashTimerRef.current = null;
+    }, SAVED_FLASH_MS);
+  }, [clearSavedFlashTimer]);
+
+  const clearUiFeedback = useCallback(() => {
+    clearSavedFlashTimer();
+    setAutosaveError("");
+    setShowSavedFeedback(false);
+  }, [clearSavedFlashTimer]);
+
+  const clearValidationState = useCallback(() => {
+    setFieldErrors({});
+    setFormErrors([]);
+  }, []);
+
+  const clearAllTimers = useCallback(() => {
+    clearAutosaveTimer();
+    clearSavedFlashTimer();
+  }, [clearAutosaveTimer, clearSavedFlashTimer]);
+
+  const resetAutosaveRuntime = useCallback(() => {
+    setIsAutoSavePending(false);
+    setIsAutoSaving(false);
+    inFlightSnapshotRef.current = "";
+    queuedSnapshotRef.current = "";
+    lastFailedSnapshotRef.current = "";
+    closeAfterSaveRef.current = false;
+  }, []);
+
+  const resetToRoot = useCallback(() => {
+    setNavigationStack(createRootNavigationStack());
+  }, []);
+
+  const finalizeClose = useCallback(() => {
+    clearAllTimers();
+    resetAutosaveRuntime();
+    clearUiFeedback();
+    onClose();
+  }, [clearAllTimers, clearUiFeedback, onClose, resetAutosaveRuntime]);
+
+  const discardLocalChanges = useCallback(() => {
+    if (!initialTrainingProfileDraft) {
+      return;
+    }
+
+    const baselineDraft = deepClone(initialTrainingProfileDraft);
+    latestDraftRef.current = baselineDraft;
+    setTrainingProfileDraft(baselineDraft);
+    clearValidationState();
+    clearUiFeedback();
+    setLastSavedAt(null);
+    clearAllTimers();
+    resetAutosaveRuntime();
+  }, [
+    clearAllTimers,
+    clearUiFeedback,
+    clearValidationState,
+    initialTrainingProfileDraft,
+    resetAutosaveRuntime,
+  ]);
+
+  const loadSettings = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError("");
+    clearAllTimers();
+    resetAutosaveRuntime();
+    clearValidationState();
+    clearUiFeedback();
+    setLastSavedAt(null);
+
+    try {
+      const response = await getUserSettings();
+      const nextDraft = createTrainingProfileDraft(response);
+
+      latestDraftRef.current = nextDraft;
+      setSettingsData(response);
+      setTrainingProfileDraft(nextDraft);
+      setInitialTrainingProfileDraft(deepClone(nextDraft));
+      resetToRoot();
+    } catch (error) {
+      setLoadError(error?.message || "Unable to load settings.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [
+    clearAllTimers,
+    clearUiFeedback,
+    clearValidationState,
+    resetAutosaveRuntime,
+    resetToRoot,
+  ]);
+
+  const runAutosave = useCallback(
+    async ({ closeAfterSave = false } = {}) => {
+      const currentDraft = latestDraftRef.current;
+      const baselineSnapshot = serializeTrainingProfileDraft(initialTrainingProfileDraft);
+      const currentSnapshot = serializeTrainingProfileDraft(currentDraft);
+      const shouldCloseAfterSave = closeAfterSave || closeAfterSaveRef.current;
+
+      clearAutosaveTimer();
+      setIsAutoSavePending(false);
+
+      if (!currentDraft || currentSnapshot === baselineSnapshot) {
+        if (shouldCloseAfterSave) {
+          closeAfterSaveRef.current = false;
+          finalizeClose();
+        }
+        return;
+      }
+
+      const validation = validateTrainingProfileDraft(currentDraft);
+      if (!validation.ok) {
+        if (shouldCloseAfterSave) {
+          closeAfterSaveRef.current = false;
+        }
+        return;
+      }
+
+      if (currentSnapshot === lastFailedSnapshotRef.current) {
+        if (shouldCloseAfterSave) {
+          closeAfterSaveRef.current = false;
+        }
+        return;
+      }
+
+      if (inFlightSnapshotRef.current) {
+        queuedSnapshotRef.current = currentSnapshot;
+        if (closeAfterSave) {
+          closeAfterSaveRef.current = true;
+        }
+        return;
+      }
+
+      if (closeAfterSave) {
+        closeAfterSaveRef.current = true;
+      }
+
+      inFlightSnapshotRef.current = currentSnapshot;
+      setIsAutoSaving(true);
+      setAutosaveError("");
+      setShowSavedFeedback(false);
+
+      try {
+        const response = await updateTrainingProfileSettings(
+          toTrainingProfilePayload(currentDraft)
+        );
+        const responseDraft = createTrainingProfileDraft(response);
+        const latestSnapshotNow = serializeTrainingProfileDraft(latestDraftRef.current);
+        const responseSnapshot = serializeTrainingProfileDraft(responseDraft);
+        const hasNewerLocalDraft = latestSnapshotNow !== currentSnapshot;
+
+        setSettingsData(response);
+        setInitialTrainingProfileDraft(deepClone(responseDraft));
+        setLastSavedAt(Date.now());
+        lastFailedSnapshotRef.current = "";
+
+        if (!hasNewerLocalDraft) {
+          latestDraftRef.current = responseDraft;
+          setTrainingProfileDraft(responseDraft);
+          clearValidationState();
+          clearUiFeedback();
+          showSavedFlash();
+
+          if (
+            closeAfterSaveRef.current &&
+            latestSnapshotNow === currentSnapshot &&
+            responseSnapshot === serializeTrainingProfileDraft(responseDraft)
+          ) {
+            closeAfterSaveRef.current = false;
+            finalizeClose();
+            return;
+          }
+        } else {
+          queuedSnapshotRef.current = latestSnapshotNow;
+        }
+      } catch (error) {
+        const latestSnapshotNow = serializeTrainingProfileDraft(latestDraftRef.current);
+
+        if (latestSnapshotNow === currentSnapshot) {
+          const apiErrors = mapApiErrorDetails(error?.details);
+
+          lastFailedSnapshotRef.current = currentSnapshot;
+          setAutosaveError(error?.message || "Could not save");
+          setShowSavedFeedback(false);
+          setFieldErrors(apiErrors.fieldErrors);
+          setFormErrors(apiErrors.formErrors);
+          closeAfterSaveRef.current = false;
+        }
+      } finally {
+        const nextQueuedSnapshot = queuedSnapshotRef.current;
+
+        inFlightSnapshotRef.current = "";
+        queuedSnapshotRef.current = "";
+        setIsAutoSaving(false);
+
+        if (
+          nextQueuedSnapshot &&
+          nextQueuedSnapshot !== serializeTrainingProfileDraft(initialTrainingProfileDraft) &&
+          nextQueuedSnapshot !== lastFailedSnapshotRef.current
+        ) {
+          void runAutosave();
+        }
+      }
+    },
+    [
+      clearAutosaveTimer,
+      clearUiFeedback,
+      clearValidationState,
+      finalizeClose,
+      initialTrainingProfileDraft,
+      showSavedFlash,
+    ]
+  );
+
+  useEffect(() => {
+    latestDraftRef.current = trainingProfileDraft;
+  }, [trainingProfileDraft]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -135,117 +414,86 @@ export default function SettingsDrawer({ isOpen, onClose }) {
     scrollContainerRef.current?.scrollTo({ top: 0, behavior: "auto" });
   }, [isOpen, currentScreen?.id, screenParams.sectionId, screenParams.trainingProfileSectionId]);
 
-  const clearFeedbackState = useCallback(() => {
-    setFieldErrors({});
-    setFormErrors([]);
-    setSaveError("");
-    setSaveSuccess("");
-    setHasTriedSave(false);
-  }, []);
-
-  const resetToRoot = useCallback(() => {
-    setNavigationStack(createRootNavigationStack());
-  }, []);
-
-  const loadSettings = useCallback(async () => {
-    setIsLoading(true);
-    setLoadError("");
-    clearFeedbackState();
-
-    try {
-      const response = await getUserSettings();
-      const nextDraft = createTrainingProfileDraft(response);
-
-      setSettingsData(response);
-      setTrainingProfileDraft(nextDraft);
-      setInitialTrainingProfileDraft(deepClone(nextDraft));
-      resetToRoot();
-    } catch (error) {
-      setLoadError(error?.message || "Unable to load settings.");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [clearFeedbackState, resetToRoot]);
-
   useEffect(() => {
     if (!isOpen) {
       return;
     }
 
     resetToRoot();
+  }, [isOpen, resetToRoot]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
 
     if (!settingsData && !isLoading) {
       loadSettings();
     }
-  }, [isLoading, isOpen, loadSettings, resetToRoot, settingsData]);
+  }, [isLoading, isOpen, loadSettings, settingsData]);
 
-  function handleDraftChange(nextDraft) {
-    setTrainingProfileDraft(nextDraft);
-    setSaveError("");
-    setSaveSuccess("");
-
-    if (hasTriedSave) {
-      const validation = validateTrainingProfileDraft(nextDraft);
-      setFieldErrors(validation.fieldErrors);
-      setFormErrors(validation.formErrors);
+  useEffect(() => {
+    if (!isOpen || !trainingProfileDraft || !initialTrainingProfileDraft) {
+      clearAutosaveTimer();
+      setIsAutoSavePending(false);
       return;
     }
 
-    if (Object.keys(fieldErrors).length > 0 || formErrors.length > 0) {
-      setFieldErrors({});
-      setFormErrors([]);
-    }
-  }
-
-  function handleCancelEdits() {
-    if (!initialTrainingProfileDraft) {
+    if (inFlightSnapshotRef.current) {
+      clearAutosaveTimer();
+      setIsAutoSavePending(false);
       return;
     }
 
-    setTrainingProfileDraft(deepClone(initialTrainingProfileDraft));
-    clearFeedbackState();
-  }
+    const currentSnapshot = serializeTrainingProfileDraft(trainingProfileDraft);
+    const baselineSnapshot = serializeTrainingProfileDraft(initialTrainingProfileDraft);
 
-  async function handleSave() {
-    if (!trainingProfileDraft) {
+    if (currentSnapshot === baselineSnapshot) {
+      clearAutosaveTimer();
+      setIsAutoSavePending(false);
       return;
     }
-
-    setHasTriedSave(true);
-    setSaveError("");
-    setSaveSuccess("");
 
     const validation = validateTrainingProfileDraft(trainingProfileDraft);
-    setFieldErrors(validation.fieldErrors);
-    setFormErrors(validation.formErrors);
-
-    if (!validation.ok) {
+    if (!validation.ok || currentSnapshot === lastFailedSnapshotRef.current) {
+      clearAutosaveTimer();
+      setIsAutoSavePending(false);
       return;
     }
 
-    setIsSaving(true);
+    clearAutosaveTimer();
+    setIsAutoSavePending(true);
+    autosaveTimerRef.current = window.setTimeout(() => {
+      void runAutosave();
+    }, AUTOSAVE_DEBOUNCE_MS);
 
-    try {
-      const response = await updateTrainingProfileSettings(
-        toTrainingProfilePayload(trainingProfileDraft)
-      );
-      const nextDraft = createTrainingProfileDraft(response);
+    return () => {
+      clearAutosaveTimer();
+      setIsAutoSavePending(false);
+    };
+  }, [
+    clearAutosaveTimer,
+    initialTrainingProfileDraft,
+    isOpen,
+    runAutosave,
+    trainingProfileDraft,
+  ]);
 
-      setSettingsData(response);
-      setTrainingProfileDraft(nextDraft);
-      setInitialTrainingProfileDraft(deepClone(nextDraft));
-      setFieldErrors({});
-      setFormErrors([]);
-      setSaveSuccess("Training profile saved.");
-      setHasTriedSave(false);
-    } catch (error) {
-      const apiErrors = mapApiErrorDetails(error?.details);
+  useEffect(() => () => clearAllTimers(), [clearAllTimers]);
 
-      setSaveError(error?.message || "Unable to save training profile.");
-      setFieldErrors(apiErrors.fieldErrors);
-      setFormErrors(apiErrors.formErrors);
-    } finally {
-      setIsSaving(false);
+  function handleDraftChange(nextDraft) {
+    const nextSnapshot = serializeTrainingProfileDraft(nextDraft);
+    const validation = validateTrainingProfileDraft(nextDraft);
+
+    latestDraftRef.current = nextDraft;
+    setTrainingProfileDraft(nextDraft);
+    setFieldErrors(validation.fieldErrors);
+    setFormErrors(validation.formErrors);
+    setAutosaveError("");
+    setShowSavedFeedback(false);
+
+    if (inFlightSnapshotRef.current && nextSnapshot !== inFlightSnapshotRef.current) {
+      queuedSnapshotRef.current = nextSnapshot;
     }
   }
 
@@ -258,25 +506,34 @@ export default function SettingsDrawer({ isOpen, onClose }) {
   }
 
   function requestClose() {
-    if (isSaving) {
+    const validation = validateTrainingProfileDraft(trainingProfileDraft);
+    const hasLocalValidationError = Boolean(trainingProfileDraft) && !validation.ok;
+
+    if (!hasUnsavedChanges) {
+      finalizeClose();
       return;
     }
 
-    if (hasUnsavedChanges) {
-      const shouldDiscard = window.confirm("Discard unsaved changes?");
+    if (hasLocalValidationError || autosaveError) {
+      const shouldDiscard = window.confirm(
+        "You have changes that could not be saved. Close and discard them?"
+      );
 
       if (!shouldDiscard) {
         return;
       }
 
-      if (initialTrainingProfileDraft) {
-        setTrainingProfileDraft(deepClone(initialTrainingProfileDraft));
-      }
+      discardLocalChanges();
+      finalizeClose();
+      return;
     }
 
-    clearFeedbackState();
-    resetToRoot();
-    onClose();
+    if (isAutoSavePending || isAutoSaving) {
+      void runAutosave({ closeAfterSave: true });
+      return;
+    }
+
+    void runAutosave({ closeAfterSave: true });
   }
 
   function handleRootItemSelect(item) {
@@ -293,34 +550,18 @@ export default function SettingsDrawer({ isOpen, onClose }) {
   }
 
   function renderTrainingProfileFeedback() {
-    if (!isTrainingProfileScreen(currentScreen)) {
+    if (!isTrainingProfileScreen(currentScreen) || formErrors.length === 0) {
       return null;
     }
 
     return (
-      <div className="space-y-3">
-        {saveSuccess ? (
-          <StatusBanner tone="success" title="Saved">
-            {saveSuccess}
-          </StatusBanner>
-        ) : null}
-
-        {saveError ? (
-          <StatusBanner tone="error" title="Save Error">
-            {saveError}
-          </StatusBanner>
-        ) : null}
-
-        {formErrors.length > 0 ? (
-          <StatusBanner tone="error" title="Validation Issues">
-            <ul className="list-disc pl-5">
-              {formErrors.map((message) => (
-                <li key={message}>{message}</li>
-              ))}
-            </ul>
-          </StatusBanner>
-        ) : null}
-      </div>
+      <StatusBanner tone="error" title="Validation Issues">
+        <ul className="list-disc pl-5">
+          {formErrors.map((message) => (
+            <li key={message}>{message}</li>
+          ))}
+        </ul>
+      </StatusBanner>
     );
   }
 
@@ -329,9 +570,8 @@ export default function SettingsDrawer({ isOpen, onClose }) {
 
     return (
       <SettingsReadonlyScreen
-        eyebrow="Settings"
-        title="Account"
         description="Read-only placeholders stay visible until account editing is available."
+        showTitle={false}
       >
         <div className="mb-5 flex items-center gap-4">
           <div className="flex size-16 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-400">
@@ -363,9 +603,8 @@ export default function SettingsDrawer({ isOpen, onClose }) {
 
     return (
       <SettingsReadonlyScreen
-        eyebrow="Settings"
-        title="AI Coaching"
         description="Read-only for V1. No AI Builder or coaching controls are added here."
+        showTitle={false}
       >
         <dl>
           <ReadonlyRow label="Mode" value={formatReadonlyValue(aiCoaching.mode)} />
@@ -383,9 +622,8 @@ export default function SettingsDrawer({ isOpen, onClose }) {
 
     return (
       <SettingsReadonlyScreen
-        eyebrow="Settings"
-        title="Workout Experience"
         description="Timing controls are visible but not editable in this version."
+        showTitle={false}
       >
         <dl>
           <ReadonlyRow
@@ -405,11 +643,7 @@ export default function SettingsDrawer({ isOpen, onClose }) {
     const units = settingsData?.interface?.units || {};
 
     return (
-      <SettingsReadonlyScreen
-        eyebrow="Settings"
-        title="Interface"
-        description="Units are read-only in V1."
-      >
+      <SettingsReadonlyScreen description="Units are read-only in V1." showTitle={false}>
         <dl>
           <ReadonlyRow label="Weight Unit" value={formatReadonlyValue(units.weight)} />
           <ReadonlyRow label="Height Unit" value={formatReadonlyValue(units.height)} />
@@ -437,24 +671,27 @@ export default function SettingsDrawer({ isOpen, onClose }) {
     const rootItemStateMap = {
       trainingProfile: hasTrainingProfileErrors
         ? {
-            badge: "Error",
-            meta: hasUnsavedChanges ? "Unsaved changes and validation issues" : "Validation issues",
-          }
-        : hasUnsavedChanges
+          badge: "Error",
+          meta: "Validation issues",
+        }
+        : autosaveError
           ? {
-              meta: "Unsaved changes",
+            meta: "Changes not saved",
+          }
+          : isAutoSavePending || isAutoSaving
+            ? {
+              meta: "Saving...",
             }
-          : {},
+            : {},
     };
 
     return (
       <SettingsMenuScreen
-        eyebrow="Settings"
-        title="Settings"
-        description="Move through each area like a focused mobile app, without losing your current draft."
-        items={SETTINGS_ROOT_ITEMS}
+        groups={settingsRootGroups}
         itemStateMap={rootItemStateMap}
         onSelect={handleRootItemSelect}
+        showTitle={false}
+        showIcons
       />
     );
   }
@@ -471,12 +708,11 @@ export default function SettingsDrawer({ isOpen, onClose }) {
       <div className="space-y-6">
         {renderTrainingProfileFeedback()}
         <SettingsMenuScreen
-          eyebrow="Training Profile"
-          title="Training Profile"
-          description="Each section opens as its own focused screen while keeping one shared draft and one shared save flow."
-          items={TRAINING_PROFILE_MENU_ITEMS}
+          groups={trainingProfileMenuGroups}
           itemStateMap={itemStateMap}
           onSelect={handleTrainingProfileItemSelect}
+          showTitle={false}
+          showIcons={false}
         />
       </div>
     );
@@ -499,6 +735,7 @@ export default function SettingsDrawer({ isOpen, onClose }) {
           draft={trainingProfileDraft}
           onChange={handleDraftChange}
           fieldErrors={fieldErrors}
+          showTitle={false}
         />
       </div>
     );
@@ -549,7 +786,6 @@ export default function SettingsDrawer({ isOpen, onClose }) {
   }
 
   const headerCopy = getHeaderCopy();
-  const showTrainingProfileFooter = isTrainingProfileScreen(currentScreen) && trainingProfileDraft;
 
   if (!isOpen) {
     return null;
@@ -572,6 +808,7 @@ export default function SettingsDrawer({ isOpen, onClose }) {
             canGoBack={canGoBack}
             onBack={popScreen}
             onClose={requestClose}
+            status={autosaveStatus}
           />
 
           {isLoading ? (
@@ -599,48 +836,9 @@ export default function SettingsDrawer({ isOpen, onClose }) {
               </div>
             </div>
           ) : (
-            <>
-              <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto">
-                <div className="min-h-full px-4 py-5 pb-32 md:px-6 md:py-7 md:pb-36">
-                  {renderCurrentScreen()}
-                </div>
-              </div>
-
-              {showTrainingProfileFooter ? (
-                <div className="sticky bottom-0 z-20 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur md:px-6">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div className="text-xs font-medium text-slate-500">
-                      {hasUnsavedChanges ? "You have unsaved changes." : "No unsaved changes."}
-                    </div>
-
-                    <div className="flex flex-col gap-3 md:flex-row">
-                      <Button
-                        variant="secondary"
-                        onClick={handleCancelEdits}
-                        disabled={!hasUnsavedChanges || isSaving}
-                        className="w-full md:w-auto"
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={handleSave}
-                        disabled={!hasUnsavedChanges || isSaving}
-                        className="w-full md:w-auto"
-                      >
-                        {isSaving ? (
-                          <>
-                            <span className="size-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                            Saving...
-                          </>
-                        ) : (
-                          "Save"
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-            </>
+            <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto">
+              <div className="min-h-full px-4 py-5 md:px-6 md:py-7">{renderCurrentScreen()}</div>
+            </div>
           )}
         </div>
       </div>

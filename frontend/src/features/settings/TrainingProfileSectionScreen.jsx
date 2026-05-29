@@ -7,18 +7,27 @@ export default function TrainingProfileSectionScreen({
   draft,
   onChange,
   fieldErrors,
+  showTitle = true,
 }) {
   return (
     <div className="space-y-6">
-      <div>
-        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">
-          Training Profile
-        </p>
-        <h2 className="mt-2 text-[1.9rem] font-black tracking-tight text-slate-900">{title}</h2>
-        {description ? (
-          <p className="mt-3 max-w-xl text-sm leading-relaxed text-slate-500">{description}</p>
-        ) : null}
-      </div>
+      {showTitle ? (
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">
+            Training Profile
+          </p>
+          <h2 className="mt-2 text-[1.9rem] font-black tracking-tight text-slate-900">
+            {title}
+          </h2>
+          {description ? (
+            <p className="mt-3 max-w-xl text-sm leading-relaxed text-slate-500">
+              {description}
+            </p>
+          ) : null}
+        </div>
+      ) : description ? (
+        <p className="max-w-xl text-sm leading-relaxed text-slate-500">{description}</p>
+      ) : null}
 
       <TrainingProfileForm
         sectionId={sectionId}

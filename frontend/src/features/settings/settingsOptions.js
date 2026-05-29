@@ -3,14 +3,16 @@ export const SETTINGS_ROOT_ITEMS = [
     id: "trainingProfile",
     label: "Training Profile",
     description: "Goals, experience, availability, environment, and movement signals.",
+    menuDescription: "",
     icon: "fitness_center",
     screenId: "training-profile-menu",
     readonly: false,
   },
   {
     id: "account",
-    label: "Account",
+    label: "Profile",
     description: "Profile identity and account basics.",
+    menuDescription: "",
     icon: "person",
     screenId: "settings-section",
     readonly: true,
@@ -19,6 +21,7 @@ export const SETTINGS_ROOT_ITEMS = [
     id: "aiCoaching",
     label: "AI Coaching",
     description: "Current coaching mode and future AI controls.",
+    menuDescription: "",
     icon: "neurology",
     screenId: "settings-section",
     readonly: true,
@@ -27,14 +30,16 @@ export const SETTINGS_ROOT_ITEMS = [
     id: "workoutExperience",
     label: "Workout Experience",
     description: "Rest timer and in-workout behavior preferences.",
+    menuDescription: "",
     icon: "timer",
     screenId: "settings-section",
     readonly: true,
   },
   {
     id: "interface",
-    label: "Interface",
+    label: "Units & Interface",
     description: "Units and interface defaults.",
+    menuDescription: "",
     icon: "tune",
     screenId: "settings-section",
     readonly: true,
@@ -51,6 +56,7 @@ export const TRAINING_PROFILE_MENU_ITEMS = [
     id: "goals",
     label: "Goals",
     description: "Primary goal and muscle priority signals.",
+    menuDescription: "",
     screenId: "training-profile-section",
     errorPaths: ["primaryGoal", "musclePriorities"],
   },
@@ -58,6 +64,7 @@ export const TRAINING_PROFILE_MENU_ITEMS = [
     id: "experience",
     label: "Experience",
     description: "Current lifting experience level.",
+    menuDescription: "",
     screenId: "training-profile-section",
     errorPaths: ["experience"],
   },
@@ -65,6 +72,7 @@ export const TRAINING_PROFILE_MENU_ITEMS = [
     id: "availability",
     label: "Availability",
     description: "Weekly training volume and session length.",
+    menuDescription: "",
     screenId: "training-profile-section",
     errorPaths: ["availability"],
   },
@@ -72,6 +80,7 @@ export const TRAINING_PROFILE_MENU_ITEMS = [
     id: "environment",
     label: "Environment",
     description: "Training environment, setup, and available equipment.",
+    menuDescription: "",
     screenId: "training-profile-section",
     errorPaths: ["environment"],
   },
@@ -79,6 +88,7 @@ export const TRAINING_PROFILE_MENU_ITEMS = [
     id: "movementConstraints",
     label: "Movement Constraints",
     description: "Soft signals, hard blocks, and pain context.",
+    menuDescription: "",
     screenId: "training-profile-section",
     errorPaths: ["movementConstraints"],
   },
@@ -86,6 +96,7 @@ export const TRAINING_PROFILE_MENU_ITEMS = [
     id: "exercisePreference",
     label: "Exercise Preference",
     description: "Optional equipment bias.",
+    menuDescription: "",
     screenId: "training-profile-section",
     errorPaths: ["exercisePreference"],
   },
@@ -93,6 +104,7 @@ export const TRAINING_PROFILE_MENU_ITEMS = [
     id: "cardioProfile",
     label: "Cardio Profile",
     description: "Cardio role and preferred modalities.",
+    menuDescription: "",
     screenId: "training-profile-section",
     errorPaths: ["cardioProfile"],
   },
@@ -100,10 +112,33 @@ export const TRAINING_PROFILE_MENU_ITEMS = [
     id: "physicalNotes",
     label: "Physical Notes",
     description: "Extra context for future builder logic.",
+    menuDescription: "",
     screenId: "training-profile-section",
     errorPaths: ["physicalNotes"],
   },
 ];
+
+export const SETTINGS_ROOT_GROUPS = [
+  { label: "Training", itemIds: ["trainingProfile", "aiCoaching"] },
+  { label: "Account", itemIds: ["account"] },
+  { label: "Preferences", itemIds: ["workoutExperience", "interface"] },
+];
+
+export const TRAINING_PROFILE_MENU_GROUPS = [
+  { label: "Plan Inputs", itemIds: ["goals", "experience", "availability"] },
+  { label: "Gym Setup", itemIds: ["environment", "exercisePreference"] },
+  { label: "Constraints", itemIds: ["movementConstraints"] },
+  { label: "Cardio & Notes", itemIds: ["cardioProfile", "physicalNotes"] },
+];
+
+export function resolveSettingsMenuGroups(groups, items) {
+  const itemsById = new Map((items || []).map((item) => [item.id, item]));
+
+  return (groups || []).map((group) => ({
+    ...group,
+    items: (group.itemIds || []).map((itemId) => itemsById.get(itemId)).filter(Boolean),
+  }));
+}
 
 function hasErrorForPath(fieldErrors, path) {
   if (!path) {

@@ -1,10 +1,18 @@
 export default function SettingsStackHeader({
   eyebrow,
   title,
+  status,
   canGoBack,
   onBack,
   onClose,
 }) {
+  const statusClasses =
+    status?.tone === "error"
+      ? "text-red-600"
+      : status?.tone === "success"
+        ? "text-emerald-600"
+        : "text-slate-500";
+
   return (
     <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/95 px-4 py-3 backdrop-blur md:px-6">
       <div className="flex items-center justify-between gap-3">
@@ -29,6 +37,14 @@ export default function SettingsStackHeader({
               </p>
             ) : null}
             <h1 className="truncate text-xl font-bold tracking-tight text-slate-900">{title}</h1>
+            {status ? (
+              <p
+                aria-live="polite"
+                className={["mt-1 text-xs font-medium", statusClasses].join(" ")}
+              >
+                {status.label}
+              </p>
+            ) : null}
           </div>
         </div>
 
