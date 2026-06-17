@@ -8,18 +8,16 @@ const {
 test('resolveEquipmentContext separates hard constraints and soft equipment bias', () => {
   const result = resolveEquipmentContext({
     environment: {
-      trainingEnvironment: 'commercial_gym',
-      equipmentSetup: 'full_gym',
-      equipmentList: ['dumbbells', 'selectorized_machine', 'dumbbells'],
+      equipmentPreset: 'full_gym',
+      availableEquipment: ['dumbbells', 'shoulder_press_machine', 'dumbbells'],
     },
     exercisePreference: {
       equipmentBias: 'machines',
     },
   });
 
-  assert.equal(result.trainingEnvironment, 'commercial_gym');
-  assert.equal(result.equipmentSetup, 'full_gym');
-  assert.deepEqual(result.availableEquipment, ['dumbbells', 'selectorized_machine']);
+  assert.equal(result.equipmentPreset, 'full_gym');
+  assert.deepEqual(result.availableEquipment, ['dumbbells', 'shoulder_press_machine']);
   assert.equal(result.equipmentBias, 'machines');
   assert.equal(result.hardConstraints[0].type, 'available_equipment');
   assert.equal(result.softBiases[0].value, 'machines');
@@ -28,9 +26,8 @@ test('resolveEquipmentContext separates hard constraints and soft equipment bias
 test('resolveEquipmentContext keeps no_preference neutral', () => {
   const result = resolveEquipmentContext({
     environment: {
-      trainingEnvironment: 'home_gym',
-      equipmentSetup: 'basic_home',
-      equipmentList: [],
+      equipmentPreset: null,
+      availableEquipment: ['bodyweight'],
     },
     exercisePreference: {
       equipmentBias: 'no_preference',
@@ -38,4 +35,20 @@ test('resolveEquipmentContext keeps no_preference neutral', () => {
   });
 
   assert.deepEqual(result.softBiases, []);
+});
+
+test('resolveEquipmentContext reads legacy fields and normalizes equipment aliases', () => {
+  const result = resolveEquipmentContext({
+    environment: {
+      trainingEnvironment: 'home',
+      equipmentSetup: 'limited_gym',
+      equipmentList: ['selectorized_shoulder_press'],
+    },
+    exercisePreference: {
+      equipmentBias: 'no_preference',
+    },
+  });
+
+  assert.equal(result.equipmentPreset, 'commercial_gym');
+  assert.deepEqual(result.availableEquipment, ['shoulder_press_machine']);
 });

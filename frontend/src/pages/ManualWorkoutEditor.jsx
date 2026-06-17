@@ -831,6 +831,7 @@ export default function ManualWorkoutEditor() {
         const results = await fetchExercises({
           q: debouncedSearchQuery,
           limit: searchLimit,
+          status: "approved",
           ...structuredQueryFilters,
         });
 

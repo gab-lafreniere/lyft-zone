@@ -98,7 +98,7 @@ function resolvePoolContext(userId, snapshot) {
     primaryGoal: profile.primaryGoal || null,
     musclePriorityProfile:
       derived.musclePriorityProfile || resolveMusclePriorityProfile(profile),
-    equipmentContext: derived.equipmentContext || resolveEquipmentContext(profile),
+    equipmentContext: resolveEquipmentContext(profile),
     movementConstraints:
       derived.movementConstraints || resolveMovementConstraints(profile),
     cardioProfile: profile.cardioProfile || {

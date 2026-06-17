@@ -10,6 +10,12 @@ const {
 const {
   TRAINING_PROFILE_SCHEMA_VERSION,
 } = require('./trainingProfileMapper');
+const {
+  resolveEnvironmentInput,
+} = require('./trainingProfileEnvironment');
+const {
+  normalizeMovementConstraintsInput,
+} = require('./trainingProfileValidation');
 
 function createDefaultTrainingProfile() {
   return {
@@ -25,22 +31,12 @@ function createDefaultTrainingProfile() {
       durationPerSession: null,
     },
     environment: {
-      trainingEnvironment: null,
-      equipmentSetup: null,
-      equipmentList: [],
+      equipmentPreset: null,
+      availableEquipment: ['bodyweight'],
     },
     movementConstraints: {
-      painDescription: null,
-      affectedArea: null,
-      painSeverity: 'none',
-      trainingRule: 'none',
-      aiDetectedPatterns: [],
-      confirmedPatterns: [],
-      cautionMovementPatterns: [],
-      blockedMovementPatterns: [],
-      cautionJointStressTags: [],
-      blockedJointStressTags: [],
-      blockedExerciseIds: [],
+      painIssues: [],
+      manualBlockedExerciseIds: [],
     },
     exercisePreference: {
       equipmentBias: 'no_preference',
@@ -50,6 +46,18 @@ function createDefaultTrainingProfile() {
       preferredModalities: [],
     },
     physicalNotes: null,
+  };
+}
+
+function modernizeTrainingProfile(profile) {
+  const sourceProfile = profile && typeof profile === 'object'
+    ? profile
+    : createDefaultTrainingProfile();
+
+  return {
+    ...sourceProfile,
+    environment: resolveEnvironmentInput(sourceProfile.environment),
+    movementConstraints: normalizeMovementConstraintsInput(sourceProfile.movementConstraints, []),
   };
 }
 
@@ -77,14 +85,9 @@ function resolveSnapshot(snapshot) {
     snapshot.profile && typeof snapshot.profile === 'object'
   );
   const profile = hasTrainingProfile
-    ? snapshot.profile
+    ? modernizeTrainingProfile(snapshot.profile)
     : createDefaultTrainingProfile();
-  const derived =
-    hasTrainingProfile &&
-    snapshot.derived &&
-    typeof snapshot.derived === 'object'
-      ? snapshot.derived
-      : deriveTrainingProfile(profile);
+  const derived = deriveTrainingProfile(profile);
 
   return {
     profile,

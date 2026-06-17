@@ -19,22 +19,29 @@ function createValidPayload() {
       durationPerSession: 75,
     },
     environment: {
-      trainingEnvironment: 'commercial_gym',
-      equipmentSetup: 'full_gym',
-      equipmentList: ['dumbbells', 'selectorized_machine'],
+      equipmentPreset: 'full_gym',
+      availableEquipment: ['dumbbells', 'shoulder_press_machine'],
     },
     movementConstraints: {
-      painDescription: 'Shoulder irritation on some overhead work',
-      affectedArea: 'shoulder',
-      painSeverity: 'moderate',
-      trainingRule: 'modify',
-      aiDetectedPatterns: ['overhead_press'],
-      confirmedPatterns: ['overhead_press'],
-      cautionMovementPatterns: ['horizontal_press'],
-      blockedMovementPatterns: ['vertical_push'],
-      cautionJointStressTags: ['shoulder_rotation'],
-      blockedJointStressTags: ['shoulder_compression'],
-      blockedExerciseIds: ['ex_barbell_press'],
+      painIssues: [
+        {
+          id: 'issue_shoulder',
+          description: 'Shoulder irritation on some overhead work',
+          affectedArea: 'shoulder',
+          painSeverity: 'moderate',
+          trainingRule: 'modify',
+          analysisStatus: 'analyzed',
+          detectedSignals: [
+            { type: 'movementPattern', value: 'vertical_push' },
+            { type: 'jointStressTag', value: 'overhead_shoulder_position' },
+          ],
+          confirmedSignals: [
+            { type: 'movementPattern', value: 'vertical_push', decision: 'caution' },
+            { type: 'jointStressTag', value: 'overhead_shoulder_position', decision: 'blocked' },
+          ],
+        },
+      ],
+      manualBlockedExerciseIds: ['ex_barbell_press'],
     },
     exercisePreference: {
       equipmentBias: 'machines',
@@ -52,14 +59,203 @@ test('validateTrainingProfileInput accepts a valid canonical onboarding payload'
 
   assert.equal(result.ok, true);
   assert.equal(result.value.primaryGoal, 'HYPERTROPHY');
+  assert.equal(result.value.environment.equipmentPreset, 'full_gym');
+  assert.deepEqual(result.value.environment.availableEquipment, [
+    'dumbbells',
+    'shoulder_press_machine',
+  ]);
   assert.equal(result.value.musclePriorities.primaryFocus, 'upper_chest');
   assert.deepEqual(result.value.musclePriorities.secondaryFocuses, ['lats', 'rear_delts']);
   assert.equal(result.value.exercisePreference.equipmentBias, 'machines');
-  assert.deepEqual(result.value.movementConstraints.cautionMovementPatterns, ['horizontal_press']);
-  assert.deepEqual(result.value.movementConstraints.blockedMovementPatterns, ['vertical_push']);
-  assert.deepEqual(result.value.movementConstraints.cautionJointStressTags, ['shoulder_rotation']);
-  assert.deepEqual(result.value.movementConstraints.blockedJointStressTags, ['shoulder_compression']);
-  assert.deepEqual(result.value.movementConstraints.blockedExerciseIds, ['ex_barbell_press']);
+  assert.deepEqual(result.value.movementConstraints.manualBlockedExerciseIds, [
+    'ex_barbell_press',
+  ]);
+  assert.deepEqual(result.value.movementConstraints.painIssues[0].confirmedSignals, [
+    { type: 'movementPattern', value: 'vertical_push', decision: 'caution' },
+    { type: 'jointStressTag', value: 'overhead_shoulder_position', decision: 'blocked' },
+  ]);
+});
+
+test('validateTrainingProfileInput defaults omitted movementConstraints to V2 empty constraints', () => {
+  const payload = createValidPayload();
+  delete payload.movementConstraints;
+
+  const result = validateTrainingProfileInput(payload);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value.movementConstraints, {
+    painIssues: [],
+    manualBlockedExerciseIds: [],
+  });
+});
+
+test('validateTrainingProfileInput accepts empty movementConstraints', () => {
+  const payload = createValidPayload();
+  payload.movementConstraints = {};
+
+  const result = validateTrainingProfileInput(payload);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value.movementConstraints, {
+    painIssues: [],
+    manualBlockedExerciseIds: [],
+  });
+});
+
+test('validateTrainingProfileInput normalizes and deduplicates V2 signals and manual blocks', () => {
+  const payload = createValidPayload();
+  payload.movementConstraints = {
+    painIssues: [
+      {
+        id: 'issue_knee',
+        description: 'Knee discomfort during deep squats',
+        affectedArea: 'KNEE',
+        painSeverity: 'HIGH',
+        trainingRule: 'AVOID',
+        detectedSignals: [
+          { type: 'movementPattern', value: ' squat_pattern ' },
+          { type: 'movementPattern', value: 'squat_pattern' },
+        ],
+        confirmedSignals: [
+          { type: 'jointStressTag', value: ' deep_knee_flexion ', decision: 'BLOCKED' },
+          { type: 'jointStressTag', value: 'deep_knee_flexion', decision: 'blocked' },
+        ],
+      },
+    ],
+    manualBlockedExerciseIds: [' EXR_DEADLIFT ', 'exr_deadlift'],
+  };
+
+  const result = validateTrainingProfileInput(payload);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.value.movementConstraints.painIssues[0].analysisStatus, 'draft');
+  assert.deepEqual(result.value.movementConstraints.painIssues[0].detectedSignals, [
+    { type: 'movementPattern', value: 'squat_pattern' },
+  ]);
+  assert.deepEqual(result.value.movementConstraints.painIssues[0].confirmedSignals, [
+    { type: 'jointStressTag', value: 'deep_knee_flexion', decision: 'blocked' },
+  ]);
+  assert.deepEqual(result.value.movementConstraints.manualBlockedExerciseIds, ['exr_deadlift']);
+});
+
+test('validateTrainingProfileInput rejects invalid pain issue and signal values', () => {
+  const payload = createValidPayload();
+  payload.movementConstraints = {
+    painIssues: [
+      {
+        id: 'issue_bad',
+        description: 'x'.repeat(501),
+        affectedArea: 'shoulders',
+        painSeverity: 'medium',
+        trainingRule: 'skip',
+        analysisStatus: 'complete',
+        detectedSignals: [{ type: 'exerciseId', value: 'ex_123' }],
+        confirmedSignals: [
+          { type: 'movementPattern', value: 'not_real', decision: 'caution' },
+          { type: 'jointStressTag', value: 'deep_knee_flexion', decision: 'maybe' },
+        ],
+      },
+    ],
+  };
+
+  const result = validateTrainingProfileInput(payload);
+
+  assert.equal(result.ok, false);
+  assert.match(JSON.stringify(result.issues), /Pain issue description must be at most 500/);
+  assert.match(JSON.stringify(result.issues), /affectedArea is invalid/);
+  assert.match(JSON.stringify(result.issues), /painSeverity is invalid/);
+  assert.match(JSON.stringify(result.issues), /trainingRule is invalid/);
+  assert.match(JSON.stringify(result.issues), /analysisStatus is invalid/);
+  assert.match(JSON.stringify(result.issues), /Signal type is invalid/);
+  assert.match(JSON.stringify(result.issues), /Signal value is invalid/);
+  assert.match(JSON.stringify(result.issues), /Signal decision is invalid/);
+});
+
+test('validateTrainingProfileInput rejects too many pain issues and contradictory decisions', () => {
+  const payload = createValidPayload();
+  payload.movementConstraints = {
+    painIssues: Array.from({ length: 6 }, (_, index) => ({
+      id: `issue_${index}`,
+      description: 'Shoulder issue',
+      affectedArea: 'shoulder',
+      painSeverity: 'low',
+      trainingRule: 'monitor',
+      analysisStatus: 'analyzed',
+      confirmedSignals:
+        index === 0
+          ? [
+              { type: 'movementPattern', value: 'vertical_push', decision: 'caution' },
+              { type: 'movementPattern', value: 'vertical_push', decision: 'blocked' },
+            ]
+          : [],
+    })),
+  };
+
+  const result = validateTrainingProfileInput(payload);
+
+  assert.equal(result.ok, false);
+  assert.match(JSON.stringify(result.issues), /painIssues must contain at most 5 issues/);
+  assert.match(JSON.stringify(result.issues), /Signal cannot be both caution and blocked/);
+});
+
+test('validateTrainingProfileInput rejects missing persisted pain issue fields', () => {
+  const payload = createValidPayload();
+  payload.movementConstraints = {
+    painIssues: [{}],
+  };
+
+  const result = validateTrainingProfileInput(payload);
+
+  assert.equal(result.ok, false);
+  assert.match(JSON.stringify(result.issues), /Pain issue id is required/);
+  assert.match(JSON.stringify(result.issues), /Pain issue description is required/);
+  assert.match(JSON.stringify(result.issues), /affectedArea is required/);
+  assert.match(JSON.stringify(result.issues), /painSeverity is required/);
+  assert.match(JSON.stringify(result.issues), /trainingRule is required/);
+});
+
+test('validateTrainingProfileInput accepts backend compatibility pain values', () => {
+  const payload = createValidPayload();
+  payload.movementConstraints.painIssues[0].painSeverity = 'none';
+  payload.movementConstraints.painIssues[0].trainingRule = 'limit';
+
+  const result = validateTrainingProfileInput(payload);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.value.movementConstraints.painIssues[0].painSeverity, 'none');
+  assert.equal(result.value.movementConstraints.painIssues[0].trainingRule, 'limit');
+});
+
+test('validateTrainingProfileInput accepts legacy environment fields and normalizes aliases', () => {
+  const payload = createValidPayload();
+  payload.environment = {
+    trainingEnvironment: 'gym',
+    equipmentSetup: 'limited_gym',
+    equipmentList: ['selectorized_shoulder_press', 'dumbbells'],
+  };
+
+  const result = validateTrainingProfileInput(payload);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.value.environment.equipmentPreset, 'commercial_gym');
+  assert.deepEqual(result.value.environment.availableEquipment, [
+    'shoulder_press_machine',
+    'dumbbells',
+  ]);
+});
+
+test('validateTrainingProfileInput accepts nullable equipmentPreset and defaults empty equipment to bodyweight', () => {
+  const payload = createValidPayload();
+  payload.environment = {
+    equipmentPreset: null,
+    availableEquipment: [],
+  };
+
+  const result = validateTrainingProfileInput(payload);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.value.environment.equipmentPreset, null);
+  assert.deepEqual(result.value.environment.availableEquipment, ['bodyweight']);
 });
 
 test('validateTrainingProfileInput rejects more than two secondary focuses', () => {
@@ -130,6 +326,6 @@ test('validateTrainingProfileInput rejects incomplete onboarding payloads', () =
 
   assert.equal(result.ok, false);
   assert.match(JSON.stringify(result.issues), /experience is required/);
-  assert.match(JSON.stringify(result.issues), /trainingEnvironment is required/);
-  assert.match(JSON.stringify(result.issues), /equipmentSetup is required/);
+  assert.doesNotMatch(JSON.stringify(result.issues), /trainingEnvironment is required/);
+  assert.doesNotMatch(JSON.stringify(result.issues), /equipmentSetup is required/);
 });

@@ -23,22 +23,29 @@ function createValidPayload() {
       durationPerSession: 75,
     },
     environment: {
-      trainingEnvironment: 'commercial_gym',
-      equipmentSetup: 'full_gym',
-      equipmentList: ['dumbbells', 'selectorized_machine'],
+      equipmentPreset: 'full_gym',
+      availableEquipment: ['dumbbells', 'shoulder_press_machine'],
     },
     movementConstraints: {
-      painDescription: 'Shoulder irritation',
-      affectedArea: 'shoulder',
-      painSeverity: 'moderate',
-      trainingRule: 'modify',
-      aiDetectedPatterns: ['overhead_press'],
-      confirmedPatterns: ['overhead_press'],
-      cautionMovementPatterns: ['horizontal_press'],
-      blockedMovementPatterns: ['vertical_push'],
-      cautionJointStressTags: ['shoulder_rotation'],
-      blockedJointStressTags: ['shoulder_compression'],
-      blockedExerciseIds: ['ex_barbell_press'],
+      painIssues: [
+        {
+          id: 'issue_shoulder',
+          description: 'Shoulder irritation',
+          affectedArea: 'shoulder',
+          painSeverity: 'moderate',
+          trainingRule: 'modify',
+          analysisStatus: 'analyzed',
+          detectedSignals: [
+            { type: 'movementPattern', value: 'vertical_push' },
+            { type: 'jointStressTag', value: 'overhead_shoulder_position' },
+          ],
+          confirmedSignals: [
+            { type: 'movementPattern', value: 'vertical_push', decision: 'caution' },
+            { type: 'jointStressTag', value: 'overhead_shoulder_position', decision: 'blocked' },
+          ],
+        },
+      ],
+      manualBlockedExerciseIds: ['ex_barbell_press'],
     },
     exercisePreference: {
       equipmentBias: 'machines',
@@ -64,16 +71,27 @@ test('mapTrainingProfileToUserProfileUpdate writes the canonical snapshot and mi
   assert.deepEqual(mapped.onboardingSnapshot.profile, validation.value);
   assert.equal(mapped.trainingPreferences.experience, 'intermediate');
   assert.equal(mapped.equipmentContext.equipmentBias, 'machines');
-  assert.equal(mapped.constraints.trainingRule, 'modify');
-  assert.deepEqual(mapped.constraints.cautionMovementPatterns, ['horizontal_press']);
-  assert.deepEqual(mapped.constraints.blockedMovementPatterns, ['vertical_push']);
-  assert.deepEqual(mapped.constraints.cautionJointStressTags, ['shoulder_rotation']);
-  assert.deepEqual(mapped.constraints.blockedJointStressTags, ['shoulder_compression']);
+  assert.equal(mapped.equipmentContext.equipmentPreset, 'full_gym');
+  assert.deepEqual(mapped.equipmentContext.availableEquipment, [
+    'dumbbells',
+    'shoulder_press_machine',
+  ]);
+  assert.equal(Object.prototype.hasOwnProperty.call(mapped.equipmentContext, 'equipmentList'), false);
+  assert.deepEqual(mapped.constraints.cautionMovementPatterns, ['vertical_push']);
+  assert.deepEqual(mapped.constraints.blockedMovementPatterns, []);
+  assert.deepEqual(mapped.constraints.cautionJointStressTags, []);
+  assert.deepEqual(mapped.constraints.blockedJointStressTags, ['overhead_shoulder_position']);
+  assert.deepEqual(mapped.constraints.manualBlockedExerciseIds, ['ex_barbell_press']);
   assert.deepEqual(mapped.constraints.blockedExerciseIds, ['ex_barbell_press']);
+  assert.deepEqual(mapped.constraints.debug, {
+    manualBlockedExerciseCount: 1,
+    ruleDerivedBlockedExerciseCount: null,
+  });
   assert.deepEqual(
     mapped.onboardingSnapshot.derived.movementConstraints.blockedMovementPatterns,
-    ['vertical_push']
+    []
   );
+  assert.deepEqual(mapped.onboardingSnapshot.derived.movementConstraints, mapped.constraints);
   assert.equal(mapped.musclePriorities.weights.primary, 1);
   assert.equal(mapped.musclePriorities.perAreaWeights.upper_chest, 1);
   assert.equal(mapped.musclePriorities.perAreaWeights.quadriceps, 0.35);

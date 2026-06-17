@@ -6,15 +6,28 @@ export default function CollapsibleBlock({
   description,
   badge,
   defaultOpen = false,
+  isOpen: controlledIsOpen,
+  onToggle,
   children,
 }) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+  const [uncontrolledIsOpen, setUncontrolledIsOpen] = useState(defaultOpen);
+  const isControlled = typeof controlledIsOpen === "boolean";
+  const isOpen = isControlled ? controlledIsOpen : uncontrolledIsOpen;
+
+  function handleToggle() {
+    if (isControlled) {
+      onToggle?.();
+      return;
+    }
+
+    setUncontrolledIsOpen((currentValue) => !currentValue);
+  }
 
   return (
     <div className="overflow-hidden rounded-[20px] border border-slate-200 bg-white">
       <button
         type="button"
-        onClick={() => setIsOpen((currentValue) => !currentValue)}
+        onClick={handleToggle}
         className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left"
       >
         <div className="min-w-0 flex-1">

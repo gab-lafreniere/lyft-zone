@@ -90,6 +90,7 @@ export const fetchExercises = async ({
   equipmentCategory = [],
   trainingType = [],
   difficulty = [],
+  status = '',
 } = {}) => {
     const params = new URLSearchParams();
     params.set('limit', String(limit));
@@ -110,6 +111,9 @@ export const fetchExercises = async ({
     }
     if (difficulty.length) {
       params.set('difficulty', difficulty.join(','));
+    }
+    if (status) {
+      params.set('status', status);
     }
 
     const response = await fetch(`${BACKEND_URL}/api/exercises?${params.toString()}`);

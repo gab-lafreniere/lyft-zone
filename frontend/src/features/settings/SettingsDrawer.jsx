@@ -33,6 +33,8 @@ import {
   deepClone,
   formatReadonlyValue,
   mapApiErrorDetails,
+  mergeLocalIncompletePainIssues,
+  serializePersistableTrainingProfileDraft,
   toTrainingProfilePayload,
 } from "./settingsMappers";
 import { validateTrainingProfileDraft } from "./settingsValidation";
@@ -70,6 +72,10 @@ function formatBooleanLabel(value) {
 }
 
 function serializeTrainingProfileDraft(trainingProfileDraft) {
+  return serializePersistableTrainingProfileDraft(trainingProfileDraft);
+}
+
+function serializeRawTrainingProfileDraft(trainingProfileDraft) {
   return JSON.stringify(trainingProfileDraft || null);
 }
 
@@ -256,6 +262,7 @@ export default function SettingsDrawer({ isOpen, onClose }) {
       const currentDraft = latestDraftRef.current;
       const baselineSnapshot = serializeTrainingProfileDraft(initialTrainingProfileDraft);
       const currentSnapshot = serializeTrainingProfileDraft(currentDraft);
+      const currentRawSnapshot = serializeRawTrainingProfileDraft(currentDraft);
       const shouldCloseAfterSave = closeAfterSave || closeAfterSaveRef.current;
 
       clearAutosaveTimer();
@@ -307,8 +314,14 @@ export default function SettingsDrawer({ isOpen, onClose }) {
         );
         const responseDraft = createTrainingProfileDraft(response);
         const latestSnapshotNow = serializeTrainingProfileDraft(latestDraftRef.current);
+        const latestRawSnapshotNow = serializeRawTrainingProfileDraft(latestDraftRef.current);
         const responseSnapshot = serializeTrainingProfileDraft(responseDraft);
-        const hasNewerLocalDraft = latestSnapshotNow !== currentSnapshot;
+        const hasNewerLocalDraft =
+          latestSnapshotNow !== currentSnapshot || latestRawSnapshotNow !== currentRawSnapshot;
+        const nextResponseDraft =
+          latestRawSnapshotNow !== currentRawSnapshot
+            ? mergeLocalIncompletePainIssues(responseDraft, latestDraftRef.current)
+            : responseDraft;
 
         setSettingsData(response);
         setInitialTrainingProfileDraft(deepClone(responseDraft));
@@ -316,8 +329,8 @@ export default function SettingsDrawer({ isOpen, onClose }) {
         lastFailedSnapshotRef.current = "";
 
         if (!hasNewerLocalDraft) {
-          latestDraftRef.current = responseDraft;
-          setTrainingProfileDraft(responseDraft);
+          latestDraftRef.current = nextResponseDraft;
+          setTrainingProfileDraft(nextResponseDraft);
           clearValidationState();
           clearUiFeedback();
           showSavedFlash();

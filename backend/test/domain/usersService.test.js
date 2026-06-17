@@ -32,22 +32,29 @@ function createCanonicalPayload() {
       durationPerSession: 75,
     },
     environment: {
-      trainingEnvironment: 'commercial_gym',
-      equipmentSetup: 'full_gym',
-      equipmentList: ['dumbbells', 'selectorized_machine'],
+      equipmentPreset: 'full_gym',
+      availableEquipment: ['dumbbells', 'shoulder_press_machine'],
     },
     movementConstraints: {
-      painDescription: 'Shoulder irritation',
-      affectedArea: 'shoulder',
-      painSeverity: 'moderate',
-      trainingRule: 'modify',
-      aiDetectedPatterns: ['overhead_press'],
-      confirmedPatterns: ['overhead_press'],
-      cautionMovementPatterns: ['horizontal_press'],
-      blockedMovementPatterns: ['vertical_push'],
-      cautionJointStressTags: ['shoulder_rotation'],
-      blockedJointStressTags: ['shoulder_compression'],
-      blockedExerciseIds: ['ex_barbell_press'],
+      painIssues: [
+        {
+          id: 'issue_shoulder',
+          description: 'Shoulder irritation',
+          affectedArea: 'shoulder',
+          painSeverity: 'moderate',
+          trainingRule: 'modify',
+          analysisStatus: 'analyzed',
+          detectedSignals: [
+            { type: 'movementPattern', value: 'vertical_push' },
+            { type: 'jointStressTag', value: 'overhead_shoulder_position' },
+          ],
+          confirmedSignals: [
+            { type: 'movementPattern', value: 'vertical_push', decision: 'caution' },
+            { type: 'jointStressTag', value: 'overhead_shoulder_position', decision: 'blocked' },
+          ],
+        },
+      ],
+      manualBlockedExerciseIds: ['ex_barbell_press'],
     },
     exercisePreference: {
       equipmentBias: 'machines',
@@ -108,9 +115,75 @@ test('getUserSettings returns frontend-friendly defaults when userProfile is mis
   assert.equal(result.interface.units.weight, 'kg');
   assert.equal(result.interface.units.height, 'cm');
   assert.equal(result.trainingProfile.profile.primaryGoal, null);
-  assert.deepEqual(result.trainingProfile.profile.environment.equipmentList, []);
+  assert.deepEqual(result.trainingProfile.profile.environment, {
+    equipmentPreset: null,
+    availableEquipment: ['bodyweight'],
+  });
+  assert.deepEqual(result.trainingProfile.profile.movementConstraints, {
+    painIssues: [],
+    manualBlockedExerciseIds: [],
+  });
   assert.equal(result.trainingProfile.derived.musclePriorityProfile.weights.primary, 1);
   assert.deepEqual(result.trainingProfile.derived.movementConstraints.blockedExerciseIds, []);
+  assert.deepEqual(result.trainingProfile.derived.movementConstraints.debug, {
+    manualBlockedExerciseCount: 0,
+    ruleDerivedBlockedExerciseCount: null,
+  });
+});
+
+test('getUserSettings modernizes legacy snapshot environments without persisting on GET', async () => {
+  let upsertCalled = false;
+  const legacyProfile = createNormalizedCanonicalProfile({
+    environment: {
+      trainingEnvironment: 'gym',
+      equipmentSetup: 'limited_gym',
+      equipmentList: ['selectorized_shoulder_press'],
+    },
+  });
+  const prisma = {
+    user: {
+      findUnique: async () => ({
+        id: 'user_123',
+        email: 'athlete@example.com',
+        profile: {
+          trainingMode: 'FIXED',
+          onboardingSnapshot: {
+            schemaVersion: TRAINING_PROFILE_SCHEMA_VERSION,
+            profile: {
+              ...legacyProfile,
+              environment: {
+                trainingEnvironment: 'gym',
+                equipmentSetup: 'limited_gym',
+                equipmentList: ['selectorized_shoulder_press'],
+              },
+            },
+            derived: {
+              equipmentContext: {
+                equipmentSetup: 'limited_gym',
+                equipmentList: ['selectorized_shoulder_press'],
+              },
+            },
+          },
+        },
+      }),
+    },
+    userProfile: {
+      upsert: async () => {
+        upsertCalled = true;
+      },
+    },
+  };
+
+  const result = await getUserSettings('user_123', { prisma });
+
+  assert.equal(upsertCalled, false);
+  assert.deepEqual(result.trainingProfile.profile.environment, {
+    equipmentPreset: 'commercial_gym',
+    availableEquipment: ['shoulder_press_machine'],
+  });
+  assert.deepEqual(result.trainingProfile.derived.equipmentContext.availableEquipment, [
+    'shoulder_press_machine',
+  ]);
 });
 
 test('getUserSettings returns the canonical snapshot and derived data when present', async () => {

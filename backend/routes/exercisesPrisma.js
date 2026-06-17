@@ -2,6 +2,8 @@ const express = require('express');
 const { getPrisma } = require('../lib/prisma');
 
 const router = express.Router();
+const EXERCISE_STATUS_APPROVED = 'approved';
+const EXERCISE_STATUS_ALL = 'all';
 
 function norm(value) {
   return String(value || '').trim().toLowerCase();
@@ -16,6 +18,28 @@ function parseCsvParam(value) {
     .split(',')
     .map(norm)
     .filter(Boolean);
+}
+
+function parseStatusParam(value) {
+  const status = norm(value);
+
+  if (!status) {
+    return null;
+  }
+
+  if (status === EXERCISE_STATUS_ALL || status === EXERCISE_STATUS_APPROVED) {
+    return status;
+  }
+
+  return undefined;
+}
+
+function filterExercisesByStatus(exercises, status) {
+  if (!status || status === EXERCISE_STATUS_ALL) {
+    return exercises;
+  }
+
+  return exercises.filter((exercise) => norm(exercise.status) === status);
 }
 
 function includesValue(values, expected) {
@@ -85,6 +109,77 @@ async function listExercises() {
   });
 }
 
+function buildExerciseListResponse(exercises, query = {}) {
+  const q = norm(query.q);
+  const bodyParts = parseCsvParam(query.bodyParts);
+  const muscleFocus = parseCsvParam(query.muscleFocus);
+  const equipmentCategory = parseCsvParam(query.equipmentCategory);
+  const trainingType = parseCsvParam(query.trainingType);
+  const difficulty = parseCsvParam(query.difficulty);
+  const status = parseStatusParam(query.status);
+  const limit = Math.min(Math.max(parseInt(query.limit || '25', 10), 1), 150);
+  const cursor = Math.max(parseInt(query.cursor || '0', 10), 0);
+
+  if (status === undefined) {
+    return {
+      validationError: {
+        status: 400,
+        body: {
+          success: false,
+          message: 'status is invalid',
+        },
+      },
+    };
+  }
+
+  let results = filterExercisesByStatus(exercises, status);
+
+  if (bodyParts.length) {
+    results = results.filter((exercise) =>
+      includesAnyValue(exercise.bodyParts, bodyParts)
+    );
+  }
+
+  if (muscleFocus.length) {
+    results = results.filter(
+      (exercise) => includesAnyValue(exercise.muscleFocus, muscleFocus)
+    );
+  }
+
+  if (equipmentCategory.length) {
+    results = results.filter((exercise) =>
+      matchesEquipmentCategory(exercise.equipmentCategory, equipmentCategory)
+    );
+  }
+
+  if (trainingType.length) {
+    results = results.filter((exercise) =>
+      trainingType.includes(norm(exercise.trainingType))
+    );
+  }
+
+  if (difficulty.length) {
+    results = results.filter((exercise) =>
+      difficulty.includes(norm(exercise.difficulty))
+    );
+  }
+
+  if (q) {
+    results = results.filter((exercise) => buildSearchText(exercise).includes(q));
+  }
+
+  const items = results.slice(cursor, cursor + limit);
+  const nextCursor = cursor + items.length < results.length ? String(cursor + items.length) : null;
+
+  return {
+    body: {
+      items,
+      nextCursor,
+      total: results.length,
+    },
+  };
+}
+
 router.get('/filters', async (req, res) => {
   try {
     const exercises = await listExercises();
@@ -144,59 +239,13 @@ router.get('/:id', async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    const q = norm(req.query.q);
-    const bodyParts = parseCsvParam(req.query.bodyParts);
-    const muscleFocus = parseCsvParam(req.query.muscleFocus);
-    const equipmentCategory = parseCsvParam(req.query.equipmentCategory);
-    const trainingType = parseCsvParam(req.query.trainingType);
-    const difficulty = parseCsvParam(req.query.difficulty);
-    const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10), 1), 150);
-    const cursor = Math.max(parseInt(req.query.cursor || '0', 10), 0);
+    const result = buildExerciseListResponse(await listExercises(), req.query);
 
-    let results = await listExercises();
-
-    if (bodyParts.length) {
-      results = results.filter((exercise) =>
-        includesAnyValue(exercise.bodyParts, bodyParts)
-      );
+    if (result.validationError) {
+      return res.status(result.validationError.status).json(result.validationError.body);
     }
 
-    if (muscleFocus.length) {
-      results = results.filter(
-        (exercise) => includesAnyValue(exercise.muscleFocus, muscleFocus)
-      );
-    }
-
-    if (equipmentCategory.length) {
-      results = results.filter((exercise) =>
-        matchesEquipmentCategory(exercise.equipmentCategory, equipmentCategory)
-      );
-    }
-
-    if (trainingType.length) {
-      results = results.filter((exercise) =>
-        trainingType.includes(norm(exercise.trainingType))
-      );
-    }
-
-    if (difficulty.length) {
-      results = results.filter((exercise) =>
-        difficulty.includes(norm(exercise.difficulty))
-      );
-    }
-
-    if (q) {
-      results = results.filter((exercise) => buildSearchText(exercise).includes(q));
-    }
-
-    const items = results.slice(cursor, cursor + limit);
-    const nextCursor = cursor + items.length < results.length ? String(cursor + items.length) : null;
-
-    res.json({
-      items,
-      nextCursor,
-      total: results.length,
-    });
+    res.json(result.body);
   } catch (error) {
     console.error('Error fetching exercises:', error);
     res.status(500).json({
@@ -208,3 +257,8 @@ router.get('/', async (req, res) => {
 });
 
 module.exports = router;
+module.exports._test = {
+  buildExerciseListResponse,
+  filterExercisesByStatus,
+  parseStatusParam,
+};

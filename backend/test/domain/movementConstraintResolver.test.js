@@ -5,61 +5,146 @@ const {
   resolveMovementConstraints,
 } = require('../../src/domain/programGeneration/movementConstraintResolver');
 
-test('resolveMovementConstraints surfaces caution patterns for moderate pain', () => {
-  const result = resolveMovementConstraints({
+function resolveWithIssue(issueOverrides = {}, movementOverrides = {}) {
+  return resolveMovementConstraints({
     movementConstraints: {
-      painDescription: 'Bench press hurts my shoulder',
-      affectedArea: 'shoulder',
-      painSeverity: 'moderate',
-      trainingRule: 'modify',
-      aiDetectedPatterns: ['overhead_press'],
-      confirmedPatterns: ['overhead_press'],
+      painIssues: [
+        {
+          id: 'issue_shoulder',
+          description: 'Shoulder irritation',
+          affectedArea: 'shoulder',
+          painSeverity: 'moderate',
+          trainingRule: 'modify',
+          analysisStatus: 'analyzed',
+          detectedSignals: [],
+          confirmedSignals: [],
+          ...issueOverrides,
+        },
+      ],
+      manualBlockedExerciseIds: [],
+      ...movementOverrides,
     },
   });
+}
 
-  assert.equal(result.painDescription, 'Bench press hurts my shoulder');
-  assert.equal(result.affectedArea, 'shoulder');
+test('resolveMovementConstraints does not derive from detected signals alone', () => {
+  const result = resolveWithIssue({
+    detectedSignals: [{ type: 'movementPattern', value: 'vertical_push' }],
+    confirmedSignals: [],
+  });
+
+  assert.deepEqual(result.cautionMovementPatterns, []);
   assert.deepEqual(result.blockedMovementPatterns, []);
-  assert.deepEqual(result.cautionMovementPatterns, ['overhead_press']);
-  assert.deepEqual(result.blockedJointStressTags, []);
   assert.deepEqual(result.cautionJointStressTags, []);
-  assert.deepEqual(result.blockedExerciseIds, []);
+  assert.deepEqual(result.blockedJointStressTags, []);
 });
 
-test('resolveMovementConstraints does not promote detected patterns to hard blocks from rule or severity', () => {
+test('resolveMovementConstraints ignores draft and needs_reanalysis issues', () => {
+  const draftResult = resolveWithIssue({
+    analysisStatus: 'draft',
+    confirmedSignals: [{ type: 'movementPattern', value: 'vertical_push', decision: 'blocked' }],
+  });
+  const staleResult = resolveWithIssue({
+    analysisStatus: 'needs_reanalysis',
+    confirmedSignals: [{ type: 'jointStressTag', value: 'deep_knee_flexion', decision: 'blocked' }],
+  });
+
+  assert.deepEqual(draftResult.blockedMovementPatterns, []);
+  assert.deepEqual(staleResult.blockedJointStressTags, []);
+});
+
+test('resolveMovementConstraints derives constraints from analyzed confirmed signals', () => {
+  const result = resolveWithIssue({
+    confirmedSignals: [
+      { type: 'movementPattern', value: 'vertical_push', decision: 'caution' },
+      { type: 'movementPattern', value: 'hip_hinge', decision: 'blocked' },
+      { type: 'jointStressTag', value: 'deep_knee_flexion', decision: 'caution' },
+      { type: 'jointStressTag', value: 'spinal_loading', decision: 'blocked' },
+    ],
+  });
+
+  assert.deepEqual(result.cautionMovementPatterns, ['vertical_push']);
+  assert.deepEqual(result.blockedMovementPatterns, ['hip_hinge']);
+  assert.deepEqual(result.cautionJointStressTags, ['deep_knee_flexion']);
+  assert.deepEqual(result.blockedJointStressTags, ['spinal_loading']);
+});
+
+test('resolveMovementConstraints aggregates multiple issues and manual blocks', () => {
   const result = resolveMovementConstraints({
     movementConstraints: {
-      affectedArea: 'knee',
-      painSeverity: 'high',
-      trainingRule: 'avoid',
-      aiDetectedPatterns: ['deep_knee_flexion'],
-      confirmedPatterns: ['deep_knee_flexion'],
+      painIssues: [
+        {
+          id: 'issue_shoulder',
+          description: 'Shoulder irritation',
+          affectedArea: 'shoulder',
+          painSeverity: 'moderate',
+          trainingRule: 'modify',
+          analysisStatus: 'analyzed',
+          detectedSignals: [],
+          confirmedSignals: [
+            { type: 'movementPattern', value: 'vertical_push', decision: 'blocked' },
+            { type: 'jointStressTag', value: 'overhead_shoulder_position', decision: 'caution' },
+          ],
+        },
+        {
+          id: 'issue_knee',
+          description: 'Knee discomfort',
+          affectedArea: 'knee',
+          painSeverity: 'high',
+          trainingRule: 'avoid',
+          analysisStatus: 'analyzed',
+          detectedSignals: [],
+          confirmedSignals: [
+            { type: 'movementPattern', value: 'vertical_push', decision: 'blocked' },
+            { type: 'jointStressTag', value: 'deep_knee_flexion', decision: 'blocked' },
+          ],
+        },
+      ],
+      manualBlockedExerciseIds: ['ex_deadlift', 'ex_deadlift', 'ex_upright_row'],
     },
   });
 
-  assert.deepEqual(result.blockedMovementPatterns, []);
-  assert.deepEqual(result.cautionMovementPatterns, ['deep_knee_flexion']);
+  assert.deepEqual(result.blockedMovementPatterns, ['vertical_push']);
+  assert.deepEqual(result.cautionJointStressTags, ['overhead_shoulder_position']);
+  assert.deepEqual(result.blockedJointStressTags, ['deep_knee_flexion']);
+  assert.deepEqual(result.manualBlockedExerciseIds, ['ex_deadlift', 'ex_upright_row']);
+  assert.deepEqual(result.blockedExerciseIds, ['ex_deadlift', 'ex_upright_row']);
+  assert.deepEqual(result.debug, {
+    manualBlockedExerciseCount: 2,
+    ruleDerivedBlockedExerciseCount: null,
+  });
 });
 
-test('resolveMovementConstraints preserves explicit blocked and caution arrays from the normalized profile', () => {
+test('resolveMovementConstraints preserves legacy explicit advanced arrays as fallback', () => {
   const result = resolveMovementConstraints({
     movementConstraints: {
-      affectedArea: 'shoulder',
-      painSeverity: 'moderate',
-      trainingRule: 'modify',
       aiDetectedPatterns: ['vertical_push'],
       confirmedPatterns: ['horizontal_push'],
-      cautionMovementPatterns: ['scapular_plane_press'],
+      cautionMovementPatterns: ['hip_hinge'],
       blockedMovementPatterns: ['vertical_push'],
-      cautionJointStressTags: ['shoulder_rotation'],
-      blockedJointStressTags: ['shoulder_compression'],
+      cautionJointStressTags: ['overhead_shoulder_position'],
+      blockedJointStressTags: ['spinal_loading'],
       blockedExerciseIds: ['ex_barbell_press'],
     },
   });
 
-  assert.deepEqual(result.cautionMovementPatterns, ['scapular_plane_press']);
+  assert.deepEqual(result.painIssues, []);
+  assert.deepEqual(result.cautionMovementPatterns, ['hip_hinge']);
   assert.deepEqual(result.blockedMovementPatterns, ['vertical_push']);
-  assert.deepEqual(result.cautionJointStressTags, ['shoulder_rotation']);
-  assert.deepEqual(result.blockedJointStressTags, ['shoulder_compression']);
+  assert.deepEqual(result.cautionJointStressTags, ['overhead_shoulder_position']);
+  assert.deepEqual(result.blockedJointStressTags, ['spinal_loading']);
+  assert.deepEqual(result.manualBlockedExerciseIds, ['ex_barbell_press']);
   assert.deepEqual(result.blockedExerciseIds, ['ex_barbell_press']);
+});
+
+test('resolveMovementConstraints does not promote legacy detected or confirmed patterns', () => {
+  const result = resolveMovementConstraints({
+    movementConstraints: {
+      aiDetectedPatterns: ['vertical_push'],
+      confirmedPatterns: ['horizontal_push'],
+    },
+  });
+
+  assert.deepEqual(result.cautionMovementPatterns, []);
+  assert.deepEqual(result.blockedMovementPatterns, []);
 });

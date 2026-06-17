@@ -7,6 +7,11 @@ const {
   isMicroFocus,
   normalizeAreaName,
 } = require('./trainingProfileRules');
+const {
+  isKnownEquipmentPreset,
+  resolveEnvironmentInput,
+} = require('./trainingProfileEnvironment');
+const exerciseEnums = require('../../exercise-library/exercise-enums.json');
 
 const TRAINING_GOALS = new Set([
   'HYPERTROPHY',
@@ -17,8 +22,27 @@ const EQUIPMENT_BIASES = new Set(['machines', 'free_weights', 'no_preference']);
 const EXPERIENCE_LEVELS = new Set(['beginner', 'intermediate', 'advanced']);
 const PAIN_SEVERITIES = new Set(['none', 'low', 'moderate', 'high', 'severe']);
 const TRAINING_RULES = new Set(['none', 'monitor', 'limit', 'modify', 'avoid']);
+const AFFECTED_AREAS = new Set([
+  'shoulder',
+  'elbow',
+  'wrist',
+  'lower_back',
+  'hip',
+  'knee',
+  'ankle',
+  'neck_upper_back',
+]);
+const ANALYSIS_STATUSES = new Set(['draft', 'analyzed', 'needs_reanalysis']);
+const SIGNAL_TYPES = new Set(['movementPattern', 'jointStressTag']);
+const SIGNAL_DECISIONS = new Set(['caution', 'blocked']);
+const SIGNAL_VALUE_SETS = {
+  movementPattern: new Set(exerciseEnums.movementPattern || []),
+  jointStressTag: new Set(exerciseEnums.jointStressTags || []),
+};
 const MAX_SHORT_TEXT = 120;
 const MAX_LONG_TEXT = 1000;
+const MAX_PAIN_DESCRIPTION = 500;
+const MAX_PAIN_ISSUES = 5;
 
 function normalizeOptionalString(value) {
   if (value == null) {
@@ -56,6 +80,11 @@ function normalizeStringArray(value) {
   );
 }
 
+function normalizeSignalType(value) {
+  const normalized = normalizeOptionalString(value);
+  return normalized || null;
+}
+
 function normalizeInteger(value) {
   if (value == null || value === '') {
     return null;
@@ -91,6 +120,243 @@ function ensureKnownAreas(values, issues, path) {
   });
 }
 
+function hasOwn(object, key) {
+  return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function normalizeDetectedSignals(value, issues, path) {
+  const values = Array.isArray(value) ? value : value == null ? [] : [value];
+  const normalizedSignals = [];
+  const seen = new Set();
+
+  values.forEach((signal, index) => {
+    const signalPath = `${path}[${index}]`;
+
+    if (!signal || typeof signal !== 'object' || Array.isArray(signal)) {
+      pushIssue(issues, signalPath, 'INVALID_TYPE', 'Signal must be an object');
+      return;
+    }
+
+    const type = normalizeSignalType(signal.type);
+    const signalValue = normalizeLowerString(signal.value);
+
+    if (!type) {
+      pushIssue(issues, `${signalPath}.type`, 'REQUIRED', 'Signal type is required');
+    } else if (!SIGNAL_TYPES.has(type)) {
+      pushIssue(issues, `${signalPath}.type`, 'INVALID_ENUM', 'Signal type is invalid');
+    }
+
+    if (!signalValue) {
+      pushIssue(issues, `${signalPath}.value`, 'REQUIRED', 'Signal value is required');
+    } else if (type && SIGNAL_TYPES.has(type) && !SIGNAL_VALUE_SETS[type].has(signalValue)) {
+      pushIssue(issues, `${signalPath}.value`, 'INVALID_ENUM', 'Signal value is invalid');
+    }
+
+    if (!type || !SIGNAL_TYPES.has(type) || !signalValue) {
+      return;
+    }
+
+    const key = `${type}:${signalValue}`;
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    normalizedSignals.push({
+      type,
+      value: signalValue,
+    });
+  });
+
+  return normalizedSignals;
+}
+
+function normalizeConfirmedSignals(value, issues, path) {
+  const values = Array.isArray(value) ? value : value == null ? [] : [value];
+  const normalizedSignals = [];
+  const decisionsBySignalKey = new Map();
+
+  values.forEach((signal, index) => {
+    const signalPath = `${path}[${index}]`;
+
+    if (!signal || typeof signal !== 'object' || Array.isArray(signal)) {
+      pushIssue(issues, signalPath, 'INVALID_TYPE', 'Signal must be an object');
+      return;
+    }
+
+    const type = normalizeSignalType(signal.type);
+    const signalValue = normalizeLowerString(signal.value);
+    const decision = normalizeLowerString(signal.decision);
+
+    if (!type) {
+      pushIssue(issues, `${signalPath}.type`, 'REQUIRED', 'Signal type is required');
+    } else if (!SIGNAL_TYPES.has(type)) {
+      pushIssue(issues, `${signalPath}.type`, 'INVALID_ENUM', 'Signal type is invalid');
+    }
+
+    if (!signalValue) {
+      pushIssue(issues, `${signalPath}.value`, 'REQUIRED', 'Signal value is required');
+    } else if (type && SIGNAL_TYPES.has(type) && !SIGNAL_VALUE_SETS[type].has(signalValue)) {
+      pushIssue(issues, `${signalPath}.value`, 'INVALID_ENUM', 'Signal value is invalid');
+    }
+
+    if (!decision) {
+      pushIssue(issues, `${signalPath}.decision`, 'REQUIRED', 'Signal decision is required');
+    } else if (!SIGNAL_DECISIONS.has(decision)) {
+      pushIssue(issues, `${signalPath}.decision`, 'INVALID_ENUM', 'Signal decision is invalid');
+    }
+
+    if (!type || !SIGNAL_TYPES.has(type) || !signalValue || !SIGNAL_DECISIONS.has(decision)) {
+      return;
+    }
+
+    const signalKey = `${type}:${signalValue}`;
+    const existingDecision = decisionsBySignalKey.get(signalKey);
+
+    if (existingDecision) {
+      if (existingDecision !== decision) {
+        pushIssue(
+          issues,
+          `${signalPath}.decision`,
+          'CONFLICTING_SIGNAL_DECISION',
+          'Signal cannot be both caution and blocked'
+        );
+      }
+      return;
+    }
+
+    decisionsBySignalKey.set(signalKey, decision);
+    normalizedSignals.push({
+      type,
+      value: signalValue,
+      decision,
+    });
+  });
+
+  return normalizedSignals;
+}
+
+function normalizePainIssues(value, issues, path = 'movementConstraints.painIssues') {
+  const values = Array.isArray(value) ? value : value == null ? [] : [value];
+  const normalizedIssues = [];
+  const seenIds = new Set();
+
+  if (values.length > MAX_PAIN_ISSUES) {
+    pushIssue(
+      issues,
+      path,
+      'MAX_ITEMS_EXCEEDED',
+      `painIssues must contain at most ${MAX_PAIN_ISSUES} issues`
+    );
+  }
+
+  values.slice(0, MAX_PAIN_ISSUES).forEach((issue, index) => {
+    const issuePath = `${path}[${index}]`;
+
+    if (!issue || typeof issue !== 'object' || Array.isArray(issue)) {
+      pushIssue(issues, issuePath, 'INVALID_TYPE', 'Pain issue must be an object');
+      return;
+    }
+
+    const id = normalizeOptionalString(issue.id);
+    const description = normalizeOptionalString(issue.description);
+    const affectedArea = normalizeLowerString(issue.affectedArea);
+    const painSeverity = normalizeLowerString(issue.painSeverity);
+    const trainingRule = normalizeLowerString(issue.trainingRule);
+    const analysisStatus = normalizeLowerString(issue.analysisStatus) || 'draft';
+
+    if (!id) {
+      pushIssue(issues, `${issuePath}.id`, 'REQUIRED', 'Pain issue id is required');
+    } else if (seenIds.has(id)) {
+      pushIssue(issues, `${issuePath}.id`, 'DUPLICATE_VALUE', 'Pain issue id must be unique');
+    } else {
+      seenIds.add(id);
+    }
+
+    if (!description) {
+      pushIssue(
+        issues,
+        `${issuePath}.description`,
+        'REQUIRED',
+        'Pain issue description is required'
+      );
+    }
+    ensureBoundedString(
+      description,
+      issues,
+      `${issuePath}.description`,
+      'Pain issue description',
+      MAX_PAIN_DESCRIPTION
+    );
+
+    if (!affectedArea) {
+      pushIssue(issues, `${issuePath}.affectedArea`, 'REQUIRED', 'affectedArea is required');
+    } else if (!AFFECTED_AREAS.has(affectedArea)) {
+      pushIssue(issues, `${issuePath}.affectedArea`, 'INVALID_ENUM', 'affectedArea is invalid');
+    }
+
+    if (!painSeverity) {
+      pushIssue(issues, `${issuePath}.painSeverity`, 'REQUIRED', 'painSeverity is required');
+    } else if (!PAIN_SEVERITIES.has(painSeverity)) {
+      pushIssue(issues, `${issuePath}.painSeverity`, 'INVALID_ENUM', 'painSeverity is invalid');
+    }
+
+    if (!trainingRule) {
+      pushIssue(issues, `${issuePath}.trainingRule`, 'REQUIRED', 'trainingRule is required');
+    } else if (!TRAINING_RULES.has(trainingRule)) {
+      pushIssue(issues, `${issuePath}.trainingRule`, 'INVALID_ENUM', 'trainingRule is invalid');
+    }
+
+    if (!ANALYSIS_STATUSES.has(analysisStatus)) {
+      pushIssue(
+        issues,
+        `${issuePath}.analysisStatus`,
+        'INVALID_ENUM',
+        'analysisStatus is invalid'
+      );
+    }
+
+    normalizedIssues.push({
+      id,
+      description,
+      affectedArea,
+      painSeverity,
+      trainingRule,
+      analysisStatus,
+      detectedSignals: normalizeDetectedSignals(
+        issue.detectedSignals,
+        issues,
+        `${issuePath}.detectedSignals`
+      ),
+      confirmedSignals: normalizeConfirmedSignals(
+        issue.confirmedSignals,
+        issues,
+        `${issuePath}.confirmedSignals`
+      ),
+    });
+  });
+
+  return normalizedIssues;
+}
+
+function normalizeMovementConstraintsInput(movementConstraints = {}, issues = []) {
+  const source =
+    movementConstraints && typeof movementConstraints === 'object' && !Array.isArray(movementConstraints)
+      ? movementConstraints
+      : {};
+  const hasModernShape =
+    hasOwn(source, 'painIssues') || hasOwn(source, 'manualBlockedExerciseIds');
+
+  return {
+    painIssues: hasModernShape
+      ? normalizePainIssues(source.painIssues, issues)
+      : [],
+    manualBlockedExerciseIds: normalizeStringArray(
+      hasModernShape ? source.manualBlockedExerciseIds : source.blockedExerciseIds
+    ),
+  };
+}
+
 function validateTrainingProfileInput(payload) {
   const issues = [];
   const primaryGoal = normalizeOptionalString(payload?.primaryGoal)?.toUpperCase() || null;
@@ -106,29 +372,10 @@ function validateTrainingProfileInput(payload) {
   const sessionsPerWeek = normalizeInteger(payload?.availability?.sessionsPerWeek);
   const durationPerSession = normalizeInteger(payload?.availability?.durationPerSession);
   const experience = normalizeLowerString(payload?.experience);
-  const trainingEnvironment = normalizeLowerString(payload?.environment?.trainingEnvironment);
-  const equipmentSetup = normalizeLowerString(payload?.environment?.equipmentSetup);
-  const equipmentList = normalizeStringArray(payload?.environment?.equipmentList);
-  const painDescription = normalizeOptionalString(payload?.movementConstraints?.painDescription);
-  const affectedArea = normalizeLowerString(payload?.movementConstraints?.affectedArea);
-  const painSeverity = normalizeLowerString(payload?.movementConstraints?.painSeverity);
-  const trainingRule = normalizeLowerString(payload?.movementConstraints?.trainingRule);
-  const aiDetectedPatterns = normalizeStringArray(payload?.movementConstraints?.aiDetectedPatterns);
-  const confirmedPatterns = normalizeStringArray(payload?.movementConstraints?.confirmedPatterns);
-  const cautionMovementPatterns = normalizeStringArray(
-    payload?.movementConstraints?.cautionMovementPatterns
-  );
-  const blockedMovementPatterns = normalizeStringArray(
-    payload?.movementConstraints?.blockedMovementPatterns
-  );
-  const cautionJointStressTags = normalizeStringArray(
-    payload?.movementConstraints?.cautionJointStressTags
-  );
-  const blockedJointStressTags = normalizeStringArray(
-    payload?.movementConstraints?.blockedJointStressTags
-  );
-  const blockedExerciseIds = normalizeStringArray(
-    payload?.movementConstraints?.blockedExerciseIds
+  const environment = resolveEnvironmentInput(payload?.environment);
+  const movementConstraints = normalizeMovementConstraintsInput(
+    payload?.movementConstraints,
+    issues
   );
   const equipmentBias = normalizeLowerString(payload?.exercisePreference?.equipmentBias);
   const cardioRole = normalizeLowerString(payload?.cardioProfile?.cardioRole);
@@ -256,21 +503,12 @@ function validateTrainingProfileInput(payload) {
     pushIssue(issues, 'experience', 'INVALID_ENUM', 'experience is invalid');
   }
 
-  if (!trainingEnvironment) {
+  if (!isKnownEquipmentPreset(environment.equipmentPreset)) {
     pushIssue(
       issues,
-      'environment.trainingEnvironment',
-      'REQUIRED',
-      'trainingEnvironment is required'
-    );
-  }
-
-  if (!equipmentSetup) {
-    pushIssue(
-      issues,
-      'environment.equipmentSetup',
-      'REQUIRED',
-      'equipmentSetup is required'
+      'environment.equipmentPreset',
+      'INVALID_ENUM',
+      'equipmentPreset is invalid'
     );
   }
 
@@ -283,41 +521,18 @@ function validateTrainingProfileInput(payload) {
     );
   }
 
-  if (painSeverity && !PAIN_SEVERITIES.has(painSeverity)) {
-    pushIssue(
-      issues,
-      'movementConstraints.painSeverity',
-      'INVALID_ENUM',
-      'painSeverity is invalid'
-    );
-  }
-
-  if (trainingRule && !TRAINING_RULES.has(trainingRule)) {
-    pushIssue(
-      issues,
-      'movementConstraints.trainingRule',
-      'INVALID_ENUM',
-      'trainingRule is invalid'
-    );
-  }
-
-  [trainingEnvironment, equipmentSetup, cardioRole, affectedArea].forEach((value, index) => {
+  [environment.equipmentPreset, cardioRole].forEach((value, index) => {
     const paths = [
-      'environment.trainingEnvironment',
-      'environment.equipmentSetup',
+      'environment.equipmentPreset',
       'cardioProfile.cardioRole',
-      'movementConstraints.affectedArea',
     ];
     const labels = [
-      'trainingEnvironment',
-      'equipmentSetup',
+      'equipmentPreset',
       'cardioRole',
-      'affectedArea',
     ];
     ensureBoundedString(value, issues, paths[index], labels[index]);
   });
 
-  ensureBoundedString(painDescription, issues, 'movementConstraints.painDescription', 'painDescription', MAX_LONG_TEXT);
   ensureBoundedString(physicalNotes, issues, 'physicalNotes', 'physicalNotes', MAX_LONG_TEXT);
 
   const normalizedValue = {
@@ -333,23 +548,10 @@ function validateTrainingProfileInput(payload) {
       durationPerSession,
     },
     environment: {
-      trainingEnvironment,
-      equipmentSetup,
-      equipmentList,
+      equipmentPreset: environment.equipmentPreset,
+      availableEquipment: environment.availableEquipment,
     },
-    movementConstraints: {
-      painDescription,
-      affectedArea,
-      painSeverity,
-      trainingRule,
-      aiDetectedPatterns,
-      confirmedPatterns,
-      cautionMovementPatterns,
-      blockedMovementPatterns,
-      cautionJointStressTags,
-      blockedJointStressTags,
-      blockedExerciseIds,
-    },
+    movementConstraints,
     exercisePreference: {
       equipmentBias: equipmentBias || 'no_preference',
     },
@@ -376,5 +578,6 @@ module.exports = {
   PAIN_SEVERITIES,
   TRAINING_GOALS,
   TRAINING_RULES,
+  normalizeMovementConstraintsInput,
   validateTrainingProfileInput,
 };

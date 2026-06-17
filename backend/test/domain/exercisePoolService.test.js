@@ -22,17 +22,25 @@ function createProfile(overrides = {}) {
       durationPerSession: 75,
     },
     environment: {
-      trainingEnvironment: 'gym',
-      equipmentSetup: 'full_gym',
-      equipmentList: ['dumbbells', 'treadmill'],
+      equipmentPreset: 'full_gym',
+      availableEquipment: ['dumbbells', 'treadmill'],
     },
     movementConstraints: {
-      painDescription: null,
-      affectedArea: 'shoulders',
-      painSeverity: 'moderate',
-      trainingRule: 'modify',
-      aiDetectedPatterns: [],
-      confirmedPatterns: ['vertical_push'],
+      painIssues: [
+        {
+          id: 'issue_shoulder',
+          description: 'Shoulder irritation',
+          affectedArea: 'shoulder',
+          painSeverity: 'moderate',
+          trainingRule: 'modify',
+          analysisStatus: 'analyzed',
+          detectedSignals: [{ type: 'movementPattern', value: 'vertical_push' }],
+          confirmedSignals: [
+            { type: 'movementPattern', value: 'vertical_push', decision: 'caution' },
+          ],
+        },
+      ],
+      manualBlockedExerciseIds: [],
     },
     exercisePreference: {
       equipmentBias: 'machines',
@@ -57,7 +65,7 @@ test('buildExercisePoolForUser builds a pool from onboardingSnapshot and reconst
         calls.profileQuery = args;
         return {
           onboardingSnapshot: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             profile: createProfile(),
           },
         };
@@ -111,6 +119,10 @@ test('buildExercisePoolForUser builds a pool from onboardingSnapshot and reconst
   assert.deepEqual(result.pool.items.map((item) => item.exerciseId), ['ex_draft_strength']);
   assert.equal(result.context.musclePriorityProfile.primaryFocus, 'chest');
   assert.equal(result.context.equipmentContext.equipmentBias, 'machines');
+  assert.deepEqual(result.context.equipmentContext.availableEquipment, [
+    'dumbbells',
+    'treadmill',
+  ]);
   assert.deepEqual(result.context.movementConstraints.blockedMovementPatterns, []);
   assert.deepEqual(result.context.movementConstraints.cautionMovementPatterns, ['vertical_push']);
   assert.deepEqual(result.context.movementConstraints.blockedJointStressTags, []);
@@ -118,12 +130,65 @@ test('buildExercisePoolForUser builds a pool from onboardingSnapshot and reconst
   assert.deepEqual(result.context.movementConstraints.blockedExerciseIds, []);
 });
 
+test('buildExercisePoolForUser rebuilds equipment context instead of trusting stale derived snapshots', async () => {
+  const prisma = {
+    userProfile: {
+      findUnique: async () => ({
+        onboardingSnapshot: {
+          schemaVersion: 2,
+          profile: createProfile({
+            environment: {
+              equipmentSetup: 'limited_gym',
+              equipmentList: ['selectorized_shoulder_press'],
+            },
+          }),
+          derived: {
+            equipmentContext: {
+              equipmentSetup: 'limited_gym',
+              equipmentList: ['selectorized_shoulder_press'],
+              availableEquipment: [],
+            },
+          },
+        },
+      }),
+    },
+    exercise: {
+      findMany: async () => [
+        {
+          exerciseId: 'ex_machine_shoulder_press',
+          name: 'Machine Shoulder Press',
+          status: 'approved',
+          trainingType: 'strength',
+          equipmentCategory: 'selectorized_machine',
+          equipmentNeeded: ['selectorized_shoulder_press'],
+          movementPattern: 'vertical_push',
+          jointStressTags: [],
+          bodyParts: ['shoulders'],
+          muscleFocus: ['front_delts'],
+          targetMuscles: ['front_delts'],
+          secondaryMuscles: [],
+          overview: 'legacy equipment alias example',
+        },
+      ],
+    },
+  };
+
+  const result = await buildExercisePoolForUser('user_123', {}, { prisma });
+
+  assert.deepEqual(result.context.equipmentContext.availableEquipment, [
+    'shoulder_press_machine',
+  ]);
+  assert.deepEqual(result.pool.items.map((item) => item.exerciseId), [
+    'ex_machine_shoulder_press',
+  ]);
+});
+
 test('buildExercisePoolForUser preserves legacy blockedPatterns fallback from derived snapshots', async () => {
   const prisma = {
     userProfile: {
       findUnique: async () => ({
         onboardingSnapshot: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           profile: createProfile(),
           derived: {
             movementConstraints: {

@@ -1,6 +1,7 @@
-function normalizeArray(value) {
-  return Array.isArray(value) ? value : [];
-}
+const {
+  normalizeEquipmentArray,
+  normalizeEquipmentPreset,
+} = require('../trainingProfile/trainingProfileEnvironment');
 
 function normalizeValue(value) {
   return String(value || '').trim().toLowerCase();
@@ -9,14 +10,14 @@ function normalizeValue(value) {
 function resolveEquipmentContext(normalizedProfile = {}) {
   const environment = normalizedProfile.environment || {};
   const exercisePreference = normalizedProfile.exercisePreference || {};
-  const availableEquipment = normalizeArray(environment.equipmentList)
-    .map(normalizeValue)
-    .filter(Boolean);
-  const uniqueEquipment = Array.from(new Set(availableEquipment));
+  const equipmentPresetSource =
+    environment.equipmentPreset == null ? environment.equipmentSetup : environment.equipmentPreset;
+  const availableEquipmentSource =
+    environment.availableEquipment == null ? environment.equipmentList : environment.availableEquipment;
+  const uniqueEquipment = normalizeEquipmentArray(availableEquipmentSource);
 
   return {
-    trainingEnvironment: normalizeValue(environment.trainingEnvironment) || null,
-    equipmentSetup: normalizeValue(environment.equipmentSetup) || null,
+    equipmentPreset: normalizeEquipmentPreset(equipmentPresetSource),
     availableEquipment: uniqueEquipment,
     equipmentBias: normalizeValue(exercisePreference.equipmentBias) || 'no_preference',
     hardConstraints: uniqueEquipment.length

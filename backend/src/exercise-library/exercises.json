@@ -2750,10 +2750,9 @@
     "aliases": [
       "Pullover Machine"
     ],
-    "equipmentCategory": "plate_loaded_machine",
+    "equipmentCategory": "selectorized_machine",
     "equipmentNeeded": [
-      "plate_loaded_lat_pulldown",
-      "weight_plates"
+      "pullover_machine"
     ],
     "movementPattern": "shoulder_extension",
     "bodyParts": [
@@ -3216,7 +3215,7 @@
     ],
     "equipmentCategory": "selectorized_machine",
     "equipmentNeeded": [
-      "selectorized_shoulder_press"
+      "shoulder_press_machine"
     ],
     "movementPattern": "vertical_push",
     "bodyParts": [
@@ -3495,7 +3494,7 @@
     "name": "Machine Lateral Raise",
     "equipmentCategory": "selectorized_machine",
     "equipmentNeeded": [
-      "selectorized_shoulder_press"
+      "selectorized_lateral_raise"
     ],
     "movementPattern": "shoulder_abduction",
     "bodyParts": [
@@ -3932,7 +3931,7 @@
     "name": "Single Arm Machine Shoulder Press",
     "equipmentCategory": "selectorized_machine",
     "equipmentNeeded": [
-      "selectorized_shoulder_press"
+      "shoulder_press_machine"
     ],
     "movementPattern": "vertical_push",
     "bodyParts": [
@@ -18768,7 +18767,7 @@
     "name": "Unilateral Lat Pulldown Machine",
     "equipmentCategory": "plate_loaded_machine",
     "equipmentNeeded": [
-      "plate_loaded_lat_pulldown",
+      "selectorized_lat_pulldown",
       "weight_plates"
     ],
     "movementPattern": "vertical_pull",

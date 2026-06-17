@@ -2,7 +2,7 @@ const { resolveEquipmentContext } = require('../programGeneration/equipmentResol
 const { resolveMovementConstraints } = require('../programGeneration/movementConstraintResolver');
 const { resolveMusclePriorityProfile } = require('../programGeneration/musclePriorityResolver');
 
-const TRAINING_PROFILE_SCHEMA_VERSION = 1;
+const TRAINING_PROFILE_SCHEMA_VERSION = 2;
 
 function mapTrainingProfileToUserProfileUpdate(normalizedProfile) {
   const musclePriorityProfile = resolveMusclePriorityProfile(normalizedProfile);
@@ -20,26 +20,13 @@ function mapTrainingProfileToUserProfileUpdate(normalizedProfile) {
       physicalNotes: normalizedProfile.physicalNotes,
     },
     equipmentContext: {
-      trainingEnvironment: equipmentContext.trainingEnvironment,
-      equipmentSetup: equipmentContext.equipmentSetup,
-      equipmentList: equipmentContext.availableEquipment,
+      equipmentPreset: equipmentContext.equipmentPreset,
+      availableEquipment: equipmentContext.availableEquipment,
       equipmentBias: equipmentContext.equipmentBias,
       hardConstraints: equipmentContext.hardConstraints,
       softBiases: equipmentContext.softBiases,
     },
-    constraints: {
-      painDescription: movementConstraints.painDescription,
-      affectedArea: movementConstraints.affectedArea,
-      painSeverity: movementConstraints.painSeverity,
-      trainingRule: movementConstraints.trainingRule,
-      aiDetectedPatterns: movementConstraints.aiDetectedPatterns,
-      confirmedPatterns: movementConstraints.confirmedPatterns,
-      cautionMovementPatterns: movementConstraints.cautionMovementPatterns,
-      blockedMovementPatterns: movementConstraints.blockedMovementPatterns,
-      cautionJointStressTags: movementConstraints.cautionJointStressTags,
-      blockedJointStressTags: movementConstraints.blockedJointStressTags,
-      blockedExerciseIds: movementConstraints.blockedExerciseIds,
-    },
+    constraints: movementConstraints,
     musclePriorities: {
       primaryFocus: musclePriorityProfile.primaryFocus,
       secondaryFocuses: musclePriorityProfile.secondaryFocuses,

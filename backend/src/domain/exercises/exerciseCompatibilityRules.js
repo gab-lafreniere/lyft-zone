@@ -1,4 +1,8 @@
 const ALWAYS_AVAILABLE_EQUIPMENT = new Set(['bodyweight']);
+const {
+  ensureAvailableEquipment,
+  normalizeEquipmentArray,
+} = require('../trainingProfile/trainingProfileEnvironment');
 
 function toArray(value) {
   return Array.isArray(value) ? value : value == null ? [] : [value];
@@ -32,8 +36,8 @@ function isExerciseCompatible(exercise = {}, resolvedContext = {}) {
   const reasons = [];
   const equipmentContext = resolvedContext.equipment || resolvedContext;
   const movementContext = resolvedContext.movement || resolvedContext;
-  const availableEquipment = normalizeArray(equipmentContext.availableEquipment);
-  const exerciseEquipment = normalizeArray(exercise.equipmentNeeded)
+  const availableEquipment = ensureAvailableEquipment(equipmentContext.availableEquipment);
+  const exerciseEquipment = normalizeEquipmentArray(exercise.equipmentNeeded)
     .filter((requiredEquipment) => !ALWAYS_AVAILABLE_EQUIPMENT.has(requiredEquipment));
   const blockedExerciseIds = normalizeArray(movementContext.blockedExerciseIds);
   const blockedJointStressTags = normalizeArray(movementContext.blockedJointStressTags);

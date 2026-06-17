@@ -7,7 +7,10 @@ export default function ChipSelector({
   maxSelected,
   emptyLabel,
   grouped = false,
+  disabledValues = [],
 }) {
+  const disabledValueSet = new Set(disabledValues);
+
   if (grouped) {
     return (
       <div className="space-y-4">
@@ -20,9 +23,10 @@ export default function ChipSelector({
               {group.options.map((option) => {
                 const isSelected = selectedValues.includes(option.value);
                 const isDisabled =
-                  !isSelected &&
-                  typeof maxSelected === "number" &&
-                  selectedValues.length >= maxSelected;
+                  disabledValueSet.has(option.value) ||
+                  (!isSelected &&
+                    typeof maxSelected === "number" &&
+                    selectedValues.length >= maxSelected);
 
                 return (
                   <button
@@ -57,9 +61,10 @@ export default function ChipSelector({
       {options.map((option) => {
         const isSelected = selectedValues.includes(option.value);
         const isDisabled =
-          !isSelected &&
-          typeof maxSelected === "number" &&
-          selectedValues.length >= maxSelected;
+          disabledValueSet.has(option.value) ||
+          (!isSelected &&
+            typeof maxSelected === "number" &&
+            selectedValues.length >= maxSelected);
 
         return (
           <button
