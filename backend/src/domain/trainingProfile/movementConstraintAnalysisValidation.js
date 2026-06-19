@@ -32,16 +32,18 @@ const MAX_QUESTIONS = 3;
 const MAX_QUESTION_LENGTH = 160;
 const MAX_ANSWER_LENGTH = 500;
 const MAX_AI_SUMMARY_LENGTH = 500;
-const MAX_DETECTED_SIGNALS = 4;
+const MAX_DETECTED_SIGNALS = 3;
 const MAX_REASON_LENGTH = 180;
 
 const FORBIDDEN_TEXT_PATTERNS = [
+  /\bnot a diagnosis\b/i,
+  /\bnot medical advice\b/i,
   /\bdiagnos(?:e|is|tic)\b/i,
   /\binjury diagnosis\b/i,
-  /\bmedical assessment\b/i,
-  /\bpatholog(?:y|ies|ical)\b/i,
+  /\bpossible injury\b/i,
+  /\bmedical condition\b/i,
+  /\bpatholog(?:y|ies|ical)?\b/i,
   /\btreatment\b/i,
-  /\brehabilitation\b/i,
   /\brehab\b/i,
   /\bsafe to continue\b/i,
 ];
@@ -124,20 +126,39 @@ function validateCautionLevel({ decision, cautionLevel, issues, path }) {
   return true;
 }
 
-function validateSignalValue({ type, value, issues, path }) {
-  if (!type) {
-    pushIssue(issues, `${path}.type`, 'REQUIRED', 'Signal type is required');
-  } else if (!SIGNAL_TYPES.has(type)) {
-    pushIssue(issues, `${path}.type`, 'INVALID_ENUM', 'Signal type is invalid');
-  }
-
+function normalizeSignalTypeForValue({ type, value, issues, path }) {
   if (!value) {
     pushIssue(issues, `${path}.value`, 'REQUIRED', 'Signal value is required');
-  } else if (type && SIGNAL_TYPES.has(type) && !SIGNAL_VALUE_SETS[type].has(value)) {
-    pushIssue(issues, `${path}.value`, 'INVALID_ENUM', 'Signal value is invalid');
+    return null;
   }
 
-  return Boolean(type && SIGNAL_TYPES.has(type) && value && SIGNAL_VALUE_SETS[type].has(value));
+  const isMovementPattern = SIGNAL_VALUE_SETS.movementPattern.has(value);
+  const isJointStressTag = SIGNAL_VALUE_SETS.jointStressTag.has(value);
+
+  if (!isMovementPattern && !isJointStressTag) {
+    pushIssue(issues, `${path}.value`, 'INVALID_ENUM', 'Signal value is invalid');
+    return null;
+  }
+
+  if (isMovementPattern && !isJointStressTag) {
+    return 'movementPattern';
+  }
+
+  if (isJointStressTag && !isMovementPattern) {
+    return 'jointStressTag';
+  }
+
+  if (!type) {
+    pushIssue(issues, `${path}.type`, 'REQUIRED', 'Signal type is required');
+    return null;
+  }
+
+  if (!SIGNAL_TYPES.has(type)) {
+    pushIssue(issues, `${path}.type`, 'INVALID_ENUM', 'Signal type is invalid');
+    return null;
+  }
+
+  return type;
 }
 
 function validateAnalysisRequest(payload = {}) {
@@ -250,14 +271,14 @@ function normalizeDetectedSignal(signal, issues, path) {
     'Detected signal'
   );
 
-  const type = normalizeOptionalString(signal.type);
+  const providedType = normalizeOptionalString(signal.type);
   const value = normalizeLowerString(signal.value);
   const recommendedDecision = normalizeLowerString(signal.recommendedDecision);
   const cautionLevel = normalizeLowerString(signal.cautionLevel);
   const confidence = normalizeLowerString(signal.confidence);
   const reason = normalizeOptionalString(signal.reason);
 
-  const validSignalValue = validateSignalValue({ type, value, issues, path });
+  const type = normalizeSignalTypeForValue({ type: providedType, value, issues, path });
 
   if (!recommendedDecision) {
     pushIssue(issues, `${path}.recommendedDecision`, 'REQUIRED', 'recommendedDecision is required');
@@ -289,7 +310,7 @@ function normalizeDetectedSignal(signal, issues, path) {
   }
 
   if (
-    !validSignalValue ||
+    !type ||
     !SIGNAL_DECISIONS.has(recommendedDecision) ||
     !validCautionLevel ||
     !CONFIDENCE_LEVELS.has(confidence) ||
@@ -445,6 +466,15 @@ function validateAnalysisResponse(payload = {}) {
     dedupedSignals.push(signal);
   });
 
+  if (status === 'analyzed' && dedupedSignals.length < 1) {
+    pushIssue(
+      issues,
+      'detectedSignals',
+      'MIN_ITEMS_REQUIRED',
+      'analyzed responses require at least one detected signal'
+    );
+  }
+
   return {
     ok: issues.length === 0,
     value:
@@ -493,6 +523,7 @@ function buildMovementAnalysisJsonSchema() {
       detectedSignals: {
         type: 'array',
         maxItems: MAX_DETECTED_SIGNALS,
+        minItems: 0,
         items: {
           type: 'object',
           additionalProperties: false,

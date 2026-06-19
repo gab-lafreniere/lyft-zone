@@ -687,6 +687,7 @@ describe("SettingsDrawer movement constraints V2", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Analyze with AI$/i }));
     await screen.findByText("Vertical Push");
     expect(screen.getByText("Overhead Shoulder Position")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Answer briefly...")).not.toBeInTheDocument();
     expect(analyzeMovementConstraintsPainIssue).toHaveBeenCalledWith(
       expect.objectContaining({
         painIssue: expect.objectContaining({
