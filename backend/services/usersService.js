@@ -9,6 +9,9 @@ const {
 const {
   buildSettingsResponse,
 } = require('../src/domain/trainingProfile/settingsResponse');
+const {
+  analyzeMovementConstraints,
+} = require('./movementConstraintAnalysisService');
 
 class ApiError extends Error {
   constructor(status, code, message, details = undefined) {
@@ -169,6 +172,13 @@ async function updateTrainingProfileSettings(userId, payload, deps = {}) {
   return buildSettingsResponse(user);
 }
 
+async function analyzeMovementConstraintSettings(userId, payload, deps = {}) {
+  const prisma = deps.prisma || getPrisma();
+
+  await assertUserExists(userId, prisma);
+  return analyzeMovementConstraints(payload, deps);
+}
+
 async function upsertUserProfile(userId, payload, deps = {}) {
   const prisma = deps.prisma || getPrisma();
 
@@ -205,6 +215,7 @@ async function upsertUserProfile(userId, payload, deps = {}) {
 
 module.exports = {
   ApiError,
+  analyzeMovementConstraintSettings,
   createUser,
   getUserSettings,
   upsertUserProfile,

@@ -71,8 +71,13 @@ test('validateTrainingProfileInput accepts a valid canonical onboarding payload'
     'ex_barbell_press',
   ]);
   assert.deepEqual(result.value.movementConstraints.painIssues[0].confirmedSignals, [
-    { type: 'movementPattern', value: 'vertical_push', decision: 'caution' },
-    { type: 'jointStressTag', value: 'overhead_shoulder_position', decision: 'blocked' },
+    { type: 'movementPattern', value: 'vertical_push', decision: 'caution', cautionLevel: 'medium' },
+    {
+      type: 'jointStressTag',
+      value: 'overhead_shoulder_position',
+      decision: 'blocked',
+      cautionLevel: 'none',
+    },
   ]);
 });
 
@@ -133,7 +138,7 @@ test('validateTrainingProfileInput normalizes and deduplicates V2 signals and ma
     { type: 'movementPattern', value: 'squat_pattern' },
   ]);
   assert.deepEqual(result.value.movementConstraints.painIssues[0].confirmedSignals, [
-    { type: 'jointStressTag', value: 'deep_knee_flexion', decision: 'blocked' },
+    { type: 'jointStressTag', value: 'deep_knee_flexion', decision: 'blocked', cautionLevel: 'none' },
   ]);
   assert.deepEqual(result.value.movementConstraints.manualBlockedExerciseIds, ['exr_deadlift']);
 });
@@ -171,7 +176,7 @@ test('validateTrainingProfileInput rejects invalid pain issue and signal values'
   assert.match(JSON.stringify(result.issues), /Signal decision is invalid/);
 });
 
-test('validateTrainingProfileInput rejects too many pain issues and contradictory decisions', () => {
+test('validateTrainingProfileInput rejects too many pain issues and resolves duplicate decisions by priority', () => {
   const payload = createValidPayload();
   payload.movementConstraints = {
     painIssues: Array.from({ length: 6 }, (_, index) => ({
@@ -195,7 +200,7 @@ test('validateTrainingProfileInput rejects too many pain issues and contradictor
 
   assert.equal(result.ok, false);
   assert.match(JSON.stringify(result.issues), /painIssues must contain at most 5 issues/);
-  assert.match(JSON.stringify(result.issues), /Signal cannot be both caution and blocked/);
+  assert.doesNotMatch(JSON.stringify(result.issues), /Signal cannot be both caution and blocked/);
 });
 
 test('validateTrainingProfileInput rejects missing persisted pain issue fields', () => {
@@ -211,7 +216,56 @@ test('validateTrainingProfileInput rejects missing persisted pain issue fields',
   assert.match(JSON.stringify(result.issues), /Pain issue description is required/);
   assert.match(JSON.stringify(result.issues), /affectedArea is required/);
   assert.match(JSON.stringify(result.issues), /painSeverity is required/);
-  assert.match(JSON.stringify(result.issues), /trainingRule is required/);
+  assert.doesNotMatch(JSON.stringify(result.issues), /trainingRule is required/);
+});
+
+test('validateTrainingProfileInput accepts pain issue without trainingRule and monitor decisions', () => {
+  const payload = createValidPayload();
+  delete payload.movementConstraints.painIssues[0].trainingRule;
+  payload.movementConstraints.painIssues[0].confirmedSignals = [
+    {
+      type: 'movementPattern',
+      value: 'vertical_push',
+      decision: 'monitor',
+    },
+  ];
+
+  const result = validateTrainingProfileInput(payload);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.value.movementConstraints.painIssues[0].trainingRule, null);
+  assert.deepEqual(result.value.movementConstraints.painIssues[0].confirmedSignals, [
+    {
+      type: 'movementPattern',
+      value: 'vertical_push',
+      decision: 'monitor',
+      cautionLevel: 'none',
+    },
+  ]);
+});
+
+test('validateTrainingProfileInput rejects invalid caution levels and too many detected signals', () => {
+  const payload = createValidPayload();
+  payload.movementConstraints.painIssues[0].detectedSignals = Array.from({ length: 5 }, () => ({
+    type: 'movementPattern',
+    value: 'vertical_push',
+    recommendedDecision: 'caution',
+    cautionLevel: 'medium',
+  }));
+  payload.movementConstraints.painIssues[0].confirmedSignals = [
+    {
+      type: 'movementPattern',
+      value: 'vertical_push',
+      decision: 'monitor',
+      cautionLevel: 'medium',
+    },
+  ];
+
+  const result = validateTrainingProfileInput(payload);
+
+  assert.equal(result.ok, false);
+  assert.match(JSON.stringify(result.issues), /detectedSignals must contain at most 4 signals/);
+  assert.match(JSON.stringify(result.issues), /cautionLevel must be none/);
 });
 
 test('validateTrainingProfileInput accepts backend compatibility pain values', () => {

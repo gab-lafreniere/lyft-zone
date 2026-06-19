@@ -62,7 +62,8 @@ function normalizeDetectedSignals(value) {
 
 function normalizeConfirmedSignals(value) {
   const signals = [];
-  const seen = new Set();
+  const signalsByKey = new Map();
+  const order = [];
 
   toArray(value).forEach((signal) => {
     if (!signal || typeof signal !== 'object' || Array.isArray(signal)) {
@@ -72,22 +73,36 @@ function normalizeConfirmedSignals(value) {
     const type = normalizeSignalType(signal.type);
     const signalValue = normalizeValue(signal.value);
     const decision = normalizeValue(signal.decision);
+    const cautionLevel = normalizeValue(signal.cautionLevel) || (decision === 'caution' ? 'medium' : 'none');
 
     if (!type || !signalValue || !decision) {
       return;
     }
 
     const key = `${type}:${signalValue}`;
-    if (seen.has(key)) {
-      return;
+
+    if (!signalsByKey.has(key)) {
+      order.push(key);
     }
 
-    seen.add(key);
-    signals.push({
+    const nextSignal = {
       type,
       value: signalValue,
       decision,
-    });
+      cautionLevel,
+    };
+    const currentSignal = signalsByKey.get(key);
+
+    if (!currentSignal || isHigherPrioritySignal(nextSignal, currentSignal)) {
+      signalsByKey.set(key, nextSignal);
+    }
+  });
+
+  order.forEach((key) => {
+    const signal = signalsByKey.get(key);
+    if (signal) {
+      signals.push(signal);
+    }
   });
 
   return signals;
@@ -111,6 +126,46 @@ function normalizePainIssues(value) {
 function addUnique(target, value) {
   if (value && !target.includes(value)) {
     target.push(value);
+  }
+}
+
+const DECISION_WEIGHTS = {
+  monitor: 1,
+  caution: 2,
+  blocked: 3,
+};
+
+const CAUTION_LEVEL_WEIGHTS = {
+  none: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+};
+
+function isHigherPrioritySignal(candidate, current) {
+  const candidateDecisionWeight = DECISION_WEIGHTS[candidate.decision] || 0;
+  const currentDecisionWeight = DECISION_WEIGHTS[current.decision] || 0;
+
+  if (candidateDecisionWeight !== currentDecisionWeight) {
+    return candidateDecisionWeight > currentDecisionWeight;
+  }
+
+  return (
+    (CAUTION_LEVEL_WEIGHTS[candidate.cautionLevel] || 0) >
+    (CAUTION_LEVEL_WEIGHTS[current.cautionLevel] || 0)
+  );
+}
+
+function addSignalByPriority(target, signal) {
+  if (!signal?.type || !signal?.value || !signal?.decision) {
+    return;
+  }
+
+  const key = `${signal.type}:${signal.value}`;
+  const current = target.get(key);
+
+  if (!current || isHigherPrioritySignal(signal, current)) {
+    target.set(key, signal);
   }
 }
 
@@ -141,6 +196,9 @@ function resolveMovementConstraints(normalizedProfile = {}) {
       blockedJointStressTags: hasOwn(movementConstraints, 'blockedJointStressTags')
         ? normalizeStringArray(movementConstraints.blockedJointStressTags)
         : [],
+      monitoredSignals: [],
+      cautionSignals: [],
+      blockedSignals: [],
       manualBlockedExerciseIds: blockedExerciseIds,
       blockedExerciseIds,
       debug: {
@@ -155,6 +213,7 @@ function resolveMovementConstraints(normalizedProfile = {}) {
   const blockedMovementPatterns = [];
   const cautionJointStressTags = [];
   const blockedJointStressTags = [];
+  const resolvedSignalsByKey = new Map();
   const manualBlockedExerciseIds = normalizeStringArray(
     movementConstraints.manualBlockedExerciseIds
   );
@@ -163,23 +222,56 @@ function resolveMovementConstraints(normalizedProfile = {}) {
     .filter((issue) => issue.analysisStatus === 'analyzed')
     .forEach((issue) => {
       issue.confirmedSignals.forEach((signal) => {
-        if (signal.type === 'movementPattern' && signal.decision === 'caution') {
-          addUnique(cautionMovementPatterns, signal.value);
-        }
-
-        if (signal.type === 'movementPattern' && signal.decision === 'blocked') {
-          addUnique(blockedMovementPatterns, signal.value);
-        }
-
-        if (signal.type === 'jointStressTag' && signal.decision === 'caution') {
-          addUnique(cautionJointStressTags, signal.value);
-        }
-
-        if (signal.type === 'jointStressTag' && signal.decision === 'blocked') {
-          addUnique(blockedJointStressTags, signal.value);
-        }
+        addSignalByPriority(resolvedSignalsByKey, signal);
       });
     });
+
+  const monitoredSignals = [];
+  const cautionSignals = [];
+  const blockedSignals = [];
+
+  resolvedSignalsByKey.forEach((signal) => {
+    if (signal.decision === 'monitor') {
+      monitoredSignals.push({
+        type: signal.type,
+        value: signal.value,
+      });
+      return;
+    }
+
+    if (signal.decision === 'caution') {
+      const cautionSignal = {
+        type: signal.type,
+        value: signal.value,
+        cautionLevel: signal.cautionLevel || 'medium',
+      };
+      cautionSignals.push(cautionSignal);
+
+      if (signal.type === 'movementPattern') {
+        addUnique(cautionMovementPatterns, signal.value);
+      }
+
+      if (signal.type === 'jointStressTag') {
+        addUnique(cautionJointStressTags, signal.value);
+      }
+      return;
+    }
+
+    if (signal.decision === 'blocked') {
+      blockedSignals.push({
+        type: signal.type,
+        value: signal.value,
+      });
+
+      if (signal.type === 'movementPattern') {
+        addUnique(blockedMovementPatterns, signal.value);
+      }
+
+      if (signal.type === 'jointStressTag') {
+        addUnique(blockedJointStressTags, signal.value);
+      }
+    }
+  });
 
   return {
     painIssues,
@@ -187,6 +279,9 @@ function resolveMovementConstraints(normalizedProfile = {}) {
     blockedMovementPatterns,
     cautionJointStressTags,
     blockedJointStressTags,
+    monitoredSignals,
+    cautionSignals,
+    blockedSignals,
     manualBlockedExerciseIds,
     blockedExerciseIds: manualBlockedExerciseIds,
     debug: {

@@ -15,9 +15,15 @@ const MAX_PAIN_ISSUES = 5;
 const VALID_AFFECTED_AREAS = new Set(AFFECTED_AREA_OPTIONS.map((option) => option.value));
 const VALID_PAIN_SEVERITIES = new Set(PAIN_SEVERITY_V2_OPTIONS.map((option) => option.value));
 const VALID_TRAINING_RULES = new Set(TRAINING_RULE_V2_OPTIONS.map((option) => option.value));
-const VALID_ANALYSIS_STATUSES = new Set(["draft", "analyzed", "needs_reanalysis"]);
+const VALID_ANALYSIS_STATUSES = new Set([
+  "draft",
+  "needs_clarification",
+  "analyzed",
+  "needs_reanalysis",
+]);
 const VALID_SIGNAL_TYPES = new Set(["movementPattern", "jointStressTag"]);
-const VALID_SIGNAL_DECISIONS = new Set(["caution", "blocked"]);
+const VALID_SIGNAL_DECISIONS = new Set(["monitor", "caution", "blocked"]);
+const VALID_CAUTION_LEVELS = new Set(["none", "low", "medium", "high"]);
 
 function pushFieldError(fieldErrors, formErrors, path, message) {
   if (path) {
@@ -68,6 +74,7 @@ function validateSignals({ signals, fieldErrors, formErrors, path, requireDecisi
     const type = normalizeSignalType(signal.type);
     const value = normalizeString(signal.value).toLowerCase();
     const decision = normalizeString(signal.decision).toLowerCase();
+    const cautionLevel = normalizeString(signal.cautionLevel).toLowerCase();
 
     if (type && !VALID_SIGNAL_TYPES.has(type)) {
       pushFieldError(fieldErrors, formErrors, `${path}[${index}].type`, "Signal type is invalid.");
@@ -83,18 +90,43 @@ function validateSignals({ signals, fieldErrors, formErrors, path, requireDecisi
         );
       }
 
+      if (decision && VALID_SIGNAL_DECISIONS.has(decision)) {
+        const effectiveCautionLevel =
+          cautionLevel || (decision === "caution" ? "medium" : "none");
+
+        if (!VALID_CAUTION_LEVELS.has(effectiveCautionLevel)) {
+          pushFieldError(
+            fieldErrors,
+            formErrors,
+            `${path}[${index}].cautionLevel`,
+            "Caution level is invalid."
+          );
+        }
+
+        if (decision === "caution" && effectiveCautionLevel === "none") {
+          pushFieldError(
+            fieldErrors,
+            formErrors,
+            `${path}[${index}].cautionLevel`,
+            "Caution level is required for caution."
+          );
+        }
+
+        if (decision !== "caution" && effectiveCautionLevel !== "none") {
+          pushFieldError(
+            fieldErrors,
+            formErrors,
+            `${path}[${index}].cautionLevel`,
+            "Caution level must be none unless the signal is caution."
+          );
+        }
+      }
+
       if (type && value && VALID_SIGNAL_TYPES.has(type) && VALID_SIGNAL_DECISIONS.has(decision)) {
         const key = `${type}:${value}`;
         const existingDecision = decisionsByKey.get(key);
 
-        if (existingDecision && existingDecision !== decision) {
-          pushFieldError(
-            fieldErrors,
-            formErrors,
-            `${path}[${index}].decision`,
-            "Signal cannot be both caution and blocked."
-          );
-        } else {
+        if (!existingDecision) {
           decisionsByKey.set(key, decision);
         }
       }

@@ -216,6 +216,20 @@ export async function updateTrainingProfileSettings(trainingProfileDraft) {
   return readJsonResponse(response);
 }
 
+export async function analyzeMovementConstraintsPainIssue(payload) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/users/${userId}/settings/training-profile/movement-constraints/analyze`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+
+  return readJsonResponse(response);
+}
+
 export async function openOrCreateWeeklyPlanEditDraft(weeklyPlanParentId) {
   const userId = await ensureCurrentUserId();
   const response = await fetch(

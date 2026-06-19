@@ -2,12 +2,13 @@ const {
   ApiError,
   createUser,
   getUserSettings,
+  analyzeMovementConstraintSettings,
   upsertUserProfile,
   updateTrainingProfileSettings,
 } = require('../services/usersService');
 
 function handleError(res, error) {
-  if (error instanceof ApiError) {
+  if (error instanceof ApiError || (error?.status && error?.code)) {
     return res.status(error.status).json({
       error: {
         code: error.code,
@@ -62,7 +63,17 @@ async function updateTrainingProfileSettingsHandler(req, res) {
   }
 }
 
+async function analyzeMovementConstraintSettingsHandler(req, res) {
+  try {
+    const analysis = await analyzeMovementConstraintSettings(req.params.userId, req.body || {});
+    return res.status(200).json(analysis);
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
 module.exports = {
+  analyzeMovementConstraintSettingsHandler,
   createUserHandler,
   getUserSettingsHandler,
   upsertUserProfileHandler,

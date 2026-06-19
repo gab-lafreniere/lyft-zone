@@ -2,12 +2,14 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import SettingsDrawer from "../SettingsDrawer";
 import {
+  analyzeMovementConstraintsPainIssue,
   fetchExercises,
   getUserSettings,
   updateTrainingProfileSettings,
 } from "../../../services/api";
 
 jest.mock("../../../services/api", () => ({
+  analyzeMovementConstraintsPainIssue: jest.fn(),
   fetchExercises: jest.fn(),
   getUserSettings: jest.fn(),
   updateTrainingProfileSettings: jest.fn(),
@@ -124,6 +126,7 @@ beforeAll(() => {
 beforeEach(() => {
   jest.useFakeTimers();
   fetchExercises.mockReset();
+  analyzeMovementConstraintsPainIssue.mockReset();
   getUserSettings.mockReset();
   updateTrainingProfileSettings.mockReset();
 });
@@ -579,12 +582,34 @@ describe("SettingsDrawer movement constraints V2", () => {
       painSeverity: "moderate",
       trainingRule: "modify",
       analysisStatus: "analyzed",
+      clarificationQuestions: [],
+      clarificationAnswers: [],
+      aiSummary: "Overhead pressing is the main training trigger described.",
       detectedSignals: [
-        { type: "movementPattern", value: "vertical_push" },
-        { type: "jointStressTag", value: "overhead_shoulder_position" },
+        {
+          type: "movementPattern",
+          value: "vertical_push",
+          recommendedDecision: "caution",
+          cautionLevel: "medium",
+          confidence: "medium",
+          reason: "Overhead pressing is reported as the main trigger.",
+        },
+        {
+          type: "jointStressTag",
+          value: "overhead_shoulder_position",
+          recommendedDecision: "caution",
+          cautionLevel: "medium",
+          confidence: "medium",
+          reason: "The discomfort appears around overhead shoulder positioning.",
+        },
       ],
       confirmedSignals: [
-        { type: "movementPattern", value: "vertical_push", decision: "caution" },
+        {
+          type: "movementPattern",
+          value: "vertical_push",
+          decision: "caution",
+          cautionLevel: "medium",
+        },
       ],
       ...overrides,
     };
@@ -595,6 +620,7 @@ describe("SettingsDrawer movement constraints V2", () => {
     await openTrainingProfileSection("Movement Constraints");
 
     expect(screen.getByText("No active movement restrictions")).toBeInTheDocument();
+    expect(screen.queryByText("Training Rule")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Add pain issue/i }));
     expect(screen.getByText("Pain issue 1")).toBeInTheDocument();
@@ -604,7 +630,6 @@ describe("SettingsDrawer movement constraints V2", () => {
     fireEvent.change(screen.getByPlaceholderText(/Shoulder irritation/i), {
       target: { value: "Shoulder irritation during overhead pressing" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Shoulder" }));
     expect(screen.getByRole("button", { name: /^Analyze with AI$/i })).toBeDisabled();
 
     await advance(700);
@@ -628,17 +653,49 @@ describe("SettingsDrawer movement constraints V2", () => {
     await renderDrawer();
     await openTrainingProfileSection("Movement Constraints");
 
+    analyzeMovementConstraintsPainIssue.mockResolvedValue({
+      status: "analyzed",
+      clarificationQuestions: [],
+      aiSummary: "Overhead pressing is the main training trigger described.",
+      detectedSignals: [
+        {
+          type: "movementPattern",
+          value: "vertical_push",
+          recommendedDecision: "caution",
+          cautionLevel: "medium",
+          confidence: "medium",
+          reason: "Overhead pressing is reported as the main trigger.",
+        },
+        {
+          type: "jointStressTag",
+          value: "overhead_shoulder_position",
+          recommendedDecision: "monitor",
+          cautionLevel: "none",
+          confidence: "medium",
+          reason: "This signal is relevant context for future check-ins.",
+        },
+      ],
+    });
+
     fireEvent.click(screen.getByRole("button", { name: /Add pain issue/i }));
     fireEvent.change(screen.getByPlaceholderText(/Shoulder irritation/i), {
       target: { value: "Shoulder irritation during overhead pressing" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Shoulder" }));
     fireEvent.click(screen.getByRole("button", { name: "Moderate" }));
-    fireEvent.click(screen.getByRole("button", { name: /Modify movement/i }));
 
     fireEvent.click(screen.getByRole("button", { name: /^Analyze with AI$/i }));
-    expect(screen.getByText("Vertical Push")).toBeInTheDocument();
+    await screen.findByText("Vertical Push");
     expect(screen.getByText("Overhead Shoulder Position")).toBeInTheDocument();
+    expect(analyzeMovementConstraintsPainIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        painIssue: expect.objectContaining({
+          description: "Shoulder irritation during overhead pressing",
+          affectedArea: "shoulder",
+          painSeverity: "moderate",
+        }),
+      })
+    );
 
     fireEvent.click(screen.getAllByRole("button", { name: "Caution" })[0]);
 
@@ -652,14 +709,21 @@ describe("SettingsDrawer movement constraints V2", () => {
           description: "Shoulder irritation during overhead pressing",
           affectedArea: "shoulder",
           painSeverity: "moderate",
-          trainingRule: "modify",
           analysisStatus: "analyzed",
           detectedSignals: [
-            { type: "movementPattern", value: "vertical_push" },
-            { type: "jointStressTag", value: "overhead_shoulder_position" },
+            expect.objectContaining({ type: "movementPattern", value: "vertical_push" }),
+            expect.objectContaining({
+              type: "jointStressTag",
+              value: "overhead_shoulder_position",
+            }),
           ],
           confirmedSignals: [
-            { type: "movementPattern", value: "vertical_push", decision: "caution" },
+            {
+              type: "movementPattern",
+              value: "vertical_push",
+              decision: "caution",
+              cautionLevel: "medium",
+            },
           ],
         }),
       ],
@@ -710,6 +774,29 @@ describe("SettingsDrawer movement constraints V2", () => {
 
   test("re-analyze uses custom confirmation before replacing signals", async () => {
     const baseProfile = createSettingsResponse().trainingProfile.profile;
+    analyzeMovementConstraintsPainIssue.mockResolvedValue({
+      status: "analyzed",
+      clarificationQuestions: [],
+      aiSummary: "Deep squats are the main training trigger described.",
+      detectedSignals: [
+        {
+          type: "movementPattern",
+          value: "squat_pattern",
+          recommendedDecision: "caution",
+          cautionLevel: "medium",
+          confidence: "medium",
+          reason: "Deep squats are reported as the main trigger.",
+        },
+        {
+          type: "jointStressTag",
+          value: "deep_knee_flexion",
+          recommendedDecision: "caution",
+          cautionLevel: "medium",
+          confidence: "medium",
+          reason: "Deep knee bending is described as the main trigger.",
+        },
+      ],
+    });
 
     await renderDrawer(
       createSettingsResponse({
@@ -743,7 +830,7 @@ describe("SettingsDrawer movement constraints V2", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("Re-analyze this pain issue?");
     expect(
       screen.getByText(
-        "This will replace the current detected signals and remove any confirmed caution or blocked decisions for this pain issue."
+        "This will request a fresh analysis. Confirmed decisions stay in place unless the new analysis returns final detected signals."
       )
     ).toBeInTheDocument();
 
@@ -760,10 +847,125 @@ describe("SettingsDrawer movement constraints V2", () => {
       })
     );
 
-    expect(screen.getByText("Squat Pattern")).toBeInTheDocument();
+    await screen.findByText("Squat Pattern");
     expect(screen.getByText("Deep Knee Flexion")).toBeInTheDocument();
     expect(screen.queryByText("Vertical Push")).not.toBeInTheDocument();
     expect(screen.getByText("No active movement restrictions")).toBeInTheDocument();
+  });
+
+  test("re-analyze preserves confirmed signals when clarification is needed", async () => {
+    const baseProfile = createSettingsResponse().trainingProfile.profile;
+    analyzeMovementConstraintsPainIssue.mockResolvedValue({
+      status: "needs_clarification",
+      clarificationQuestions: [
+        {
+          id: "q1",
+          question: "Does this happen during deep squats, lunges, or both?",
+        },
+      ],
+      aiSummary: null,
+      detectedSignals: [],
+    });
+
+    await renderDrawer(
+      createSettingsResponse({
+        trainingProfile: {
+          profile: {
+            ...baseProfile,
+            movementConstraints: {
+              painIssues: [createPainIssue()],
+              manualBlockedExerciseIds: [],
+            },
+          },
+        },
+      })
+    );
+
+    await openTrainingProfileSection("Movement Constraints");
+    expect(screen.getByText("Vertical Push")).toBeInTheDocument();
+    expect(screen.getByText("1 caution")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Toggle pain issue 1" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Re-analyze with AI$/i }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Re-analyze with AI",
+      })
+    );
+
+    await screen.findByText("Does this happen during deep squats, lunges, or both?");
+    expect(screen.getByText("1 caution")).toBeInTheDocument();
+    expect(screen.getAllByText("Vertical Push").length).toBeGreaterThan(0);
+  });
+
+  test("failed analyze keeps existing local data", async () => {
+    const baseProfile = createSettingsResponse().trainingProfile.profile;
+    const error = new Error("AI movement constraint analysis is not enabled");
+    error.code = "AI_MOVEMENT_CONSTRAINTS_DISABLED";
+    analyzeMovementConstraintsPainIssue.mockRejectedValue(error);
+
+    await renderDrawer(
+      createSettingsResponse({
+        trainingProfile: {
+          profile: {
+            ...baseProfile,
+            movementConstraints: {
+              painIssues: [createPainIssue()],
+              manualBlockedExerciseIds: [],
+            },
+          },
+        },
+      })
+    );
+
+    await openTrainingProfileSection("Movement Constraints");
+    expect(screen.getByText("1 caution")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Toggle pain issue 1" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Re-analyze with AI$/i }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Re-analyze with AI",
+      })
+    );
+
+    await screen.findByText("AI analysis is not enabled yet.");
+    expect(screen.getByText("1 caution")).toBeInTheDocument();
+    expect(screen.getAllByText("Vertical Push").length).toBeGreaterThan(0);
+  });
+
+  test("rate limited analyze shows a friendly message and keeps existing local data", async () => {
+    const baseProfile = createSettingsResponse().trainingProfile.profile;
+    const error = new Error("Please wait before running another AI analysis.");
+    error.code = "AI_ANALYZE_RATE_LIMITED";
+    analyzeMovementConstraintsPainIssue.mockRejectedValue(error);
+
+    await renderDrawer(
+      createSettingsResponse({
+        trainingProfile: {
+          profile: {
+            ...baseProfile,
+            movementConstraints: {
+              painIssues: [createPainIssue()],
+              manualBlockedExerciseIds: [],
+            },
+          },
+        },
+      })
+    );
+
+    await openTrainingProfileSection("Movement Constraints");
+    expect(screen.getByText("1 caution")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Toggle pain issue 1" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Re-analyze with AI$/i }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Re-analyze with AI",
+      })
+    );
+
+    await screen.findByText("Please wait a few seconds before running another AI analysis.");
+    expect(screen.getByText("1 caution")).toBeInTheDocument();
+    expect(screen.getAllByText("Vertical Push").length).toBeGreaterThan(0);
   });
 
   test("delete pain issue asks for confirmation before removing it", async () => {

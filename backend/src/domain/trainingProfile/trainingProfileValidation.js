@@ -32,9 +32,22 @@ const AFFECTED_AREAS = new Set([
   'ankle',
   'neck_upper_back',
 ]);
-const ANALYSIS_STATUSES = new Set(['draft', 'analyzed', 'needs_reanalysis']);
+const ANALYSIS_STATUSES = new Set(['draft', 'needs_clarification', 'analyzed', 'needs_reanalysis']);
 const SIGNAL_TYPES = new Set(['movementPattern', 'jointStressTag']);
-const SIGNAL_DECISIONS = new Set(['caution', 'blocked']);
+const SIGNAL_DECISIONS = new Set(['monitor', 'caution', 'blocked']);
+const CAUTION_LEVELS = new Set(['none', 'low', 'medium', 'high']);
+const CAUTION_LEVEL_WEIGHTS = {
+  none: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+};
+const SIGNAL_DECISION_WEIGHTS = {
+  monitor: 1,
+  caution: 2,
+  blocked: 3,
+};
+const CONFIDENCE_LEVELS = new Set(['low', 'medium', 'high']);
 const SIGNAL_VALUE_SETS = {
   movementPattern: new Set(exerciseEnums.movementPattern || []),
   jointStressTag: new Set(exerciseEnums.jointStressTags || []),
@@ -43,6 +56,12 @@ const MAX_SHORT_TEXT = 120;
 const MAX_LONG_TEXT = 1000;
 const MAX_PAIN_DESCRIPTION = 500;
 const MAX_PAIN_ISSUES = 5;
+const MAX_DETECTED_SIGNALS = 4;
+const MAX_CLARIFICATION_QUESTIONS = 3;
+const MAX_CLARIFICATION_QUESTION = 160;
+const MAX_CLARIFICATION_ANSWER = 500;
+const MAX_AI_SUMMARY = 500;
+const MAX_REASON = 180;
 
 function normalizeOptionalString(value) {
   if (value == null) {
@@ -124,12 +143,73 @@ function hasOwn(object, key) {
   return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
 }
 
+function normalizeCautionLevel(value, decision) {
+  const normalized = normalizeLowerString(value);
+
+  if (normalized) {
+    return normalized;
+  }
+
+  return decision === 'caution' ? 'medium' : 'none';
+}
+
+function validateCautionLevel(cautionLevel, decision, issues, path) {
+  if (!CAUTION_LEVELS.has(cautionLevel)) {
+    pushIssue(issues, path, 'INVALID_ENUM', 'cautionLevel is invalid');
+    return false;
+  }
+
+  if (decision === 'caution' && cautionLevel === 'none') {
+    pushIssue(issues, path, 'INVALID_CAUTION_LEVEL', 'cautionLevel is required for caution');
+    return false;
+  }
+
+  if (decision !== 'caution' && cautionLevel !== 'none') {
+    pushIssue(
+      issues,
+      path,
+      'INVALID_CAUTION_LEVEL',
+      'cautionLevel must be none for monitor or blocked'
+    );
+    return false;
+  }
+
+  return true;
+}
+
+function isHigherPrioritySignal(candidate, current) {
+  if (!current) {
+    return true;
+  }
+
+  const candidateDecisionWeight = SIGNAL_DECISION_WEIGHTS[candidate.decision] || 0;
+  const currentDecisionWeight = SIGNAL_DECISION_WEIGHTS[current.decision] || 0;
+
+  if (candidateDecisionWeight !== currentDecisionWeight) {
+    return candidateDecisionWeight > currentDecisionWeight;
+  }
+
+  return (
+    (CAUTION_LEVEL_WEIGHTS[candidate.cautionLevel] || 0) >
+    (CAUTION_LEVEL_WEIGHTS[current.cautionLevel] || 0)
+  );
+}
+
 function normalizeDetectedSignals(value, issues, path) {
   const values = Array.isArray(value) ? value : value == null ? [] : [value];
   const normalizedSignals = [];
   const seen = new Set();
 
-  values.forEach((signal, index) => {
+  if (values.length > MAX_DETECTED_SIGNALS) {
+    pushIssue(
+      issues,
+      path,
+      'MAX_ITEMS_EXCEEDED',
+      `detectedSignals must contain at most ${MAX_DETECTED_SIGNALS} signals`
+    );
+  }
+
+  values.slice(0, MAX_DETECTED_SIGNALS).forEach((signal, index) => {
     const signalPath = `${path}[${index}]`;
 
     if (!signal || typeof signal !== 'object' || Array.isArray(signal)) {
@@ -139,6 +219,10 @@ function normalizeDetectedSignals(value, issues, path) {
 
     const type = normalizeSignalType(signal.type);
     const signalValue = normalizeLowerString(signal.value);
+    const recommendedDecision = normalizeLowerString(signal.recommendedDecision);
+    const cautionLevel = normalizeCautionLevel(signal.cautionLevel, recommendedDecision);
+    const confidence = normalizeLowerString(signal.confidence);
+    const reason = normalizeOptionalString(signal.reason);
 
     if (!type) {
       pushIssue(issues, `${signalPath}.type`, 'REQUIRED', 'Signal type is required');
@@ -152,6 +236,27 @@ function normalizeDetectedSignals(value, issues, path) {
       pushIssue(issues, `${signalPath}.value`, 'INVALID_ENUM', 'Signal value is invalid');
     }
 
+    if (recommendedDecision && !SIGNAL_DECISIONS.has(recommendedDecision)) {
+      pushIssue(
+        issues,
+        `${signalPath}.recommendedDecision`,
+        'INVALID_ENUM',
+        'recommendedDecision is invalid'
+      );
+    }
+
+    if (recommendedDecision && SIGNAL_DECISIONS.has(recommendedDecision)) {
+      validateCautionLevel(cautionLevel, recommendedDecision, issues, `${signalPath}.cautionLevel`);
+    } else if (signal.cautionLevel != null && !CAUTION_LEVELS.has(cautionLevel)) {
+      pushIssue(issues, `${signalPath}.cautionLevel`, 'INVALID_ENUM', 'cautionLevel is invalid');
+    }
+
+    if (confidence && !CONFIDENCE_LEVELS.has(confidence)) {
+      pushIssue(issues, `${signalPath}.confidence`, 'INVALID_ENUM', 'confidence is invalid');
+    }
+
+    ensureBoundedString(reason, issues, `${signalPath}.reason`, 'reason', MAX_REASON);
+
     if (!type || !SIGNAL_TYPES.has(type) || !signalValue) {
       return;
     }
@@ -162,10 +267,25 @@ function normalizeDetectedSignals(value, issues, path) {
     }
 
     seen.add(key);
-    normalizedSignals.push({
+    const normalizedSignal = {
       type,
       value: signalValue,
-    });
+    };
+
+    if (recommendedDecision && SIGNAL_DECISIONS.has(recommendedDecision)) {
+      normalizedSignal.recommendedDecision = recommendedDecision;
+      normalizedSignal.cautionLevel = cautionLevel;
+    }
+
+    if (confidence && CONFIDENCE_LEVELS.has(confidence)) {
+      normalizedSignal.confidence = confidence;
+    }
+
+    if (reason) {
+      normalizedSignal.reason = reason;
+    }
+
+    normalizedSignals.push(normalizedSignal);
   });
 
   return normalizedSignals;
@@ -173,7 +293,8 @@ function normalizeDetectedSignals(value, issues, path) {
 
 function normalizeConfirmedSignals(value, issues, path) {
   const values = Array.isArray(value) ? value : value == null ? [] : [value];
-  const normalizedSignals = [];
+  const signalsByKey = new Map();
+  const order = [];
   const decisionsBySignalKey = new Map();
 
   values.forEach((signal, index) => {
@@ -187,6 +308,7 @@ function normalizeConfirmedSignals(value, issues, path) {
     const type = normalizeSignalType(signal.type);
     const signalValue = normalizeLowerString(signal.value);
     const decision = normalizeLowerString(signal.decision);
+    const cautionLevel = normalizeCautionLevel(signal.cautionLevel, decision);
 
     if (!type) {
       pushIssue(issues, `${signalPath}.type`, 'REQUIRED', 'Signal type is required');
@@ -206,7 +328,18 @@ function normalizeConfirmedSignals(value, issues, path) {
       pushIssue(issues, `${signalPath}.decision`, 'INVALID_ENUM', 'Signal decision is invalid');
     }
 
-    if (!type || !SIGNAL_TYPES.has(type) || !signalValue || !SIGNAL_DECISIONS.has(decision)) {
+    const validCautionLevel =
+      decision && SIGNAL_DECISIONS.has(decision)
+        ? validateCautionLevel(cautionLevel, decision, issues, `${signalPath}.cautionLevel`)
+        : true;
+
+    if (
+      !type ||
+      !SIGNAL_TYPES.has(type) ||
+      !signalValue ||
+      !SIGNAL_DECISIONS.has(decision) ||
+      !validCautionLevel
+    ) {
       return;
     }
 
@@ -214,26 +347,107 @@ function normalizeConfirmedSignals(value, issues, path) {
     const existingDecision = decisionsBySignalKey.get(signalKey);
 
     if (existingDecision) {
-      if (existingDecision !== decision) {
-        pushIssue(
-          issues,
-          `${signalPath}.decision`,
-          'CONFLICTING_SIGNAL_DECISION',
-          'Signal cannot be both caution and blocked'
-        );
-      }
-      return;
+      decisionsBySignalKey.set(signalKey, decision);
+    } else {
+      decisionsBySignalKey.set(signalKey, decision);
+      order.push(signalKey);
     }
 
-    decisionsBySignalKey.set(signalKey, decision);
-    normalizedSignals.push({
+    const normalizedSignal = {
       type,
       value: signalValue,
       decision,
-    });
+      cautionLevel,
+    };
+
+    if (isHigherPrioritySignal(normalizedSignal, signalsByKey.get(signalKey))) {
+      signalsByKey.set(signalKey, normalizedSignal);
+    }
   });
 
-  return normalizedSignals;
+  return order.map((key) => signalsByKey.get(key)).filter(Boolean);
+}
+
+function normalizeClarificationQuestions(value, issues, path) {
+  const values = Array.isArray(value) ? value : value == null ? [] : [value];
+
+  if (values.length > MAX_CLARIFICATION_QUESTIONS) {
+    pushIssue(
+      issues,
+      path,
+      'MAX_ITEMS_EXCEEDED',
+      `clarificationQuestions must contain at most ${MAX_CLARIFICATION_QUESTIONS} questions`
+    );
+  }
+
+  return values
+    .slice(0, MAX_CLARIFICATION_QUESTIONS)
+    .map((question, index) => {
+      const questionPath = `${path}[${index}]`;
+
+      if (!question || typeof question !== 'object' || Array.isArray(question)) {
+        pushIssue(issues, questionPath, 'INVALID_TYPE', 'Clarification question must be an object');
+        return null;
+      }
+
+      const id = normalizeOptionalString(question.id);
+      const questionText = normalizeOptionalString(question.question);
+
+      if (!id) {
+        pushIssue(issues, `${questionPath}.id`, 'REQUIRED', 'Question id is required');
+      }
+
+      if (!questionText) {
+        pushIssue(issues, `${questionPath}.question`, 'REQUIRED', 'Question is required');
+      }
+
+      ensureBoundedString(
+        questionText,
+        issues,
+        `${questionPath}.question`,
+        'Question',
+        MAX_CLARIFICATION_QUESTION
+      );
+
+      return id && questionText ? { id, question: questionText } : null;
+    })
+    .filter(Boolean);
+}
+
+function normalizeClarificationAnswers(value, issues, path) {
+  const values = Array.isArray(value) ? value : value == null ? [] : [value];
+
+  return values
+    .map((answer, index) => {
+      const answerPath = `${path}[${index}]`;
+
+      if (!answer || typeof answer !== 'object' || Array.isArray(answer)) {
+        pushIssue(issues, answerPath, 'INVALID_TYPE', 'Clarification answer must be an object');
+        return null;
+      }
+
+      const questionId = normalizeOptionalString(answer.questionId);
+      const answerText = normalizeOptionalString(answer.answer);
+
+      if (!questionId) {
+        pushIssue(issues, `${answerPath}.questionId`, 'REQUIRED', 'questionId is required');
+      }
+
+      if (!answerText) {
+        pushIssue(issues, `${answerPath}.answer`, 'REQUIRED', 'answer is required');
+      }
+
+      ensureBoundedString(
+        answerText,
+        issues,
+        `${answerPath}.answer`,
+        'answer',
+        MAX_CLARIFICATION_ANSWER
+      );
+
+      return questionId && answerText ? { questionId, answer: answerText } : null;
+    })
+    .filter(Boolean);
 }
 
 function normalizePainIssues(value, issues, path = 'movementConstraints.painIssues') {
@@ -264,6 +478,7 @@ function normalizePainIssues(value, issues, path = 'movementConstraints.painIssu
     const painSeverity = normalizeLowerString(issue.painSeverity);
     const trainingRule = normalizeLowerString(issue.trainingRule);
     const analysisStatus = normalizeLowerString(issue.analysisStatus) || 'draft';
+    const aiSummary = normalizeOptionalString(issue.aiSummary);
 
     if (!id) {
       pushIssue(issues, `${issuePath}.id`, 'REQUIRED', 'Pain issue id is required');
@@ -301,11 +516,11 @@ function normalizePainIssues(value, issues, path = 'movementConstraints.painIssu
       pushIssue(issues, `${issuePath}.painSeverity`, 'INVALID_ENUM', 'painSeverity is invalid');
     }
 
-    if (!trainingRule) {
-      pushIssue(issues, `${issuePath}.trainingRule`, 'REQUIRED', 'trainingRule is required');
-    } else if (!TRAINING_RULES.has(trainingRule)) {
+    if (trainingRule && !TRAINING_RULES.has(trainingRule)) {
       pushIssue(issues, `${issuePath}.trainingRule`, 'INVALID_ENUM', 'trainingRule is invalid');
     }
+
+    ensureBoundedString(aiSummary, issues, `${issuePath}.aiSummary`, 'aiSummary', MAX_AI_SUMMARY);
 
     if (!ANALYSIS_STATUSES.has(analysisStatus)) {
       pushIssue(
@@ -323,6 +538,17 @@ function normalizePainIssues(value, issues, path = 'movementConstraints.painIssu
       painSeverity,
       trainingRule,
       analysisStatus,
+      clarificationQuestions: normalizeClarificationQuestions(
+        issue.clarificationQuestions,
+        issues,
+        `${issuePath}.clarificationQuestions`
+      ),
+      clarificationAnswers: normalizeClarificationAnswers(
+        issue.clarificationAnswers,
+        issues,
+        `${issuePath}.clarificationAnswers`
+      ),
+      aiSummary,
       detectedSignals: normalizeDetectedSignals(
         issue.detectedSignals,
         issues,

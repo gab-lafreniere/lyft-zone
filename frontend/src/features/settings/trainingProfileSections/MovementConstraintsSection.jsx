@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchExercises } from "../../../services/api";
+import { analyzeMovementConstraintsPainIssue, fetchExercises } from "../../../services/api";
 import {
   AFFECTED_AREA_OPTIONS,
   PAIN_SEVERITY_V2_OPTIONS,
-  TRAINING_RULE_V2_OPTIONS,
 } from "../settingsOptions";
 import {
   CharacterCount,
@@ -13,7 +12,6 @@ import {
   ReadonlyChipList,
   SectionBlock,
   SegmentedSelector,
-  SelectableCard,
   TEXTAREA_CLASSES,
   applyDraftUpdate,
   findFieldError,
@@ -24,42 +22,9 @@ const MAX_PAIN_ISSUES = 5;
 const MAX_DESCRIPTION_LENGTH = 500;
 const ANALYSIS_STATUS_LABELS = {
   draft: "Draft",
+  needs_clarification: "Needs clarification",
   analyzed: "Analyzed",
   needs_reanalysis: "Needs re-analysis",
-};
-const MOCK_SIGNAL_MAP = {
-  shoulder: [
-    { type: "movementPattern", value: "vertical_push" },
-    { type: "jointStressTag", value: "overhead_shoulder_position" },
-  ],
-  knee: [
-    { type: "movementPattern", value: "squat_pattern" },
-    { type: "jointStressTag", value: "deep_knee_flexion" },
-  ],
-  lower_back: [
-    { type: "movementPattern", value: "hip_hinge" },
-    { type: "jointStressTag", value: "spinal_loading" },
-  ],
-  elbow: [
-    { type: "movementPattern", value: "elbow_extension" },
-    { type: "jointStressTag", value: "elbow_extension_stress" },
-  ],
-  wrist: [
-    { type: "movementPattern", value: "wrist_extension" },
-    { type: "jointStressTag", value: "wrist_extension_load" },
-  ],
-  hip: [
-    { type: "movementPattern", value: "hip_hinge" },
-    { type: "jointStressTag", value: "hip_deep_flexion" },
-  ],
-  ankle: [
-    { type: "movementPattern", value: "lunge_pattern" },
-    { type: "jointStressTag", value: "ankle_dorsiflexion_demand" },
-  ],
-  neck_upper_back: [
-    { type: "movementPattern", value: "scapular_elevation" },
-    { type: "jointStressTag", value: "spinal_loading" },
-  ],
 };
 
 function toArray(value) {
@@ -89,10 +54,9 @@ function signalKey(signal) {
 function isCompleteIssue(issue) {
   return Boolean(
     String(issue?.id || "").trim() &&
-    String(issue?.description || "").trim() &&
-    String(issue?.affectedArea || "").trim() &&
-    String(issue?.painSeverity || "").trim() &&
-    String(issue?.trainingRule || "").trim()
+      String(issue?.description || "").trim() &&
+      String(issue?.affectedArea || "").trim() &&
+      String(issue?.painSeverity || "").trim()
   );
 }
 
@@ -103,6 +67,15 @@ function getSignalDecision(issue, signal) {
   );
 
   return match?.decision || "none";
+}
+
+function getSignalCautionLevel(issue, signal) {
+  const key = signalKey(signal);
+  const match = toArray(issue?.confirmedSignals).find(
+    (confirmedSignal) => signalKey(confirmedSignal) === key
+  );
+
+  return match?.cautionLevel || signal?.cautionLevel || "none";
 }
 
 function addUnique(target, value) {
@@ -166,13 +139,12 @@ function createIssue() {
     painSeverity: "low",
     trainingRule: "",
     analysisStatus: "draft",
+    clarificationQuestions: [],
+    clarificationAnswers: [],
+    aiSummary: "",
     detectedSignals: [],
     confirmedSignals: [],
   };
-}
-
-function getMockDetectedSignals(issue) {
-  return MOCK_SIGNAL_MAP[issue?.affectedArea] || [];
 }
 
 function getIssueTitle(issue, index) {
@@ -192,17 +164,17 @@ function getIssueMeta(issue) {
   return [
     getOptionLabel(AFFECTED_AREA_OPTIONS, issue?.affectedArea),
     getOptionLabel(PAIN_SEVERITY_V2_OPTIONS, issue?.painSeverity),
-    getOptionLabel(TRAINING_RULE_V2_OPTIONS, issue?.trainingRule),
   ].join(" · ");
 }
 
 function getSignalCounts(issue) {
   return toArray(issue?.confirmedSignals).reduce(
     (counts, signal) => ({
+      monitor: counts.monitor + (signal.decision === "monitor" ? 1 : 0),
       caution: counts.caution + (signal.decision === "caution" ? 1 : 0),
       blocked: counts.blocked + (signal.decision === "blocked" ? 1 : 0),
     }),
-    { caution: 0, blocked: 0 }
+    { monitor: 0, caution: 0, blocked: 0 }
   );
 }
 
@@ -267,6 +239,8 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
   const [exerciseNamesById, setExerciseNamesById] = useState({});
   const [isSearchingExercises, setIsSearchingExercises] = useState(false);
   const [exerciseSearchError, setExerciseSearchError] = useState("");
+  const [analyzingIssueId, setAnalyzingIssueId] = useState(null);
+  const [analysisErrorsByIssueId, setAnalysisErrorsByIssueId] = useState({});
   const derivedConstraints = useMemo(
     () => deriveMovementConstraints(movementConstraints),
     [movementConstraints]
@@ -438,13 +412,71 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
     });
   }
 
-  function applyMockAnalyze(issue) {
-    updateIssue(issue.id, (nextIssue) => {
-      nextIssue.analysisStatus = "analyzed";
-      nextIssue.detectedSignals = getMockDetectedSignals(nextIssue);
-      nextIssue.confirmedSignals = [];
+  function handleClarificationAnswerChange(issueId, questionId, answer) {
+    updateIssue(issueId, (nextIssue) => {
+      const existingAnswers = toArray(nextIssue.clarificationAnswers).filter(
+        (clarificationAnswer) => clarificationAnswer.questionId !== questionId
+      );
+      const normalizedAnswer = String(answer || "");
+
+      nextIssue.clarificationAnswers = normalizedAnswer.trim()
+        ? [...existingAnswers, { questionId, answer: normalizedAnswer }]
+        : existingAnswers;
     });
-    setPendingReanalyzeIssueId(null);
+  }
+
+  async function runAnalyze(issue) {
+    if (!isCompleteIssue(issue)) {
+      return;
+    }
+
+    setAnalyzingIssueId(issue.id);
+    setAnalysisErrorsByIssueId((currentErrors) => ({
+      ...currentErrors,
+      [issue.id]: "",
+    }));
+
+    try {
+      const result = await analyzeMovementConstraintsPainIssue({
+        painIssue: {
+          id: issue.id,
+          description: issue.description,
+          affectedArea: issue.affectedArea,
+          painSeverity: issue.painSeverity,
+          clarificationAnswers: toArray(issue.clarificationAnswers),
+        },
+        context: {
+          existingPainIssues: movementConstraints.painIssues.filter(
+            (candidateIssue) => candidateIssue.id !== issue.id
+          ),
+          manualBlockedExerciseIds: movementConstraints.manualBlockedExerciseIds,
+        },
+      });
+
+      updateIssue(issue.id, (nextIssue) => {
+        nextIssue.analysisStatus = result.status;
+        nextIssue.clarificationQuestions = toArray(result.clarificationQuestions);
+        nextIssue.aiSummary = result.aiSummary || "";
+
+        if (result.status === "analyzed") {
+          nextIssue.detectedSignals = toArray(result.detectedSignals);
+          nextIssue.confirmedSignals = [];
+        }
+      });
+      setPendingReanalyzeIssueId(null);
+    } catch (error) {
+      setAnalysisErrorsByIssueId((currentErrors) => ({
+        ...currentErrors,
+        [issue.id]:
+          error?.code === "AI_MOVEMENT_CONSTRAINTS_DISABLED"
+            ? "AI analysis is not enabled yet."
+            : error?.code === "AI_ANALYZE_RATE_LIMITED"
+              ? "Please wait a few seconds before running another AI analysis."
+            : error?.message || "Unable to analyze this pain issue.",
+      }));
+    } finally {
+      setAnalyzingIssueId((currentIssueId) => (currentIssueId === issue.id ? null : currentIssueId));
+    }
   }
 
   function handleAnalyze(issue) {
@@ -456,7 +488,7 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
       return;
     }
 
-    applyMockAnalyze(issue);
+    runAnalyze(issue);
   }
 
   function handleDecisionChange(issue, signal, decision) {
@@ -469,7 +501,15 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
       nextIssue.confirmedSignals =
         decision === "none"
           ? remainingSignals
-          : [...remainingSignals, { ...signal, decision }];
+          : [
+              ...remainingSignals,
+              {
+                type: signal.type,
+                value: signal.value,
+                decision,
+                cautionLevel: decision === "caution" ? signal.cautionLevel || "medium" : "none",
+              },
+            ];
     });
   }
 
@@ -501,6 +541,8 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
     const description = String(issue.description || "");
     const canAnalyze =
       isCompleteIssue(issue) && description.length <= MAX_DESCRIPTION_LENGTH;
+    const isAnalyzing = analyzingIssueId === issue.id;
+    const analysisError = analysisErrorsByIssueId[issue.id] || "";
     const analyzeLabel =
       issue.analysisStatus === "analyzed" || issue.analysisStatus === "needs_reanalysis"
         ? "Re-analyze with AI"
@@ -566,71 +608,116 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
           </div>
         </Field>
 
-        <Field
-          label="Training Rule"
-          error={findFieldError(fieldErrors, [
-            `movementConstraints.painIssues[${index}].trainingRule`,
-          ])}
-        >
-          <div className="mt-2 space-y-3">
-            {TRAINING_RULE_V2_OPTIONS.map((option) => (
-              <SelectableCard
-                key={option.value}
-                label={option.label}
-                description={option.description}
-                icon={option.icon}
-                selected={issue.trainingRule === option.value}
-                tone={option.value === "avoid" ? "warning" : "default"}
-                onClick={() => handleSourceFieldChange(issue.id, "trainingRule", option.value)}
-              />
-            ))}
-          </div>
-        </Field>
+        {toArray(issue.clarificationQuestions).length ? (
+          <Field label="Clarification Questions">
+            <div className="mt-2 space-y-3">
+              {toArray(issue.clarificationQuestions).map((question) => {
+                const answer =
+                  toArray(issue.clarificationAnswers).find(
+                    (candidateAnswer) => candidateAnswer.questionId === question.id
+                  )?.answer || "";
+
+                return (
+                  <div key={question.id} className="rounded-[14px] border border-slate-200 bg-white p-3">
+                    <p className="text-sm font-semibold leading-snug text-slate-800">
+                      {question.question}
+                    </p>
+                    <input
+                      type="text"
+                      className={`${INPUT_CLASSES} mt-2`}
+                      value={answer}
+                      onChange={(event) =>
+                        handleClarificationAnswerChange(issue.id, question.id, event.target.value)
+                      }
+                      placeholder="Answer briefly..."
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </Field>
+        ) : null}
+
+        {issue.aiSummary ? (
+          <Field label="AI Summary">
+            <p className="mt-2 rounded-[14px] border border-slate-200 bg-white px-3 py-2.5 text-sm leading-relaxed text-slate-700">
+              {issue.aiSummary}
+            </p>
+          </Field>
+        ) : null}
 
         <div className="flex justify-end">
           <div className="text-right">
             <button
               type="button"
               aria-label={analyzeLabel}
-              disabled={!canAnalyze}
+              disabled={!canAnalyze || isAnalyzing}
               onClick={() => handleAnalyze(issue)}
               className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-bold text-white transition disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
             >
               <span className="material-symbols-outlined text-base">psychology</span>
-              {analyzeLabel}
+              {isAnalyzing ? "Analyzing..." : analyzeLabel}
             </button>
-            <p className="mt-2 text-xs font-medium text-slate-500">
-              AI analysis preview. Final AI logic will be connected later.
-            </p>
+            {analysisError ? (
+              <p className="mt-2 text-xs font-bold text-red-600">{analysisError}</p>
+            ) : (
+              <p className="mt-2 text-xs font-medium text-slate-500">
+                This is not medical advice. Review every suggested training signal before applying it.
+              </p>
+            )}
           </div>
         </div>
 
         <Field
           label="Detected Signals"
-          hint="AI analysis preview. Final AI logic will be connected later."
+          hint="Suggested training signals. Only confirmed decisions become active."
         >
           {toArray(issue.detectedSignals).length ? (
             <div className="mt-2 space-y-2">
               {issue.detectedSignals.map((signal) => {
                 const decision = getSignalDecision(issue, signal);
+                const cautionLevel = getSignalCautionLevel(issue, signal);
 
                 return (
                   <div
                     key={signalKey(signal)}
                     className="rounded-[14px] border border-slate-200 bg-white px-3 py-2.5"
                   >
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-bold leading-snug text-slate-900">
                           {formatTokenLabel(signal.value)}
                         </p>
-                        <span className="mt-1 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                          {signal.type === "movementPattern" ? "Movement" : "Joint stress"}
-                        </span>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                            {signal.type === "movementPattern" ? "Movement" : "Joint stress"}
+                          </span>
+                          {signal.recommendedDecision ? (
+                            <span className="inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-700">
+                              AI: {formatTokenLabel(signal.recommendedDecision)}
+                            </span>
+                          ) : null}
+                          {signal.cautionLevel && signal.cautionLevel !== "none" ? (
+                            <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">
+                              {signal.cautionLevel} caution
+                            </span>
+                          ) : null}
+                          {signal.confidence ? (
+                            <span className="inline-flex rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                              {signal.confidence} confidence
+                            </span>
+                          ) : null}
+                        </div>
+                        {signal.reason ? (
+                          <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                            {signal.reason}
+                          </p>
+                        ) : null}
                       </div>
-                      <div className="grid w-full grid-cols-3 overflow-hidden rounded-full border border-slate-200 text-[11px] font-bold sm:w-auto sm:min-w-[210px]">
+                      <div className="grid w-full grid-cols-4 overflow-hidden rounded-full border border-slate-200 text-[11px] font-bold sm:w-auto sm:min-w-[280px]">
                         {[
-                          ["none", "X"],
+                          ["none", "Ignore"],
+                          ["monitor", "Monitor"],
                           ["caution", "Caution"],
                           ["blocked", "Blocked"],
                         ].map(([value, label]) => (
@@ -645,9 +732,16 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
                                   ? "bg-red-50 text-red-700"
                                   : value === "caution"
                                     ? "bg-amber-50 text-amber-700"
+                                    : value === "monitor"
+                                      ? "bg-sky-50 text-sky-700"
                                     : "bg-slate-100 text-slate-700"
                                 : "bg-white text-slate-500",
                             ].join(" ")}
+                            title={
+                              value === "caution" && cautionLevel !== "none"
+                                ? `Caution level: ${cautionLevel}`
+                                : undefined
+                            }
                           >
                             {label}
                           </button>
@@ -737,6 +831,11 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
                           {counts.caution ? (
                             <span className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-700">
                               {counts.caution} caution
+                            </span>
+                          ) : null}
+                          {counts.monitor ? (
+                            <span className="rounded-full bg-sky-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-sky-700">
+                              {counts.monitor} monitor
                             </span>
                           ) : null}
                           {counts.blocked ? (
@@ -947,8 +1046,8 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
               Re-analyze this pain issue?
             </h3>
             <p className="mt-2 text-sm leading-relaxed text-slate-600">
-              This will replace the current detected signals and remove any confirmed caution or
-              blocked decisions for this pain issue.
+              This will request a fresh analysis. Confirmed decisions stay in place unless the new
+              analysis returns final detected signals.
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button
@@ -960,10 +1059,13 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
               </button>
               <button
                 type="button"
-                onClick={() => applyMockAnalyze(pendingReanalyzeIssue)}
+                onClick={() => runAnalyze(pendingReanalyzeIssue)}
+                disabled={analyzingIssueId === pendingReanalyzeIssue.id}
                 className="rounded-full bg-slate-900 px-4 py-2 text-sm font-bold text-white"
               >
-                Re-analyze with AI
+                {analyzingIssueId === pendingReanalyzeIssue.id
+                  ? "Analyzing..."
+                  : "Re-analyze with AI"}
               </button>
             </div>
           </div>

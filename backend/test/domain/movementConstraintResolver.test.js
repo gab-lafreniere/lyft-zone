@@ -69,6 +69,65 @@ test('resolveMovementConstraints derives constraints from analyzed confirmed sig
   assert.deepEqual(result.blockedJointStressTags, ['spinal_loading']);
 });
 
+test('resolveMovementConstraints keeps monitor context but ignores it for active constraints', () => {
+  const result = resolveWithIssue({
+    confirmedSignals: [
+      { type: 'movementPattern', value: 'vertical_push', decision: 'monitor' },
+      { type: 'jointStressTag', value: 'overhead_shoulder_position', decision: 'monitor' },
+    ],
+  });
+
+  assert.deepEqual(result.cautionMovementPatterns, []);
+  assert.deepEqual(result.blockedMovementPatterns, []);
+  assert.deepEqual(result.cautionJointStressTags, []);
+  assert.deepEqual(result.blockedJointStressTags, []);
+  assert.deepEqual(result.monitoredSignals, [
+    { type: 'movementPattern', value: 'vertical_push' },
+    { type: 'jointStressTag', value: 'overhead_shoulder_position' },
+  ]);
+});
+
+test('resolveMovementConstraints applies signal priority and highest caution level', () => {
+  const result = resolveWithIssue({
+    confirmedSignals: [
+      { type: 'movementPattern', value: 'vertical_push', decision: 'monitor' },
+      {
+        type: 'movementPattern',
+        value: 'vertical_push',
+        decision: 'caution',
+        cautionLevel: 'low',
+      },
+      {
+        type: 'movementPattern',
+        value: 'vertical_push',
+        decision: 'caution',
+        cautionLevel: 'high',
+      },
+      { type: 'jointStressTag', value: 'deep_knee_flexion', decision: 'monitor' },
+      { type: 'jointStressTag', value: 'deep_knee_flexion', decision: 'blocked' },
+    ],
+  });
+
+  assert.deepEqual(result.cautionMovementPatterns, ['vertical_push']);
+  assert.deepEqual(result.cautionSignals, [
+    { type: 'movementPattern', value: 'vertical_push', cautionLevel: 'high' },
+  ]);
+  assert.deepEqual(result.blockedJointStressTags, ['deep_knee_flexion']);
+  assert.deepEqual(result.blockedSignals, [
+    { type: 'jointStressTag', value: 'deep_knee_flexion' },
+  ]);
+  assert.deepEqual(result.monitoredSignals, []);
+});
+
+test('resolveMovementConstraints ignores needs_clarification issues for active constraints', () => {
+  const result = resolveWithIssue({
+    analysisStatus: 'needs_clarification',
+    confirmedSignals: [{ type: 'movementPattern', value: 'vertical_push', decision: 'blocked' }],
+  });
+
+  assert.deepEqual(result.blockedMovementPatterns, []);
+});
+
 test('resolveMovementConstraints aggregates multiple issues and manual blocks', () => {
   const result = resolveMovementConstraints({
     movementConstraints: {

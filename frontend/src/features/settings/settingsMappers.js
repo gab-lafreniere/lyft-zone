@@ -6,9 +6,16 @@ const EQUIPMENT_PRESET_ALIASES = {
   limited_gym: "commercial_gym",
 };
 
-const VALID_ANALYSIS_STATUSES = new Set(["draft", "analyzed", "needs_reanalysis"]);
+const VALID_ANALYSIS_STATUSES = new Set([
+  "draft",
+  "needs_clarification",
+  "analyzed",
+  "needs_reanalysis",
+]);
 const VALID_SIGNAL_TYPES = new Set(["movementPattern", "jointStressTag"]);
-const VALID_SIGNAL_DECISIONS = new Set(["caution", "blocked"]);
+const VALID_SIGNAL_DECISIONS = new Set(["monitor", "caution", "blocked"]);
+const VALID_CAUTION_LEVELS = new Set(["none", "low", "medium", "high"]);
+const VALID_CONFIDENCE_LEVELS = new Set(["low", "medium", "high"]);
 
 export function deepClone(value) {
   if (typeof structuredClone === "function") {
@@ -80,6 +87,10 @@ function normalizeDetectedSignals(value) {
 
     const type = normalizeSignalType(signal.type);
     const signalValue = normalizeString(signal.value);
+    const recommendedDecision = normalizeString(signal.recommendedDecision);
+    const cautionLevel = normalizeString(signal.cautionLevel);
+    const confidence = normalizeString(signal.confidence);
+    const reason = normalizeOptionalText(signal.reason);
 
     if (!VALID_SIGNAL_TYPES.has(type) || !signalValue) {
       return;
@@ -91,7 +102,23 @@ function normalizeDetectedSignals(value) {
     }
 
     seen.add(key);
-    signals.push({ type, value: signalValue });
+    const normalizedSignal = { type, value: signalValue };
+
+    if (VALID_SIGNAL_DECISIONS.has(recommendedDecision)) {
+      normalizedSignal.recommendedDecision = recommendedDecision;
+      normalizedSignal.cautionLevel =
+        VALID_CAUTION_LEVELS.has(cautionLevel) ? cautionLevel : recommendedDecision === "caution" ? "medium" : "none";
+    }
+
+    if (VALID_CONFIDENCE_LEVELS.has(confidence)) {
+      normalizedSignal.confidence = confidence;
+    }
+
+    if (reason) {
+      normalizedSignal.reason = reason;
+    }
+
+    signals.push(normalizedSignal);
   });
 
   return signals;
@@ -109,6 +136,7 @@ function normalizeConfirmedSignals(value) {
     const type = normalizeSignalType(signal.type);
     const signalValue = normalizeString(signal.value);
     const decision = normalizeString(signal.decision);
+    const cautionLevel = normalizeString(signal.cautionLevel);
 
     if (!VALID_SIGNAL_TYPES.has(type) || !signalValue || !VALID_SIGNAL_DECISIONS.has(decision)) {
       return;
@@ -120,7 +148,13 @@ function normalizeConfirmedSignals(value) {
     }
 
     decisionsByKey.set(key, decision);
-    signals.push({ type, value: signalValue, decision });
+    signals.push({
+      type,
+      value: signalValue,
+      decision,
+      cautionLevel:
+        VALID_CAUTION_LEVELS.has(cautionLevel) ? cautionLevel : decision === "caution" ? "medium" : "none",
+    });
   });
 
   return signals;
@@ -131,9 +165,28 @@ export function isCompletePainIssue(issue) {
     normalizeOptionalText(issue?.id) &&
       normalizeOptionalText(issue?.description) &&
       normalizeString(issue?.affectedArea) &&
-      normalizeString(issue?.painSeverity) &&
-      normalizeString(issue?.trainingRule)
+      normalizeString(issue?.painSeverity)
   );
+}
+
+function normalizeClarificationQuestions(value) {
+  return toArray(value)
+    .filter((question) => question && typeof question === "object" && !Array.isArray(question))
+    .map((question) => ({
+      id: normalizeOptionalText(question.id),
+      question: normalizeOptionalText(question.question),
+    }))
+    .filter((question) => question.id && question.question);
+}
+
+function normalizeClarificationAnswers(value) {
+  return toArray(value)
+    .filter((answer) => answer && typeof answer === "object" && !Array.isArray(answer))
+    .map((answer) => ({
+      questionId: normalizeOptionalText(answer.questionId),
+      answer: normalizeOptionalText(answer.answer),
+    }))
+    .filter((answer) => answer.questionId && answer.answer);
 }
 
 function normalizePainIssue(issue, { requireComplete = false } = {}) {
@@ -156,6 +209,9 @@ function normalizePainIssue(issue, { requireComplete = false } = {}) {
     analysisStatus: VALID_ANALYSIS_STATUSES.has(analysisStatus)
       ? analysisStatus
       : "draft",
+    clarificationQuestions: normalizeClarificationQuestions(issue.clarificationQuestions),
+    clarificationAnswers: normalizeClarificationAnswers(issue.clarificationAnswers),
+    aiSummary: normalizeOptionalText(issue.aiSummary),
     detectedSignals: normalizeDetectedSignals(issue.detectedSignals),
     confirmedSignals: normalizeConfirmedSignals(issue.confirmedSignals),
   };
