@@ -1,0 +1,1283 @@
+# Lyft Zone - Bible AI Weekly Plan Builder V1
+
+## 1. Vision générale
+
+Le AI Weekly Plan Builder V1 est le cerveau initial de création de weekly plans dans Lyft Zone.
+
+Son rôle est de générer un weekly plan statique, éditable et publiable, basé sur le Training Profile, le User Exercise Pool, les priorités musculaires, les contraintes, la durée disponible et la doctrine de coaching Lyft Zone.
+
+Il ne doit pas être confondu avec le futur AI Coach.
+
+## 2. Distinction fondamentale
+
+### AI Weekly Plan Builder V1
+
+Crée un weekly plan draft.
+
+Il:
+
+* crée un plan hebdomadaire statique
+* n’assigne pas le plan à une timeline
+* ne crée pas de cycle multi-week automatiquement
+* ne fait pas d’adaptation après logs
+* ne fait pas de deload intelligent
+* ne modifie pas automatiquement des plans existants
+* ne remplace pas le futur AI Coach
+* réutilise le Manual Builder pour l’édition finale
+
+### AI Coach futur
+
+Crée ou ajuste une vision long terme.
+
+Il pourra:
+
+* créer un cycle multi-week
+* utiliser les workout logs
+* comparer prévu vs réalisé
+* proposer des ajustements
+* proposer du deload
+* proposer des substitutions
+* faire évoluer le Training Profile avec validation utilisateur
+* conserver une mémoire longitudinale plus avancée
+
+## 3. Règle produit centrale
+
+User Exercise Pool is a generation-time constraint, not a retroactive global validity rule.
+
+Cela veut dire:
+
+* Le User Exercise Pool contraint les nouvelles sélections générées par l’AI Builder.
+* L’IA reçoit uniquement les exercices du pool.
+* Après génération, le backend vérifie que tous les exerciseIds générés sont dans le même pool snapshot.
+* Si un exerciseId généré est hors pool snapshot, le plan est réparé ou rejeté.
+* Les plans existants ne sont pas revalidés contre le profil courant.
+* Les drafts existants ne sont pas invalidés parce que le profil a changé.
+* Les plans publiés ne sont pas invalidés parce que le profil a changé.
+* Les anciens plans AI ne sont pas invalidés parce que le profil a changé.
+* Les plans manuels gardent leur tolérance historique normale.
+
+Le pool est donc une contrainte de décision au moment de la génération, pas une règle rétroactive.
+
+## 4. Ordre de décision du AI Builder
+
+L’ordre de décision officiel est:
+
+1. Contraintes fixes
+
+   * sessions per week
+   * duration per session
+   * User Exercise Pool
+   * blocked constraints
+
+2. Objectif principal
+
+   * hypertrophy
+   * strength
+   * mixed
+
+3. Priorités musculaires
+
+   * primary focus
+   * secondary focus
+   * deprioritized area
+
+4. Volume cible par muscle
+
+5. Fréquence par muscle
+
+6. Split choisi
+
+7. Séances
+
+8. Exercices
+
+9. Sets, reps, RIR, rest, tempo
+
+10. Validation backend
+
+Cet ordre doit guider le prompt IA, la doctrine coach, le ProgramGenerationContext, la review IA et les validations.
+
+## 5. Non négociables
+
+Le AI Weekly Plan Builder V1 doit respecter ces règles:
+
+* Le backend reste la source de vérité.
+* Le frontend ne valide pas les règles métier critiques.
+* L’IA ne peut pas inventer d’exercice.
+* L’IA ne peut pas utiliser un exercice hors User Exercise Pool snapshot.
+* L’IA ne peut pas contourner les contraintes blocked.
+* Les caution signals restent soft.
+* Le plan généré doit respecter la même structure qu’un weekly plan manuel.
+* Le plan généré doit être éditable dans le Manual Builder.
+* Le plan généré doit être publiable avec les règles normales du weekly plan.
+* Le plan généré ne doit pas créer de cycle.
+* Le plan généré ne doit pas apparaître dans la timeline tant qu’un cycle n’est pas créé plus tard.
+* Le futur AI Coach doit pouvoir réutiliser les fondations sans les réécrire.
+
+## 6. Architecture cible
+
+### Backend
+
+Créer un domaine clair autour de la génération de programme.
+
+Structure cible:
+
+backend/services/programGenerationService.js
+
+backend/src/domain/programGeneration/programGenerationContextBuilder.js
+
+backend/src/domain/programGeneration/weeklyPlanAiSchema.js
+
+backend/src/domain/programGeneration/weeklyPlanAiValidation.js
+
+backend/src/domain/programGeneration/weeklyPlanBusinessRules.js
+
+backend/src/domain/programGeneration/weeklyPlanAnalytics.js
+
+backend/src/domain/programGeneration/weeklyPlanGenerationAudit.js
+
+backend/src/domain/programGeneration/aiProgramReview.js
+
+backend/src/domain/programGeneration/aiProgramRepair.js
+
+backend/src/domain/programGeneration/prompts/programGenerationPrompt.js
+
+backend/src/domain/programGeneration/prompts/programReviewPrompt.js
+
+backend/src/domain/programGeneration/prompts/programRepairPrompt.js
+
+backend/src/domain/programGeneration/coachDoctrine/
+
+backend/src/domain/programGeneration/goldExamples/
+
+### Frontend
+
+Créer une route dédiée au AI Builder.
+
+Route cible:
+
+/program/ai-builder
+
+Ne pas utiliser:
+
+/ai
+
+La route /ai reste réservée au futur AI Coach.
+
+Flow frontend cible:
+
+1. L’utilisateur clique sur + dans Program ou All Programs.
+2. Il choisit AI Builder.
+3. L’app ouvre /program/ai-builder.
+4. La page lance la génération.
+5. Le backend crée un weekly plan draft source AI.
+6. Le frontend reçoit le même builderPayload qu’un plan manuel.
+7. Le frontend hydrate ManualProgramContext.
+8. L’utilisateur arrive dans /program/manual-builder.
+9. Il peut éditer, publier ou convertir plus tard selon les flows existants.
+
+## 7. ProgramGenerationContext
+
+Le ProgramGenerationContext est l’objet que le backend donne à l’IA.
+
+Il doit être construit par le backend, jamais par le frontend.
+
+Il doit inclure:
+
+### User profile
+
+* userId
+* primaryGoal
+* experience
+* sessionsPerWeek
+* durationPerSession
+* musclePriorities
+* cardioProfile
+* equipmentBias
+* coachingNotesUser ou physicalNotes V1
+
+### Derived profile
+
+* musclePriorityProfile
+* equipmentContext
+* movementConstraints
+* cautionSignals
+* blockedSignals
+* monitoredSignals
+
+### User Exercise Pool
+
+* pool schema version
+* profile schema version
+* generatedAt
+* allowedExerciseIds
+* pool items nécessaires à la génération
+* grouped index utile
+* hardConstraints
+* softSignals utiles
+* poolSummary
+
+### Generation constraints
+
+* sessionsPerWeek
+* targetDurationPerSession
+* allowedTrainingTypes
+* allowedDifficulties
+* availableEquipment
+* blockedExerciseIds
+* blockedMovementPatterns
+* blockedJointStressTags
+* cautionMovementPatterns
+* cautionJointStressTags
+
+### Coach inputs
+
+* doctrineVersion
+* promptVersion
+* model task
+* goldExampleIds utilisés plus tard
+* generationMode: weekly_plan_draft
+
+## 8. Pool snapshot
+
+Le pool snapshot est une photo compacte du User Exercise Pool au moment de la génération.
+
+Il sert à:
+
+* valider l’output IA
+* debugger les plans générés
+* expliquer pourquoi un exercice était permis à ce moment
+* éviter que des changements futurs du Training Profile réécrivent le passé
+
+Snapshot minimal:
+
+* schemaVersion
+* profileSchemaVersion
+* generatedAt
+* userId
+* availableExerciseCount
+* excludedExerciseCount
+* allowedExerciseIds
+* hardConstraints
+* poolSummary
+* source: user_exercise_pool
+* checksum optionnel
+
+Important:
+
+Le snapshot peut être stocké dans generationContext ou dans une table dédiée plus tard.
+
+Pour V1, generationContext est suffisant si le payload reste raisonnable.
+
+## 9. generationContext
+
+Le champ generationContext doit servir d’audit minimal.
+
+Il peut contenir:
+
+* generationType: ai_weekly_plan_builder_v1
+* promptVersion
+* doctrineVersion
+* model
+* reviewModel
+* repairModel
+* poolSnapshot
+* profileSnapshotSummary
+* strategySummary
+* validationSummary
+* aiReviewSummary
+* repairAttempts
+* createdAt
+
+Il ne doit pas contenir de contenu inutilement massif.
+
+Il ne doit pas exposer au frontend des détails dev-only sauf si nécessaire.
+
+## 10. ai_generation_runs
+
+À court terme, on peut commencer avec generationContext.
+
+À moyen terme, une table ai_generation_runs pourrait être meilleure.
+
+Elle servirait à stocker:
+
+* input snapshot complet
+* output brut IA
+* erreurs de validation
+* repair attempts
+* review complète
+* modèle utilisé
+* prompt version
+* doctrine version
+* timestamps
+* coût approximatif
+* statut final
+
+Décision recommandée:
+
+V1:
+
+* utiliser WeeklyPlanVersion.generationContext
+
+Plus tard:
+
+* créer ai_generation_runs si le debugging devient trop lourd ou si le futur AI Coach nécessite un historique plus détaillé
+
+## 11. Coaching Notes et mémoire
+
+### coachingNotesUser
+
+Dans V1, le champ existant physicalNotes peut être utilisé comme base.
+
+Décision recommandée:
+
+V1:
+
+* renommer l’UI en Coaching Notes
+* garder le champ technique physicalNotes si on veut éviter une migration immédiate
+
+Plus tard:
+
+* migrer vers coachingNotesUser si on veut rendre le nom plus propre
+
+Règles:
+
+* visible par l’utilisateur
+* éditable
+* max 1000 à 1500 caractères
+* ne doit pas répéter les champs structurés
+* sert à ajouter du contexte non structuré
+
+Exemples bons:
+
+* préfère les séances simples
+* aime garder certains exercices stables
+* joue au tennis une fois par semaine
+* préfère peu de changements de setup
+* aime les machines pour les jambes
+
+Exemples mauvais:
+
+* primary goal hypertrophy
+* intermediate
+* 4 sessions per week
+* focus upper chest
+* blocked overhead pressing
+
+Ces informations ont déjà des champs structurés.
+
+### coachMemorySummary
+
+Hors scope strict V1, mais à prévoir.
+
+Règles:
+
+* caché ou dev-only au départ
+* généré par IA
+* max 1000 à 1500 caractères
+* ne doit pas répéter le Training Profile
+* ne doit jamais contredire les champs structurés
+* peut être compressé automatiquement quand il devient trop long
+
+Règle de priorité:
+
+Training Profile gagne toujours.
+User Exercise Pool gagne toujours.
+Backend validations gagnent toujours.
+Coaching Notes et Coach Memory perdent en cas de conflit.
+
+## 12. Output AI attendu
+
+L’IA ne doit pas retourner du texte libre comme plan final.
+
+Elle doit retourner un JSON strict.
+
+Le texte libre est permis seulement pour:
+
+* strategySummary
+* planExplanation courte
+* exercise notes rares
+* reviewSummary
+* warnings courts si nécessaires
+
+### Sortie génération
+
+L’output généré doit contenir:
+
+* planName
+* sessionsPerWeek
+* strategySummary
+* splitType
+* workouts
+* volumeTargets
+* frequencyTargets
+* progressionModel
+* cautionHandling
+* notesPolicy
+
+### Workouts
+
+Chaque workout doit contenir:
+
+* name
+* orderIndex
+* estimatedDurationMinutes
+* focus
+* blocks
+
+### Blocks
+
+Types supportés V1:
+
+* SINGLE
+* SUPERSET si supporté proprement
+* CARDIO si cardioRole le justifie
+
+Garder GIANT_SET et CIRCUIT hors scope V1 même si le backend a des enums plus larges, sauf décision contraire.
+
+### Exercises
+
+Chaque exercice doit contenir:
+
+* exerciseId
+* exerciseName
+* bodyParts
+* muscleFocus
+* defaultTempo
+* defaultRestSeconds
+* defaultTargetRir
+* setTemplates
+* notes seulement si pertinent
+
+### Sets
+
+Chaque set doit contenir:
+
+* setIndex
+* setType
+* targetReps ou minReps/maxReps
+* targetRir
+* tempo
+* restSeconds
+
+### Cardio
+
+Si cardio est généré:
+
+* blockType CARDIO
+* exactement un exercice
+* aucun setTemplate
+* cardioPrescription valide
+* durationMinutes
+* heartRateTargetMode
+* machineSettings conformes à la modalité
+
+## 13. Validation backend
+
+La validation se fait en couches.
+
+### Couche 1: JSON schema AI
+
+Valide que l’IA respecte la forme stricte.
+
+### Couche 2: AI normalization
+
+Nettoie les strings, enums, nombres et formats.
+
+### Couche 3: AI scoped pool validation
+
+Valide que tous les exerciseIds générés sont dans allowedExerciseIds du pool snapshot.
+
+Seulement dans le pipeline AI Builder.
+
+### Couche 4: Weekly plan business rules
+
+Valide:
+
+* name
+* sessionsPerWeek
+* workout count
+* workout names
+* blocks
+* block types
+* setTemplates
+* tempo
+* rest
+* RIR
+* cardio blocks
+* exerciseIds connus globalement
+* publish readiness
+
+### Couche 5: Analytics
+
+Calcule:
+
+* exercise count
+* set count
+* duration estimate
+* muscle distribution
+* weekly volume
+* workout level metrics
+
+### Couche 6: AI Program Review
+
+Vérifie la cohérence de coach.
+
+### Couche 7: Repair
+
+Répare si nécessaire.
+
+### Couche 8: Revalidation finale
+
+Le backend revalide tout avant sauvegarde.
+
+## 14. AI Program Review
+
+La review IA est incluse dès V1.
+
+Elle ne remplace pas la validation backend.
+
+Elle vérifie:
+
+* respect du primary goal
+* respect des priorités musculaires
+* cohérence du split
+* volume cible vs volume généré
+* fréquence par muscle
+* durée estimée
+* redondance d’exercices
+* ordre des exercices
+* équilibre global
+* cohérence des supersets
+* logique des RIR/rest/tempo
+* gestion des caution signals
+* absence de notes inutiles partout
+
+Vocabulaire fatigue:
+
+Ne pas exagérer overtraining.
+
+Utiliser plutôt:
+
+* fatigue locale excessive
+* redondance inutile
+* charge systémique élevée
+* volume possiblement agressif selon le profil
+* récupération à surveiller si le contexte le justifie
+
+Ne pas suggérer qu’un utilisateur à 3 séances/semaine est automatiquement à risque.
+
+## 15. Repair loop
+
+V1 doit inclure un repair loop simple.
+
+Pipeline:
+
+1. Generate plan
+2. Validate schema
+3. Validate pool snapshot
+4. Validate business rules
+5. Calculate analytics
+6. AI Program Review
+7. If issues, repair once
+8. Revalidate everything
+9. If still invalid, fail gracefully
+
+Limite V1:
+
+* max 1 repair attempt
+* si impossible, retourner une erreur contrôlée
+* ne jamais sauvegarder un plan invalide
+
+Plus tard:
+
+* max 2 repair attempts
+* fallback model plus fort
+* possibilité de demander précision utilisateur si contexte insuffisant
+
+## 16. Coach Doctrine
+
+La Coach Doctrine est une base de connaissances interne Lyft Zone.
+
+Elle n’est pas un moteur mathématique rigide.
+
+Elle guide le jugement du modèle.
+
+Elle doit couvrir:
+
+* volume par muscle
+* fréquence par muscle
+* choix du split
+* priorités musculaires
+* deprioritized area
+* choix des exercices
+* ordre des exercices
+* progression models
+* RIR
+* rest
+* tempo
+* gestion de la fatigue locale
+* redondance d’exercices
+* machines vs free weights
+* beginner/intermediate/advanced
+* cardio integration
+* supersets
+* méthodes d’intensification avec parcimonie
+
+Version V1 recommandée:
+
+coachDoctrine/bodybuildingDoctrine.v1.md
+
+Plus tard:
+
+* doctrine en fichiers JSON/YAML plus structurés
+* doctrine par objectif
+* doctrine par split
+* doctrine par niveau
+* doctrine par priorité musculaire
+
+## 17. Gold Standard Examples
+
+Les exemples de trainings servent à calibrer le modèle.
+
+Ils ne doivent pas être copiés.
+
+Ils doivent être anonymisés, reformulés et annotés.
+
+Format cible:
+
+* exampleId
+* profileSummary
+* programJson
+* whyThisWasGood
+* whatCouldBeImproved
+* notes
+* tags
+
+Usage V1:
+
+* optionnel au départ
+* peut être ajouté après le premier générateur fonctionnel
+
+Usage idéal:
+
+* fournir 5 à 10 exemples de grande qualité
+* couvrir différents profils
+* couvrir différents nombres de séances
+* couvrir différentes priorités musculaires
+* couvrir gym complet, home gym, limited equipment
+
+## 18. Modèles IA
+
+Architecture model-agnostic.
+
+Ne jamais coder le système comme s’il dépendait d’un modèle unique.
+
+Variables recommandées:
+
+* AI_PROGRAM_MODEL
+* AI_REVIEW_MODEL
+* AI_REPAIR_MODEL
+
+Fallbacks possibles:
+
+* OPENAI_MODEL_PROGRAM_GENERATION
+* OPENAI_MODEL_VALIDATION
+* OPENAI_MODEL_SMALL_TASK
+* OPENAI_MODEL_FALLBACK
+
+Tasks dans aiRouter:
+
+* program_generation
+* program_review
+* program_repair
+* movement_analysis
+* simple_classification
+
+## 19. Feature flags
+
+Flags recommandés:
+
+* ENABLE_AI_WEEKLY_PLAN_BUILDER
+* ENABLE_AI_WEEKLY_PLAN_REVIEW
+* ENABLE_AI_WEEKLY_PLAN_REPAIR
+* ENABLE_AI_WEEKLY_PLAN_FRONTEND
+* ENABLE_AI_WEEKLY_PLAN_GOLD_EXAMPLES
+
+But:
+
+* permettre l’implémentation progressive
+* éviter de casser le produit existant
+* permettre tests avec mock avant vrai OpenAI
+
+## 20. API cible
+
+Endpoint recommandé:
+
+POST /api/weekly-plans/ai-drafts
+
+Payload minimal:
+
+{
+"userId": "...",
+"options": {}
+}
+
+Réponse:
+
+Même shape que createWeeklyPlanDraft.
+
+Objectif:
+
+Le frontend doit pouvoir appeler:
+
+createAIWeeklyPlanDraft()
+
+Puis:
+
+hydrateProgramDraft(response)
+
+Puis naviguer vers:
+
+/program/manual-builder
+
+Erreurs possibles:
+
+* AI_WEEKLY_PLAN_BUILDER_DISABLED
+* PROFILE_NOT_READY
+* UNSUPPORTED_PROFILE_SCHEMA_VERSION
+* EMPTY_EXERCISE_POOL
+* AI_WEEKLY_PLAN_GENERATION_NOT_IMPLEMENTED
+* AI_WEEKLY_PLAN_INVALID_OUTPUT
+* AI_WEEKLY_PLAN_POOL_VIOLATION
+* AI_WEEKLY_PLAN_REPAIR_FAILED
+
+## 21. UX cible V1
+
+### Entrée
+
+Page Program et All Programs:
+
+Bouton +:
+
+* Manual Builder
+* AI Builder
+
+AI Builder ne pointe plus vers /ai.
+
+Il pointe vers:
+
+/program/ai-builder
+
+### Page AI Builder
+
+V1 simple:
+
+* vérifie le Training Profile
+* affiche une intro courte
+* bouton Generate plan
+* état loading
+* état error
+* état success
+* redirection vers Manual Builder
+
+Plus tard:
+
+* preview de la stratégie
+* choix de style
+* choix de focus temporaire
+* choix de “keep it simple” vs “more advanced”
+* affichage strategySummary avant d’ouvrir le builder
+
+### Après génération
+
+L’utilisateur arrive dans Manual Builder avec un draft AI.
+
+Le plan est éditable.
+
+Il peut:
+
+* modifier exercices
+* modifier sets/reps/RIR/rest/tempo
+* publier le weekly plan
+* transformer en multi-week plus tard via flow existant
+
+## 22. Ce qu’il ne faut pas faire en V1
+
+Ne pas:
+
+* créer de cycle automatiquement
+* relier le plan à une timeline
+* adapter selon logs
+* faire un deload intelligent
+* générer des semaines multiples
+* créer un éditeur AI séparé
+* remplacer le Manual Builder
+* revalider les anciens plans contre le pool courant
+* ajouter trop de champs onboarding
+* ajouter trainingAge séparé
+* ajouter currentConsistency séparé
+* mettre les mêmes informations dans Training Profile et Coaching Notes
+* surutiliser des notes sur chaque exercice
+* traiter caution comme blocked
+* faire une doctrine trop dogmatique
+* faire dépendre l’architecture d’un seul modèle
+
+## 23. Découpage des phases
+
+### Phase 0: Alignement et documentation
+
+But:
+Verrouiller la bible produit et technique.
+
+À faire:
+
+* documenter la règle User Exercise Pool snapshot
+* documenter la séparation AI Builder vs AI Coach
+* documenter l’ordre de décision officiel
+* documenter les non négociables
+* documenter les phases
+
+Livrable:
+
+* bible validée
+* prompts Codex de planification
+
+Statut:
+
+* presque complet
+
+### Phase 1: Fondations backend sans vrai OpenAI
+
+But:
+Créer les fondations backend testables.
+
+À faire:
+
+* créer ProgramGenerationService
+* créer ProgramGenerationContextBuilder
+* créer pool snapshot compact
+* créer validateGeneratedExerciseIdsAgainstPool
+* permettre createWeeklyPlan avec source AI et generationContext
+* ajouter endpoint POST /api/weekly-plans/ai-drafts
+* feature flag ENABLE_AI_WEEKLY_PLAN_BUILDER
+* mock generation via deps.generatedPlanDocument pour tests
+* pas de vrai call OpenAI
+
+Tests:
+
+* profile missing
+* profile ready
+* pool construit
+* pool empty
+* exerciseId hors pool rejeté
+* source AI sauvegardée
+* generationContext écrit
+* manual createWeeklyPlan inchangé
+* update/publish ne revalident pas contre pool courant
+
+Critère de succès:
+Un test peut créer un draft AI avec un document mock valide, et le backend refuse un document mock hors pool.
+
+### Phase 2: JSON schema et validation AI complète
+
+But:
+Définir le contrat exact entre IA et backend.
+
+À faire:
+
+* créer weeklyPlanAiSchema
+* créer validateGeneratedWeeklyPlan
+* normaliser output IA vers document weekly plan
+* limiter les block types V1
+* valider notes policy
+* valider RIR/rest/tempo/reps
+* valider cardio si présent
+* structurer les erreurs AI
+
+Tests:
+
+* JSON valide
+* JSON avec champs inconnus rejeté
+* exercice sans exerciseId rejeté
+* notes trop longues rejetées
+* block unsupported rejeté
+* cardio mal formé rejeté
+
+Critère de succès:
+Tout output IA est soit converti en document weekly plan valide, soit rejeté avec issues structurées.
+
+### Phase 3: Coach Doctrine V1
+
+But:
+Créer la base de jugement coach.
+
+À faire:
+
+* créer bodybuildingDoctrine.v1.md
+* définir doctrineVersion
+* documenter volumes, fréquences, splits, priorités, rest, tempo, RIR
+* intégrer la doctrine au prompt statique
+* garder le contenu court et stable au début
+
+Tests:
+
+* loader doctrine
+* version disponible
+* prompt contient doctrineVersion
+* pas de dépendance frontend
+
+Critère de succès:
+Le ProgramGenerationService peut charger une doctrine versionnée et l’attacher au contexte/prompt.
+
+### Phase 4: Génération OpenAI V1
+
+But:
+Appeler le modèle pour générer un weekly plan JSON strict.
+
+À faire:
+
+* buildSystemPrompt
+* buildUserPrompt
+* call OpenAI Responses API
+* utiliser structured output JSON schema
+* timeout
+* max_output_tokens
+* température basse/modérée
+* parsing robuste
+* erreurs contrôlées
+* injection deps pour tests
+
+Tests:
+
+* openaiResponse mock valide
+* response vide
+* invalid JSON
+* invalid schema
+* timeout
+* feature flag off
+* model routing
+
+Critère de succès:
+Le backend peut générer un plan structuré avec mock OpenAI et le convertir en draft.
+
+### Phase 5: Analytics backend et strategy metadata
+
+But:
+Calculer les métriques avant la review.
+
+À faire:
+
+* réutiliser ou extraire computeWeeklyPlanWorkoutMetrics
+* agréger volume, sets, durée, distribution
+* ajouter volumeTargets
+* comparer volume cible vs généré
+* écrire strategySummary et validationSummary dans generationContext
+
+Tests:
+
+* métriques cohérentes avec weeklyPlansService
+* cardio ignoré dans sets musculaires
+* duration calculée
+* distribution musculaire calculée
+
+Critère de succès:
+Chaque plan généré a des analytics backend fiables avant review.
+
+### Phase 6: AI Program Review V1
+
+But:
+Faire relire le plan par l’IA avant sauvegarde finale.
+
+À faire:
+
+* créer programReviewPrompt
+* créer review schema
+* inclure context + document + analytics
+* produire review structurée
+* pass/fail
+* issues
+* suggestions
+* severity
+* no overtraining exaggeration
+* no medical claims
+
+Tests:
+
+* review pass
+* review fail
+* issue volume
+* issue duration
+* issue redundancy
+* issue notes overuse
+* invalid review response
+
+Critère de succès:
+Le service peut obtenir une review structurée et décider si un repair est nécessaire.
+
+### Phase 7: Repair loop V1
+
+But:
+Permettre une réparation contrôlée du plan.
+
+À faire:
+
+* créer repair prompt
+* inclure original plan + issues + constraints
+* produire un plan corrigé
+* max 1 repair attempt
+* revalider schema
+* revalider pool snapshot
+* revalider business rules
+* recalculer analytics
+* refaire review ou review légère finale
+
+Tests:
+
+* repair corrige un exerciseId hors pool
+* repair corrige durée trop longue
+* repair échoue proprement
+* max 1 attempt respecté
+
+Critère de succès:
+Un plan imparfait peut être réparé une fois, sinon rejeté sans être sauvegardé.
+
+### Phase 8: Frontend AI Builder V1
+
+But:
+Créer l’expérience utilisateur minimale.
+
+À faire:
+
+* ajouter getAIWeeklyPlanBuilderPath
+* ajouter createAIWeeklyPlanDraft dans api.js
+* créer page AIWeeklyPlanBuilder.jsx
+* ajouter route /program/ai-builder
+* modifier Program.jsx et AllPrograms.jsx pour pointer AI Builder vers cette route
+* loading state
+* error state
+* success hydrate + navigate manual builder
+* ne pas toucher /ai
+* ne pas créer d’éditeur parallèle
+
+Tests:
+
+* bouton AI Builder navigue vers /program/ai-builder
+* page appelle createAIWeeklyPlanDraft
+* success hydrate le draft
+* error profile not ready affichée
+* error disabled affichée
+* Manual Builder reçoit bien le draft
+
+Critère de succès:
+Un utilisateur peut cliquer AI Builder, générer un draft, puis l’éditer dans Manual Builder.
+
+### Phase 9: UI strategy summary et metadata légère
+
+But:
+Afficher juste assez d’explication sans surcharger.
+
+À faire:
+
+* exposer strategySummary si safe
+* afficher source AI dans le draft si pertinent
+* afficher “Generated with AI” ou équivalent
+* afficher courte explication du plan
+* éviter les longues notes partout
+* ne pas afficher audit dev complet
+
+Tests:
+
+* strategySummary présente si source AI
+* pas de crash si generationContext absent
+* plans manuels inchangés
+
+Critère de succès:
+L’utilisateur comprend la logique du plan sans être noyé.
+
+### Phase 10: Gold Standard Examples
+
+But:
+Calibrer la qualité.
+
+À faire:
+
+* définir schema des exemples
+* ajouter 5 à 10 exemples anonymisés
+* charger examples par tags
+* inclure 1 à 3 exemples pertinents dans le prompt
+* éviter de copier directement les exemples
+* versionner les examples
+
+Tests:
+
+* loader examples
+* examples valides
+* examples compatibles schema
+* prompt inclut seulement les exemples choisis
+
+Critère de succès:
+Le modèle reçoit des exemples de qualité sans devenir un système de templates copiés.
+
+### Phase 11: Coaching Notes clean V1.1
+
+But:
+Nettoyer les notes utilisateur.
+
+À faire:
+
+* renommer Physical Notes en Coaching Notes côté UI
+* conserver physicalNotes côté DB si aucune migration
+* ajouter aide texte: ne pas répéter les settings déjà structurés
+* éventuellement ajouter coachMemorySummary caché
+* créer summarizeCoachMemory plus tard
+
+Tests:
+
+* notes 1000 caractères max
+* settings response inchangée
+* update profile fonctionne
+* UI label changé
+
+Critère de succès:
+Les notes sont utiles, non redondantes et prêtes pour le futur AI Coach.
+
+### Phase 12: QA, evals et polish
+
+But:
+Stabiliser avant vraie utilisation.
+
+À faire:
+
+* tests backend complets
+* tests frontend complets
+* jeux de profils manuels
+* evals de plans générés
+* logs d’erreurs propres
+* feature flags testés
+* limite de rate
+* gestion coût IA
+* gestion timeout
+* fallback errors
+
+Profils test à créer:
+
+* beginner 3 jours full body
+* intermediate 4 jours upper/lower
+* advanced 5 jours avec priorité side delts
+* 3 jours avec upper chest focus
+* home gym limited equipment
+* knee caution
+* shoulder blocked overhead
+* cardio role low intensity
+* deprioritized legs
+* machine bias
+
+Critère de succès:
+Le AI Builder génère des plans utilisables, éditables, cohérents et validés dans les cas principaux.
+
+## 24. Roadmap d’implantation recommandée
+
+### Bloc A: fondations sécuritaires
+
+Inclut:
+
+* Phase 1
+* Phase 2
+
+Objectif:
+Avoir le backend prêt, sans vrai IA complète.
+
+### Bloc B: intelligence IA
+
+Inclut:
+
+* Phase 3
+* Phase 4
+* Phase 5
+* Phase 6
+* Phase 7
+
+Objectif:
+Avoir génération, review et repair fonctionnels.
+
+### Bloc C: intégration produit
+
+Inclut:
+
+* Phase 8
+* Phase 9
+
+Objectif:
+Avoir un AI Builder utilisable dans l’app.
+
+### Bloc D: qualité avancée
+
+Inclut:
+
+* Phase 10
+* Phase 11
+* Phase 12
+
+Objectif:
+Améliorer la qualité, la personnalisation et la robustesse.
+
+## 25. Critères de succès final V1
+
+Le AI Weekly Plan Builder V1 est considéré fonctionnel quand:
+
+* l’utilisateur peut cliquer AI Builder depuis Program
+* le système construit un ProgramGenerationContext valide
+* le système construit un User Exercise Pool snapshot
+* l’IA génère un JSON strict
+* le backend valide le JSON
+* le backend vérifie exerciseId dans pool snapshot
+* le backend valide les règles weekly plan
+* le backend calcule les analytics
+* l’IA review le plan
+* le système répare une fois si nécessaire
+* le backend sauvegarde un weekly plan draft source AI
+* le frontend hydrate le draft
+* l’utilisateur édite dans Manual Builder
+* l’utilisateur peut publier le weekly plan
+* aucun cycle n’est créé automatiquement
+* les plans existants ne sont pas invalidés par les changements de profil
+* generationContext garde un audit suffisant pour debugger
+
+## 26. Prochaine étape Codex
+
+Avant de coder directement, demander à Codex de produire un plan d’implantation détaillé à partir de cette bible.
+
+Le premier prompt Codex doit demander:
+
+* lire les fichiers actuels
+* proposer l’ordre exact des modifications
+* proposer les tests à créer
+* proposer les risques de régression
+* ne pas coder immédiatement
+* confirmer les fichiers à modifier pour Phase 1 seulement
+
+Ensuite seulement, lancer un prompt d’implémentation Phase 1.
+
+---
+
+29 juin 15:02
+AI Weekly Plan Builder V1 - Phase 1 backend foundations complétée.
+
+Fondations backend ajoutées:
+- endpoint POST /api/weekly-plans/ai-drafts
+- ProgramGenerationService mock-only
+- ProgramGenerationContextBuilder
+- poolSnapshot compact
+- validateGeneratedExerciseIdsAgainstPool
+- weeklyPlanGenerationAudit / generationContext
+- support optionnel generationContext dans createWeeklyPlan
+- tests backend associés
+
+Règle respectée:
+Le User Exercise Pool est une contrainte au moment de génération seulement.
+La validation exerciseId ∈ poolSnapshot.allowedExerciseIds est scoped au AI Builder.
+Les flows manual, drafts existants, plans publiés et anciens plans AI ne sont pas revalidés contre le Training Profile courant.
+
+Tests:
+npm run test:domain passe avec 114 tests verts.

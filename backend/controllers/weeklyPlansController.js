@@ -1,5 +1,8 @@
 const { ApiError } = require('../services/usersService');
 const {
+  createAIWeeklyPlanDraft,
+} = require('../services/programGenerationService');
+const {
   createWeeklyPlan,
   deleteWeeklyPlan,
   getWeeklyPlanDetails,
@@ -11,11 +14,12 @@ const {
 } = require('../services/weeklyPlansService');
 
 function handleError(res, error) {
-  if (error instanceof ApiError) {
+  if (error instanceof ApiError || (error?.status && error?.code)) {
     return res.status(error.status).json({
       error: {
         code: error.code,
         message: error.message,
+        details: error.details || undefined,
       },
     });
   }
@@ -32,6 +36,15 @@ function handleError(res, error) {
 async function createWeeklyPlanHandler(req, res) {
   try {
     const weeklyPlan = await createWeeklyPlan(req.body || {});
+    return res.status(201).json(weeklyPlan);
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
+async function createAIWeeklyPlanDraftHandler(req, res) {
+  try {
+    const weeklyPlan = await createAIWeeklyPlanDraft(req.body || {});
     return res.status(201).json(weeklyPlan);
   } catch (error) {
     return handleError(res, error);
@@ -127,6 +140,7 @@ async function unbookmarkWeeklyPlanHandler(req, res) {
 
 module.exports = {
   bookmarkWeeklyPlanHandler,
+  createAIWeeklyPlanDraftHandler,
   createWeeklyPlanHandler,
   deleteWeeklyPlanHandler,
   getWeeklyPlanDetailsHandler,

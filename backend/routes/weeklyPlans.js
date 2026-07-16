@@ -1,6 +1,7 @@
 const express = require('express');
 const {
   bookmarkWeeklyPlanHandler,
+  createAIWeeklyPlanDraftHandler,
   createWeeklyPlanHandler,
   deleteWeeklyPlanHandler,
   getWeeklyPlanDetailsHandler,
@@ -13,6 +14,7 @@ const {
 
 const router = express.Router();
 
+router.post('/ai-drafts', createAIWeeklyPlanDraftHandler);
 router.post('/', createWeeklyPlanHandler);
 router.get('/', listWeeklyPlansHandler);
 router.delete('/:weeklyPlanParentId', deleteWeeklyPlanHandler);

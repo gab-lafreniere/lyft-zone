@@ -311,6 +311,55 @@ test('updateTrainingProfileSettings validates, maps, persists, and returns the f
   assert.equal(result.account.profile.email, 'athlete@example.com');
 });
 
+test('updateTrainingProfileSettings preserves MIXED in the canonical snapshot and omits only its Prisma mirror', async () => {
+  const payload = {
+    ...createCanonicalPayload(),
+    primaryGoal: 'MIXED',
+  };
+  let upsertArgs = null;
+  const prisma = {
+    user: {
+      findUnique: async (args) => {
+        if (args.select && args.select.email) {
+          return {
+            id: 'user_123',
+            email: 'athlete@example.com',
+            profile: {
+              trainingMode: 'FIXED',
+              onboardingSnapshot: upsertArgs.update.onboardingSnapshot,
+            },
+          };
+        }
+
+        return { id: 'user_123' };
+      },
+    },
+    userProfile: {
+      upsert: async (args) => {
+        upsertArgs = args;
+        return {
+          id: 'profile_123',
+          ...args.create,
+        };
+      },
+    },
+  };
+
+  const result = await updateTrainingProfileSettings('user_123', payload, { prisma });
+
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(upsertArgs.update, 'primaryGoal'),
+    false
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(upsertArgs.create, 'primaryGoal'),
+    false
+  );
+  assert.equal(upsertArgs.update.onboardingSnapshot.profile.primaryGoal, 'MIXED');
+  assert.equal(upsertArgs.create.onboardingSnapshot.profile.primaryGoal, 'MIXED');
+  assert.equal(result.trainingProfile.profile.primaryGoal, 'MIXED');
+});
+
 test('updateTrainingProfileSettings returns validation details when the canonical payload is invalid', async () => {
   let upsertCalled = false;
   const prisma = {

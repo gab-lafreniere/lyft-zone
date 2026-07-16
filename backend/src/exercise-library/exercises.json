@@ -6863,8 +6863,7 @@
     "equipmentCategory": "barbell",
     "equipmentNeeded": [
       "olympic_barbell",
-      "weight_plates",
-      "squat_rack"
+      "weight_plates"
     ],
     "movementPattern": "hip_hinge",
     "bodyParts": [
@@ -7284,7 +7283,10 @@
     "isSupersetFriendly": false,
     "fatigueScore": 4,
     "status": "draft",
-    "jointStressTags": []
+    "jointStressTags": [
+      "knee_dominant_load",
+      "deep_knee_flexion"
+    ]
   },
   {
     "exerciseId": "exr_kettlebell_swing",
@@ -14742,7 +14744,10 @@
     "isSupersetFriendly": true,
     "fatigueScore": 2,
     "status": "draft",
-    "jointStressTags": []
+    "jointStressTags": [
+      "knee_dominant_load",
+      "deep_knee_flexion"
+    ]
   },
   {
     "exerciseId": "exr_landmine_squat",

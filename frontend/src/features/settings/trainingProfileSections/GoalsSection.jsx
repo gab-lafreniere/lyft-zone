@@ -93,6 +93,7 @@ export default function GoalsSection({ draft, onChange, fieldErrors }) {
               description={option.description}
               icon={option.icon}
               selected={currentDraft?.primaryGoal === option.value}
+              disabled={option.disabled}
               onClick={() => setDraftField(draft, onChange, ["primaryGoal"], option.value)}
             />
           ))}

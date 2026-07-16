@@ -197,6 +197,14 @@ GÉNÉRATION INITIALE (EN COURS)
 - Ce flow est défini au niveau produit
 - Il n’est pas encore connecté au backend à ce stade
 
+Limitation temporaire des objectifs:
+- AI Weekly Plan Builder V1 supporte uniquement HYPERTROPHY
+- STRENGTH et MIXED restent dans le modèle produit, mais sont temporairement verrouillés dans Settings
+- Les profils existants ne doivent jamais être convertis silencieusement vers HYPERTROPHY
+- Le futur onboarding devra passer par-dessus la question d’objectif et utiliser HYPERTROPHY par défaut
+- Une doctrine complémentaire orientée strength sera requise avant l’activation de STRENGTH ou MIXED
+- Cette limitation appartient à la version actuelle du builder et ne constitue pas une décision produit définitive
+
 --------------------------------------------------
 SÉPARATION PLAN / EXÉCUTION
 --------------------------------------------------
@@ -549,8 +557,13 @@ Règles:
 - Le filtrage par status est appliqué avant pagination
 
 Règle métier:
-- Les recherches utilisées pour sélectionner ou ajouter de nouveaux exercices doivent utiliser status=approved
 - Les affichages/hydratations d’exercices déjà sauvegardés doivent rester tolérants et ne pas bloquer un exercice non-approved existant
+- Les recherches globales dans /api/exercises peuvent utiliser status=approved pour les cas non personnalisés.
+- Les recherches servant à ajouter ou assigner un nouvel exercice dans le builder doivent utiliser le User Exercise Pool:
+GET /api/users/:userId/exercise-pool
+
+Exception:
+- Manual Blocked Exercises continue d’utiliser /api/exercises?status=approved, car l’utilisateur doit pouvoir bloquer un exercice même s’il est hors pool actuel.
 
 Limites:
 - limit est borné côté backend entre 1 et 150
@@ -565,6 +578,61 @@ RÈGLES MÉTIER ET VALIDATIONS
 - Le frontend peut refléter les règles pour l’UX, mais ne doit jamais être la source de vérité.
 - Les règles métier doivent être centralisées dans des services/domain helpers réutilisables.
 - Toute règle utilisée par le builder, le wizard ou les settings doit être validée côté backend avant persistance.
+
+--------------------------------------------------
+USER EXERCISE POOL
+--------------------------------------------------
+
+GET /api/users/:userId/exercise-pool
+
+Rôle:
+- retourne les exercices disponibles pour un utilisateur donné selon son Training Profile actuel
+- utilisé pour sélectionner ou générer de nouveaux exercices
+- ne modifie jamais les exercices déjà sauvegardés dans un plan, cycle ou workout
+
+Hard filters appliqués:
+- status approved seulement
+- équipement disponible
+- difficulté selon l’expérience:
+  - beginner -> beginner
+  - intermediate -> beginner + intermediate
+  - advanced -> beginner + intermediate + advanced
+- trainingType selon le cardioProfile
+- manualBlockedExerciseIds
+- blockedMovementPatterns
+- blockedJointStressTags
+
+Soft signals non bloquants:
+- cautionMovementPatterns
+- cautionJointStressTags
+- monitoredSignals
+- musclePriorities
+- equipmentBias
+- fatigue metadata
+
+Query params:
+- q
+- limit
+- cursor
+- bodyParts
+- muscleFocus
+- equipmentCategory
+- trainingType
+- difficulty
+- includeExcluded=true
+
+Response:
+- items
+- nextCursor
+- total
+- poolSummary
+- meta
+- hardConstraints
+- excluded / excludedByReason si includeExcluded=true
+
+Règle importante:
+- Le pool sert aux nouvelles sélections seulement.
+- Il ne doit jamais supprimer, masquer ou invalider un exercice déjà présent dans un workout sauvegardé.
 
 --------------------------------------------------
 TRAINING PROFILE — ENVIRONMENT
@@ -608,7 +676,7 @@ Pain issue:
   description,
   affectedArea,
   painSeverity,
-  trainingRule,
+  trainingRule, // legacy optional
   analysisStatus,
   detectedSignals,
   confirmedSignals
@@ -623,18 +691,26 @@ Règles:
   - description
   - affectedArea
   - painSeverity
-  - trainingRule
+  - trainingRule est legacy/optionnel. La logique moderne repose sur detectedSignals et confirmedSignals.
 - analysisStatus:
   - draft
   - analyzed
   - needs_reanalysis
+  - needs_clarification
+- needs_clarification ne dérive aucune contrainte
 - draft ne dérive aucune contrainte
 - needs_reanalysis ne dérive aucune contrainte
 - detectedSignals seuls ne dérivent aucune contrainte
 - seules les confirmedSignals d’une issue analyzed dérivent des contraintes
-- confirmedSignals supporte uniquement:
-  - decision caution
-  - decision blocked
+confirmedSignals supporte:
+- decision monitor
+- decision caution
+- decision blocked
+
+Effets:
+- monitor: conservé pour contexte, aucun effet sur le pool
+- caution: soft signal, aucun hard exclude
+- blocked: hard filter dans le pool
 - un même signal type + value ne peut pas être caution et blocked en même temps
 
 Types de signaux:
@@ -744,7 +820,16 @@ DETTE TECHNIQUE
   - approved pour les exercices utilisables par l’app
   - draft pour les exercices en préparation
   - archived pour les exercices retirés des nouvelles sélections
-- Les recherches de sélection utilisent status=approved, mais l’hydratation par exerciseId reste tolérante
+- Les recherches globales de sélection peuvent utiliser status=approved, mais les sélections personnalisées utilisent le User Exercise Pool. L’hydratation par exerciseId reste tolérante.
+
+- Le User Exercise Pool est maintenant exposé par:
+  GET /api/users/:userId/exercise-pool
+- Le pool est construit à partir de la librairie complète, puis filtré selon le Training Profile utilisateur
+- Les counts retournés incluent:
+  - totalExercises
+  - availableExercises
+  - excludedExercises
+- Les raisons d’exclusion peuvent se chevaucher et ne doivent pas être additionnées comme un total strict
 
 ==================================================
 RÈGLES DE DÉVELOPPEMENT
@@ -824,6 +909,13 @@ PRIORITÉS COURT TERME (FOCUS ACTUEL)
 - Nettoyage technique:
   - retirer progressivement le code legacy (Sequelize / SQLite)
 
+- Préparer AI Builder initial:
+  - génération d’un weekly plan statique
+  - utilisation du User Exercise Pool
+  - respect du Training Profile
+  - justification des choix
+  - aucun comportement Coach IA longitudinal à ce stade
+
 --------------------------------------------------
 PHASE 2: SUIVI
 --------------------------------------------------
@@ -871,7 +963,11 @@ PHASE 3: IA
 Objectif:
 Rendre le système adaptatif et intelligent.
 
-- Assistance à la génération de programmes
+- AI Builder initial:
+  - génère un weekly plan statique basé sur le Training Profile, le User Exercise Pool et la demande utilisateur
+  - ne modifie pas automatiquement les cycles existants
+  - ne remplace pas le Coach IA longitudinal futur
+
 - Justification des choix
 - Ajustements intelligents dans le cycle
 - Check-in utilisateur et régénération de cycle
@@ -887,13 +983,45 @@ Rendre le système adaptatif et intelligent.
 - Contraintes et validations déjà en place
 
 Recherche d’exercices:
-- Les recherches servant à ajouter ou assigner un nouvel exercice utilisent status=approved
-- Les exercices déjà présents dans un workout existant restent affichables même si leur status change plus tard
+- Les recherches servant à ajouter ou assigner un nouvel exercice utilisent le User Exercise Pool:
+  GET /api/users/:userId/exercise-pool
+- Les résultats respectent le Training Profile actuel:
+  - équipement
+  - difficulté
+  - cardio profile
+  - movement constraints
+  - manual blocked exercises
+- Les exercices déjà présents dans un workout existant restent affichables même s’ils ne sont plus dans le pool actuel
 - La sélection d’un nouvel exercice ne doit pas proposer draft ou archived
+- Empty state intelligent:
+  - No exercises found. si aucun exercice ne correspond
+  - No exercises available with your current profile filters. si des exercices existent mais sont exclus par le profil
 
 Voir sections:
 - RÈGLES CANONIQUES DU MANUAL BUILDER
 - ANALYTICS FRONTEND ACTUELLES
+
+Frontend API helpers:
+- fetchExercises(params)
+  - utilise /api/exercises
+  - utilisé pour les recherches globales
+  - utilisé par Manual Blocked Exercises avec status=approved
+
+- fetchUserExercisePool(userId, params)
+  - utilise /api/users/:userId/exercise-pool
+  - retourne seulement items
+  - utilisé par ManualWorkoutEditor pour préserver le contrat existant
+
+- fetchUserExercisePoolResponse(userId, params)
+  - utilise /api/users/:userId/exercise-pool
+  - retourne la réponse complète:
+    - items
+    - nextCursor
+    - total
+    - poolSummary
+    - meta
+    - hardConstraints
+    - excluded / excludedByReason si includeExcluded=true
 
 ==================================================
 RÈGLES CANONIQUES DU MANUAL BUILDER
@@ -1049,11 +1177,9 @@ Statuts d’exercice:
 - archived: exercice retiré des nouvelles sélections, mais conservé pour compatibilité historique
 
 Règles métier liées au status:
-- Les flows de sélection/construction doivent afficher seulement les exercices approved
-  - ajout d’exercice dans le manual builder
-  - assignation/remplacement dans un superset
-  - blocage manuel d’un exercice dans Movement Constraints
-  - futures recherches de sélection d’exercice
+Les nouvelles sélections d’exercices doivent utiliser une source approved:
+- Manual Builder et futures sélections personnalisées: User Exercise Pool
+- Manual Blocked Exercises: /api/exercises?status=approved
 - Les plans, cycles, workouts et historiques déjà construits doivent rester lisibles même si un exercice référencé devient draft ou archived
 - Le système ne doit jamais supprimer automatiquement un exercice existant d’un plan seulement à cause de son status
 - GET /api/exercises/:id doit rester tolérant pour permettre l’affichage d’exercices déjà sauvegardés
@@ -1067,7 +1193,15 @@ L’IA n’invente jamais d’exercices.
 Elle ne travaille que sur la base interne.
 
 jointStressTags:
-- Tags de contraintes mécaniques utilisés pour adapter ou filtrer les exercices en cas de douleur/inconfort
+- Les jointStressTags doivent être maintenus manuellement dans la librairie source et dans Neon si nécessaire.
+- Ils influencent directement le User Exercise Pool via les blockedJointStressTags.
+
+Exemples:
+- deep_knee_flexion
+- knee_dominant_load
+- spinal_loading
+- hip_hinge_load
+
 - Ne représentent pas un diagnostic médical
 - Utilisés comme signaux de prudence pour substitution ou modification d’exercice
 
@@ -1201,6 +1335,19 @@ CONTRAINTES POUR L’AGENT IA
 - Messages de commit clairs, explicites et structurés
 - Respecter la vision produit sans simplification abusive
 
+Règles AI Builder:
+- L’IA ne peut utiliser que les exercices provenant du User Exercise Pool
+- L’IA ne doit pas inventer d’exercices
+- L’IA génère une proposition de plan, pas une modification automatique
+- Le backend reste responsable de valider:
+  - équipement
+  - difficulté
+  - contraintes de mouvement
+  - trainingType
+  - structure du plan
+- Les choix doivent être explicables
+- Les exercices existants d’un plan ne doivent pas être supprimés automatiquement par un changement de profil
+
 ==================================================
 RÈGLE FINALE
 ==================================================
@@ -1254,7 +1401,7 @@ Arborescence menu settings
 ==================================================
 
 --------------------------------------------------
-V3 - Version complète
+V3 - Version complète (vision finale, pas actuel)
 --------------------------------------------------
 
 Settings
@@ -1641,7 +1788,7 @@ Muscle Priorities
 
 
 --------------------------------------------------
-V2 - Version profil utilisateur exploitable
+V2 - Notes personnelles legacy / non à jour
 --------------------------------------------------
 
 Settings
@@ -1937,7 +2084,7 @@ Settings
         └── Permanent Account Deletion
 
 --------------------------------------------------
-V1 - Version AI Builder ready.
+V1 - Notes personnelles legacy / non à jour
 --------------------------------------------------
 
 Settings
@@ -2193,7 +2340,7 @@ Settings
 │   │   │
 │   │   └── Preferred Modalities
 │   │
-│   └── Physical Notes (optional)
+│   └── Coaching Notes (optional)
 │
 ├── AI Coaching
 │   ├── Mode

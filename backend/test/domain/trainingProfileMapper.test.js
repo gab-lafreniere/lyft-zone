@@ -96,3 +96,32 @@ test('mapTrainingProfileToUserProfileUpdate writes the canonical snapshot and mi
   assert.equal(mapped.musclePriorities.perAreaWeights.upper_chest, 1);
   assert.equal(mapped.musclePriorities.perAreaWeights.quadriceps, 0.35);
 });
+
+test('mapTrainingProfileToUserProfileUpdate preserves MIXED canonically without the incompatible Prisma mirror', () => {
+  const validation = validateTrainingProfileInput({
+    ...createValidPayload(),
+    primaryGoal: 'MIXED',
+  });
+  assert.equal(validation.ok, true);
+
+  const mapped = mapTrainingProfileToUserProfileUpdate(validation.value);
+
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(mapped, 'primaryGoal'),
+    false
+  );
+  assert.equal(mapped.onboardingSnapshot.profile.primaryGoal, 'MIXED');
+});
+
+test('mapTrainingProfileToUserProfileUpdate continues to mirror Prisma-compatible goals', () => {
+  const validation = validateTrainingProfileInput({
+    ...createValidPayload(),
+    primaryGoal: 'STRENGTH',
+  });
+  assert.equal(validation.ok, true);
+
+  const mapped = mapTrainingProfileToUserProfileUpdate(validation.value);
+
+  assert.equal(mapped.primaryGoal, 'STRENGTH');
+  assert.equal(mapped.onboardingSnapshot.profile.primaryGoal, 'STRENGTH');
+});

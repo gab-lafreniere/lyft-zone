@@ -10,6 +10,7 @@ function createPoolContext(overrides = {}) {
     userId: 'user_123',
     profileSchemaVersion: 1,
     primaryGoal: 'HYPERTROPHY',
+    experience: 'advanced',
     musclePriorityProfile: {
       primaryFocus: 'chest',
       secondaryFocuses: ['back'],
@@ -55,6 +56,7 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
       name: 'Dumbbell Bench Press',
       status: 'approved',
       trainingType: 'strength',
+      difficulty: 'intermediate',
       equipmentCategory: 'dumbbell',
       equipmentNeeded: ['dumbbells'],
       movementPattern: 'horizontal_push',
@@ -70,6 +72,7 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
       name: 'Draft Press',
       status: 'draft',
       trainingType: 'strength',
+      difficulty: 'intermediate',
       equipmentCategory: 'dumbbell',
       equipmentNeeded: ['dumbbells'],
       movementPattern: 'horizontal_push',
@@ -81,6 +84,7 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
       name: 'Archived Exercise',
       status: 'archived',
       trainingType: 'strength',
+      difficulty: 'intermediate',
       equipmentCategory: 'dumbbell',
       equipmentNeeded: ['dumbbells'],
       movementPattern: 'horizontal_push',
@@ -92,6 +96,7 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
       name: 'Warmup Drill',
       status: 'approved',
       trainingType: 'warmup',
+      difficulty: 'beginner',
       equipmentCategory: 'bodyweight',
       equipmentNeeded: ['bodyweight'],
       movementPattern: 'horizontal_push',
@@ -103,6 +108,7 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
       name: 'Barbell Bench Press',
       status: 'approved',
       trainingType: 'strength',
+      difficulty: 'intermediate',
       equipmentCategory: 'barbell',
       equipmentNeeded: ['olympic_barbell'],
       movementPattern: 'horizontal_push',
@@ -114,6 +120,7 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
       name: 'Overhead Press',
       status: 'approved',
       trainingType: 'strength',
+      difficulty: 'intermediate',
       equipmentCategory: 'dumbbell',
       equipmentNeeded: ['dumbbells'],
       movementPattern: 'vertical_push',
@@ -125,6 +132,7 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
       name: 'Romanian Deadlift',
       status: 'approved',
       trainingType: 'strength',
+      difficulty: 'intermediate',
       equipmentCategory: 'dumbbell',
       equipmentNeeded: ['dumbbells'],
       movementPattern: 'hip_hinge',
@@ -137,6 +145,7 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
       name: 'Dumbbell Lateral Raise',
       status: 'approved',
       trainingType: 'strength',
+      difficulty: 'beginner',
       equipmentCategory: 'dumbbell',
       equipmentNeeded: ['dumbbells'],
       movementPattern: 'shoulder_abduction',
@@ -149,6 +158,7 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
       name: 'Good Morning',
       status: 'approved',
       trainingType: 'strength',
+      difficulty: 'intermediate',
       equipmentCategory: 'dumbbell',
       equipmentNeeded: ['dumbbells'],
       movementPattern: 'hip_hinge',
@@ -161,6 +171,7 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
       name: 'Explicitly Blocked Exercise',
       status: 'approved',
       trainingType: 'strength',
+      difficulty: 'advanced',
       equipmentCategory: 'dumbbell',
       equipmentNeeded: ['dumbbells'],
       movementPattern: 'vertical_push',
@@ -173,6 +184,7 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
       name: 'Treadmill Walk',
       status: 'approved',
       trainingType: 'cardio',
+      difficulty: 'beginner',
       equipmentCategory: 'cardio_machine',
       equipmentNeeded: ['treadmill'],
       movementPattern: 'gait',
@@ -213,6 +225,11 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
   assert.equal(result.meta.statusPolicy.allowDraftFallback, false);
   assert.equal(result.meta.statusPolicy.draftFallbackApplied, false);
   assert.deepEqual(result.meta.trainingTypePolicy.allowedTrainingTypes, ['strength', 'cardio']);
+  assert.deepEqual(result.meta.difficultyPolicy.allowedDifficulties, [
+    'beginner',
+    'intermediate',
+    'advanced',
+  ]);
   assert.deepEqual(result.pool.grouped.byMovementPattern.horizontal_push, ['ex_approved_strength']);
   assert.deepEqual(result.pool.grouped.byBodyPart.chest, ['ex_approved_strength']);
   assert.deepEqual(result.pool.grouped.byMuscleFocus.upper_chest, ['ex_approved_strength']);
@@ -226,6 +243,7 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
   assert.equal(result.pool.stats.excludedCount, 7);
   assert.equal(result.pool.stats.excludedByReason.status_not_allowed, 2);
   assert.equal(result.pool.stats.excludedByReason.training_type_not_allowed, 1);
+  assert.equal(result.pool.stats.excludedByReason.difficulty_not_allowed, 0);
   assert.equal(result.pool.stats.excludedByReason.missing_equipment, 1);
   assert.equal(result.pool.stats.excludedByReason.blocked_exercise_id, 1);
   assert.equal(result.pool.stats.excludedByReason.blocked_joint_stress_tag, 1);
@@ -249,6 +267,11 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
   assert.deepEqual(result.context.movementConstraints.cautionJointStressTags, ['overhead_shoulder_position']);
   assert.deepEqual(result.context.movementConstraints.blockedExerciseIds, ['ex_blocked_id']);
   assert.deepEqual(result.hardConstraints.blockedExerciseIds, ['ex_blocked_id']);
+  assert.deepEqual(result.hardConstraints.allowedDifficulties, [
+    'beginner',
+    'intermediate',
+    'advanced',
+  ]);
   assert.equal('score' in result.pool.items[0], false);
   assert.equal('score' in result.pool.items[0].softSignals, false);
 });
@@ -260,6 +283,7 @@ test('buildExercisePool includes draft exercises only when allowDraftFallback is
       name: 'Draft Only Exercise',
       status: 'draft',
       trainingType: 'strength',
+      difficulty: 'beginner',
       equipmentCategory: 'dumbbell',
       equipmentNeeded: ['dumbbells'],
       movementPattern: 'horizontal_pull',
@@ -289,6 +313,7 @@ test('buildExercisePool excludes cardio exercises when the profile does not allo
       name: 'Treadmill Walk',
       status: 'approved',
       trainingType: 'cardio',
+      difficulty: 'beginner',
       equipmentCategory: 'cardio_machine',
       equipmentNeeded: ['treadmill'],
       movementPattern: 'gait',
@@ -315,4 +340,178 @@ test('buildExercisePool excludes cardio exercises when the profile does not allo
   assert.deepEqual(result.pool.items, []);
   assert.equal(result.pool.excluded.length, 1);
   assert.deepEqual(result.pool.excluded[0].reasons, ['training_type_not_allowed']);
+});
+
+test('buildExercisePool excludes cardio exercises when cardio role is null', () => {
+  const exercises = [
+    {
+      exerciseId: 'ex_cardio',
+      name: 'Treadmill Walk',
+      status: 'approved',
+      trainingType: 'cardio',
+      difficulty: 'beginner',
+      equipmentCategory: 'cardio_machine',
+      equipmentNeeded: ['treadmill'],
+      movementPattern: 'gait',
+      bodyParts: ['quadriceps'],
+      muscleFocus: [],
+    },
+  ];
+
+  const result = buildExercisePool(
+    exercises,
+    createPoolContext({
+      cardioProfile: {
+        cardioRole: null,
+        preferredModalities: [],
+      },
+    }),
+    {
+      generatedAt: '2026-05-12T10:00:00.000Z',
+    }
+  );
+
+  assert.deepEqual(result.meta.trainingTypePolicy.allowedTrainingTypes, ['strength']);
+  assert.deepEqual(result.pool.items, []);
+  assert.deepEqual(result.pool.excluded[0].reasons, ['training_type_not_allowed']);
+});
+
+test('buildExercisePool applies strict difficulty policy from experience', () => {
+  const exercises = [
+    {
+      exerciseId: 'ex_beginner',
+      name: 'Beginner Row',
+      status: 'approved',
+      trainingType: 'strength',
+      difficulty: 'beginner',
+      equipmentCategory: 'dumbbell',
+      equipmentNeeded: ['dumbbells'],
+      movementPattern: 'horizontal_pull',
+      bodyParts: ['back'],
+      muscleFocus: ['lats'],
+    },
+    {
+      exerciseId: 'ex_intermediate',
+      name: 'Intermediate Row',
+      status: 'approved',
+      trainingType: 'strength',
+      difficulty: 'intermediate',
+      equipmentCategory: 'dumbbell',
+      equipmentNeeded: ['dumbbells'],
+      movementPattern: 'horizontal_pull',
+      bodyParts: ['back'],
+      muscleFocus: ['lats'],
+    },
+    {
+      exerciseId: 'ex_advanced',
+      name: 'Advanced Row',
+      status: 'approved',
+      trainingType: 'strength',
+      difficulty: 'advanced',
+      equipmentCategory: 'dumbbell',
+      equipmentNeeded: ['dumbbells'],
+      movementPattern: 'horizontal_pull',
+      bodyParts: ['back'],
+      muscleFocus: ['lats'],
+    },
+    {
+      exerciseId: 'ex_missing_difficulty',
+      name: 'Missing Difficulty',
+      status: 'approved',
+      trainingType: 'strength',
+      equipmentCategory: 'dumbbell',
+      equipmentNeeded: ['dumbbells'],
+      movementPattern: 'horizontal_pull',
+      bodyParts: ['back'],
+      muscleFocus: ['lats'],
+    },
+    {
+      exerciseId: 'ex_unknown_difficulty',
+      name: 'Unknown Difficulty',
+      status: 'approved',
+      trainingType: 'strength',
+      difficulty: 'elite',
+      equipmentCategory: 'dumbbell',
+      equipmentNeeded: ['dumbbells'],
+      movementPattern: 'horizontal_pull',
+      bodyParts: ['back'],
+      muscleFocus: ['lats'],
+    },
+  ];
+
+  const beginnerResult = buildExercisePool(
+    exercises,
+    createPoolContext({ experience: 'beginner' }),
+    { generatedAt: '2026-05-12T10:00:00.000Z' }
+  );
+  const intermediateResult = buildExercisePool(
+    exercises,
+    createPoolContext({ experience: 'intermediate' }),
+    { generatedAt: '2026-05-12T10:00:00.000Z' }
+  );
+  const advancedResult = buildExercisePool(
+    exercises,
+    createPoolContext({ experience: 'advanced' }),
+    { generatedAt: '2026-05-12T10:00:00.000Z' }
+  );
+
+  assert.deepEqual(
+    beginnerResult.pool.items.map((item) => item.exerciseId),
+    ['ex_beginner']
+  );
+  assert.deepEqual(
+    intermediateResult.pool.items.map((item) => item.exerciseId),
+    ['ex_beginner', 'ex_intermediate']
+  );
+  assert.deepEqual(
+    advancedResult.pool.items.map((item) => item.exerciseId),
+    ['ex_beginner', 'ex_intermediate', 'ex_advanced']
+  );
+  assert.deepEqual(beginnerResult.meta.difficultyPolicy.allowedDifficulties, ['beginner']);
+  assert.equal(advancedResult.pool.stats.excludedByReason.difficulty_not_allowed, 2);
+  assert.deepEqual(
+    advancedResult.pool.excluded
+      .filter((item) => item.reasons.includes('difficulty_not_allowed'))
+      .map((item) => item.exerciseId),
+    ['ex_missing_difficulty', 'ex_unknown_difficulty']
+  );
+});
+
+test('buildExercisePool keeps monitored signals non-blocking', () => {
+  const exercises = [
+    {
+      exerciseId: 'ex_monitored_pattern',
+      name: 'Monitored Row',
+      status: 'approved',
+      trainingType: 'strength',
+      difficulty: 'beginner',
+      equipmentCategory: 'dumbbell',
+      equipmentNeeded: ['dumbbells'],
+      movementPattern: 'horizontal_pull',
+      bodyParts: ['back'],
+      muscleFocus: ['lats'],
+    },
+  ];
+
+  const result = buildExercisePool(
+    exercises,
+    createPoolContext({
+      movementConstraints: {
+        monitoredSignals: [{ type: 'movementPattern', value: 'horizontal_pull' }],
+        cautionMovementPatterns: [],
+        blockedMovementPatterns: [],
+        cautionJointStressTags: [],
+        blockedJointStressTags: [],
+        blockedExerciseIds: [],
+      },
+    }),
+    {
+      generatedAt: '2026-05-12T10:00:00.000Z',
+    }
+  );
+
+  assert.deepEqual(result.pool.items.map((item) => item.exerciseId), [
+    'ex_monitored_pattern',
+  ]);
+  assert.deepEqual(result.pool.excluded, []);
 });

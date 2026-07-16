@@ -117,6 +117,22 @@ test('isExerciseCompatible rejects exercises when no required equipment is avail
   assert.deepEqual(result.reasons, ['missing_equipment']);
 });
 
+test('isExerciseCompatible rejects exercises when only some required equipment is available', () => {
+  const result = isExerciseCompatible(
+    {
+      equipmentNeeded: ['dumbbells', 'bench'],
+    },
+    {
+      equipment: {
+        availableEquipment: ['dumbbells'],
+      },
+    }
+  );
+
+  assert.equal(result.compatible, false);
+  assert.deepEqual(result.reasons, ['missing_equipment']);
+});
+
 test('isExerciseCompatible treats empty available equipment as bodyweight only', () => {
   const result = isExerciseCompatible(
     {

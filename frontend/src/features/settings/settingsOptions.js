@@ -178,18 +178,23 @@ export const PRIMARY_GOAL_OPTIONS = [
     label: "Hypertrophy",
     description: "Focus on muscle size, shape, and overall visual development.",
     icon: "exercise",
+    disabled: false,
   },
   {
     value: "STRENGTH",
     label: "Strength",
-    description: "Bias your plan toward force output and heavier performance work.",
+    description:
+      "Bias your plan toward force output and heavier performance work. Available in a future version.",
     icon: "bolt",
+    disabled: true,
   },
   {
     value: "MIXED",
     label: "Mixed",
-    description: "Balance muscle growth and strength with a more blended approach.",
+    description:
+      "Balance muscle growth and strength with a more blended approach. Available in a future version.",
     icon: "tune",
+    disabled: true,
   },
 ];
 

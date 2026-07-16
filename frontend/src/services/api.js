@@ -141,6 +141,60 @@ export const fetchExercises = async ({
   
     return [];
 };
+
+export const fetchUserExercisePoolResponse = async (
+  userId,
+  {
+    q = '',
+    limit = 25,
+    cursor = '',
+    bodyParts = [],
+    muscleFocus = [],
+    equipmentCategory = [],
+    trainingType = [],
+    difficulty = [],
+    includeExcluded = false,
+  } = {}
+) => {
+  const params = new URLSearchParams();
+  params.set('limit', String(limit));
+  if (q) {
+    params.set('q', q);
+  }
+  if (cursor) {
+    params.set('cursor', String(cursor));
+  }
+  if (bodyParts.length) {
+    params.set('bodyParts', bodyParts.join(','));
+  }
+  if (muscleFocus.length) {
+    params.set('muscleFocus', muscleFocus.join(','));
+  }
+  if (equipmentCategory.length) {
+    params.set('equipmentCategory', equipmentCategory.join(','));
+  }
+  if (trainingType.length) {
+    params.set('trainingType', trainingType.join(','));
+  }
+  if (difficulty.length) {
+    params.set('difficulty', difficulty.join(','));
+  }
+  if (includeExcluded) {
+    params.set('includeExcluded', 'true');
+  }
+
+  const response = await fetch(
+    `${BACKEND_URL}/api/users/${userId}/exercise-pool?${params.toString()}`
+  );
+
+  return readJsonResponse(response);
+};
+
+export const fetchUserExercisePool = async (userId, params = {}) => {
+  const response = await fetchUserExercisePoolResponse(userId, params);
+
+  return Array.isArray(response.items) ? response.items : [];
+};
   
 
 /**

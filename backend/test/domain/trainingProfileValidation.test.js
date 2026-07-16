@@ -81,6 +81,35 @@ test('validateTrainingProfileInput accepts a valid canonical onboarding payload'
   ]);
 });
 
+test('validateTrainingProfileInput keeps STRENGTH and MIXED in the product contract', () => {
+  ['STRENGTH', 'MIXED'].forEach((primaryGoal) => {
+    const result = validateTrainingProfileInput({
+      ...createValidPayload(),
+      primaryGoal,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.value.primaryGoal, primaryGoal);
+  });
+});
+
+test('validateTrainingProfileInput rejects an unknown primaryGoal as invalid', () => {
+  const result = validateTrainingProfileInput({
+    ...createValidPayload(),
+    primaryGoal: 'CORRUPTED_GOAL',
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    result.issues.find((issue) => issue.path === 'primaryGoal'),
+    {
+      path: 'primaryGoal',
+      code: 'INVALID_ENUM',
+      message: 'primaryGoal is invalid',
+    }
+  );
+});
+
 test('validateTrainingProfileInput defaults omitted movementConstraints to V2 empty constraints', () => {
   const payload = createValidPayload();
   delete payload.movementConstraints;

@@ -6,8 +6,31 @@ const {
   upsertUserProfile,
   updateTrainingProfileSettings,
 } = require('../services/usersService');
+const {
+  ExercisePoolServiceError,
+  getExercisePoolForUser,
+} = require('../services/exercisePoolService');
+
+const EXERCISE_POOL_ERROR_STATUS = Object.freeze({
+  PROFILE_NOT_READY: 409,
+  UNSUPPORTED_PROFILE_SCHEMA_VERSION: 422,
+  VALIDATION_ERROR: 400,
+});
+
+function getExercisePoolErrorStatus(code) {
+  return EXERCISE_POOL_ERROR_STATUS[code] || 500;
+}
 
 function handleError(res, error) {
+  if (error instanceof ExercisePoolServiceError) {
+    return res.status(getExercisePoolErrorStatus(error.code)).json({
+      error: {
+        code: error.code,
+        message: error.message,
+      },
+    });
+  }
+
   if (error instanceof ApiError || (error?.status && error?.code)) {
     return res.status(error.status).json({
       error: {
@@ -54,6 +77,15 @@ async function getUserSettingsHandler(req, res) {
   }
 }
 
+async function getUserExercisePoolHandler(req, res) {
+  try {
+    const pool = await getExercisePoolForUser(req.params.userId, req.query || {});
+    return res.status(200).json(pool);
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
 async function updateTrainingProfileSettingsHandler(req, res) {
   try {
     const settings = await updateTrainingProfileSettings(req.params.userId, req.body || {});
@@ -75,7 +107,11 @@ async function analyzeMovementConstraintSettingsHandler(req, res) {
 module.exports = {
   analyzeMovementConstraintSettingsHandler,
   createUserHandler,
+  getUserExercisePoolHandler,
   getUserSettingsHandler,
   upsertUserProfileHandler,
   updateTrainingProfileSettingsHandler,
+  _test: {
+    getExercisePoolErrorStatus,
+  },
 };

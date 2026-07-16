@@ -680,6 +680,10 @@ function collectExerciseIds(workouts = []) {
   );
 }
 
+function hasGenerationContext(payload = {}) {
+  return Object.prototype.hasOwnProperty.call(payload, 'generationContext');
+}
+
 function toWorkoutCreateInput(workouts) {
   return workouts.map((workout) => ({
     id: workout.id,
@@ -1056,18 +1060,23 @@ async function createWeeklyPlan(payload) {
         sourceType,
       },
     });
+    const versionData = {
+      weeklyPlanParentId: createdParent.id,
+      versionNumber: 1,
+      name: document.name,
+      sessionsPerWeek: document.sessionsPerWeek,
+      status: 'DRAFT',
+      workouts: {
+        create: toWorkoutCreateInput(document.workouts),
+      },
+    };
+
+    if (hasGenerationContext(payload)) {
+      versionData.generationContext = payload.generationContext ?? null;
+    }
 
     const createdVersion = await tx.weeklyPlanVersion.create({
-      data: {
-        weeklyPlanParentId: createdParent.id,
-        versionNumber: 1,
-        name: document.name,
-        sessionsPerWeek: document.sessionsPerWeek,
-        status: 'DRAFT',
-        workouts: {
-          create: toWorkoutCreateInput(document.workouts),
-        },
-      },
+      data: versionData,
       include: weeklyPlanVersionInclude,
     });
 

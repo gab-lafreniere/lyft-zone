@@ -1,6 +1,7 @@
 const express = require('express');
 const {
   createUserHandler,
+  getUserExercisePoolHandler,
   getUserSettingsHandler,
   analyzeMovementConstraintSettingsHandler,
   upsertUserProfileHandler,
@@ -13,6 +14,7 @@ const {
 const router = express.Router();
 
 router.post('/', createUserHandler);
+router.get('/:userId/exercise-pool', getUserExercisePoolHandler);
 router.get('/:userId/settings', getUserSettingsHandler);
 router.put('/:userId/profile', upsertUserProfileHandler);
 router.patch('/:userId/settings/training-profile', updateTrainingProfileSettingsHandler);

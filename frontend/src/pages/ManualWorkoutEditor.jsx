@@ -23,7 +23,7 @@ import {
 } from "../features/multiWeek/occurrence";
 import { getCycleWorkoutEditorPath } from "../features/multiWeek/routes";
 import { resolveBackTarget } from "../features/weeklyPlans/navigation";
-import { fetchExercises } from "../services/api";
+import { ensureCurrentUserId, fetchUserExercisePoolResponse } from "../services/api";
 import { resolveCardioModality } from "../utils/cardioModality";
 import { computeWorkoutMetrics } from "../utils/workoutMetrics";
 
@@ -58,6 +58,21 @@ function formatTempoValue(value) {
 
 function normalizeMatchValue(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function hasExcludedExerciseMatch(poolResponse, query) {
+  const normalizedQuery = normalizeMatchValue(query);
+
+  if (!normalizedQuery) {
+    return false;
+  }
+
+  return (poolResponse?.excluded || []).some((exercise) =>
+    [exercise?.exerciseId, exercise?.name]
+      .map(normalizeMatchValue)
+      .filter(Boolean)
+      .some((value) => value.includes(normalizedQuery))
+  );
 }
 
 function getFieldMatchRank(values, query) {
@@ -471,6 +486,7 @@ export default function ManualWorkoutEditor() {
   const [exerciseResults, setExerciseResults] = useState([]);
   const [isLoadingExercises, setIsLoadingExercises] = useState(false);
   const [exerciseError, setExerciseError] = useState("");
+  const [exerciseEmptyMessage, setExerciseEmptyMessage] = useState("No exercises found.");
   const [activeSearchTarget, setActiveSearchTarget] = useState(null);
   const [activeSortableId, setActiveSortableId] = useState(null);
 
@@ -825,18 +841,36 @@ export default function ManualWorkoutEditor() {
     async function loadExercises() {
       setIsLoadingExercises(true);
       setExerciseError("");
+      setExerciseEmptyMessage("No exercises found.");
 
       try {
         // Bounded retrieval for this pass; structured filtering is real but results are still not exhaustive.
-        const results = await fetchExercises({
+        const userId = await ensureCurrentUserId();
+        const poolParams = {
           q: debouncedSearchQuery,
           limit: searchLimit,
-          status: "approved",
           ...structuredQueryFilters,
-        });
+        };
+        const response = await fetchUserExercisePoolResponse(userId, poolParams);
+        let results = Array.isArray(response.items) ? response.items : [];
+        let emptyMessage = "No exercises found.";
+
+        if (results.length === 0 && debouncedSearchQuery.trim()) {
+          const debugResponse = await fetchUserExercisePoolResponse(userId, {
+            ...poolParams,
+            includeExcluded: true,
+          });
+
+          results = Array.isArray(debugResponse.items) ? debugResponse.items : [];
+
+          if (results.length === 0 && hasExcludedExerciseMatch(debugResponse, debouncedSearchQuery)) {
+            emptyMessage = "No exercises available with your current profile filters.";
+          }
+        }
 
         if (!cancelled) {
           setExerciseResults(results);
+          setExerciseEmptyMessage(emptyMessage);
         }
       } catch (error) {
         if (!cancelled) {
@@ -1569,7 +1603,7 @@ export default function ManualWorkoutEditor() {
                   )}
 
                   {!isLoadingExercises && !exerciseError && visibleExerciseResults.length === 0 && (
-                    <p className="px-2 py-3 text-sm text-slate-500">No exercises found.</p>
+                    <p className="px-2 py-3 text-sm text-slate-500">{exerciseEmptyMessage}</p>
                   )}
 
                   {!isLoadingExercises &&

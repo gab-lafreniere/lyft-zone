@@ -96,6 +96,7 @@ function resolvePoolContext(userId, snapshot) {
     userId,
     profileSchemaVersion: snapshot.schemaVersion,
     primaryGoal: profile.primaryGoal || null,
+    experience: profile.experience || null,
     musclePriorityProfile:
       derived.musclePriorityProfile || resolveMusclePriorityProfile(profile),
     equipmentContext: resolveEquipmentContext(profile),
@@ -106,6 +107,180 @@ function resolvePoolContext(userId, snapshot) {
       preferredModalities: [],
     },
   };
+}
+
+function normalizeValue(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function toArray(value) {
+  return Array.isArray(value) ? value : value == null ? [] : [value];
+}
+
+function normalizeArray(value) {
+  return Array.from(new Set(toArray(value).map(normalizeValue).filter(Boolean)));
+}
+
+function parseCsvParam(value) {
+  return normalizeArray(String(value || '').split(','));
+}
+
+function parseLimit(value) {
+  const parsed = parseInt(value || '25', 10);
+  if (!Number.isFinite(parsed)) {
+    return 25;
+  }
+
+  return Math.min(Math.max(parsed, 1), 150);
+}
+
+function parseCursor(value) {
+  const parsed = parseInt(value || '0', 10);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return Math.max(parsed, 0);
+}
+
+function includesAny(values, expectedValues) {
+  if (!expectedValues.length) {
+    return true;
+  }
+
+  const normalizedValues = normalizeArray(values);
+  return expectedValues.some((expectedValue) => normalizedValues.includes(expectedValue));
+}
+
+function matchesEquipmentCategory(value, expectedValues) {
+  if (!expectedValues.length) {
+    return true;
+  }
+
+  const normalizedValue = normalizeValue(value);
+
+  return expectedValues.some((expectedValue) => {
+    switch (expectedValue) {
+      case 'machine':
+        return (
+          normalizedValue === 'selectorized_machine' ||
+          normalizedValue === 'plate_loaded_machine'
+        );
+      case 'assisted':
+        return normalizedValue === 'assisted_machine';
+      case 'smith machine':
+        return normalizedValue === 'smith_machine';
+      default:
+        return normalizedValue === expectedValue;
+    }
+  });
+}
+
+function buildPoolSearchText(item = {}) {
+  const attributes = item.attributes || {};
+
+  return [
+    item.exerciseId,
+    item.name,
+    ...toArray(item.aliases),
+    attributes.movementPattern,
+    ...toArray(attributes.bodyParts),
+    ...toArray(attributes.muscleFocus),
+    ...toArray(attributes.targetMuscles),
+    ...toArray(attributes.secondaryMuscles),
+    attributes.mechanicType,
+    attributes.unilateralType,
+    attributes.cardioModality,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase())
+    .join(' ');
+}
+
+function filterPoolItems(items = [], query = {}) {
+  const q = normalizeValue(query.q);
+  const bodyParts = parseCsvParam(query.bodyParts);
+  const muscleFocus = parseCsvParam(query.muscleFocus);
+  const equipmentCategory = parseCsvParam(query.equipmentCategory);
+  const trainingType = parseCsvParam(query.trainingType);
+  const difficulty = parseCsvParam(query.difficulty);
+
+  return items.filter((item) => {
+    const attributes = item.attributes || {};
+
+    if (q && !buildPoolSearchText(item).includes(q)) {
+      return false;
+    }
+
+    if (!includesAny(attributes.bodyParts, bodyParts)) {
+      return false;
+    }
+
+    if (!includesAny(attributes.muscleFocus, muscleFocus)) {
+      return false;
+    }
+
+    if (!matchesEquipmentCategory(attributes.equipmentCategory, equipmentCategory)) {
+      return false;
+    }
+
+    if (trainingType.length && !trainingType.includes(normalizeValue(item.trainingType))) {
+      return false;
+    }
+
+    if (difficulty.length && !difficulty.includes(normalizeValue(attributes.difficulty))) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function buildExercisePoolSearchResponse(poolResult, query = {}) {
+  const limit = parseLimit(query.limit);
+  const cursor = parseCursor(query.cursor);
+  const filteredItems = filterPoolItems(poolResult.pool?.items || [], query);
+  const pageItems = filteredItems.slice(cursor, cursor + limit);
+  const nextCursor =
+    cursor + pageItems.length < filteredItems.length ? String(cursor + pageItems.length) : null;
+  const response = {
+    items: pageItems,
+    nextCursor,
+    total: filteredItems.length,
+    poolSummary: {
+      totalExercises: poolResult.pool?.stats?.fetchedCount || 0,
+      availableExercises: poolResult.pool?.stats?.eligibleCount || 0,
+      excludedExercises: poolResult.pool?.stats?.excludedCount || 0,
+    },
+    meta: poolResult.meta || {},
+    hardConstraints: poolResult.hardConstraints || {},
+  };
+
+  if (normalizeValue(query.includeExcluded) === 'true') {
+    response.excluded = poolResult.pool?.excluded || [];
+    response.excludedByReason = poolResult.pool?.stats?.excludedByReason || {};
+  }
+
+  return response;
+}
+
+async function buildExercisePoolFromSnapshot(userId, snapshot, options = {}, deps = {}) {
+  if (!userId) {
+    throw new ExercisePoolServiceError('VALIDATION_ERROR', 'userId is required');
+  }
+
+  const prisma = deps.prisma || getPrisma();
+  const poolContext = resolvePoolContext(userId, snapshot);
+  const exercises = await prisma.exercise.findMany({
+    select: EXERCISE_POOL_SELECT,
+    orderBy: EXERCISE_POOL_ORDER_BY,
+  });
+
+  return buildExercisePool(exercises, poolContext, {
+    allowDraftFallback: options.allowDraftFallback === true,
+    generatedAt: options.generatedAt || getNowIso(deps),
+    schemaVersion: EXERCISE_POOL_SCHEMA_VERSION,
+  });
 }
 
 async function buildExercisePoolForUser(userId, options = {}, deps = {}) {
@@ -120,17 +295,18 @@ async function buildExercisePoolForUser(userId, options = {}, deps = {}) {
       onboardingSnapshot: true,
     },
   });
-  const poolContext = resolvePoolContext(userId, profileRecord?.onboardingSnapshot);
-  const exercises = await prisma.exercise.findMany({
-    select: EXERCISE_POOL_SELECT,
-    orderBy: EXERCISE_POOL_ORDER_BY,
-  });
 
-  return buildExercisePool(exercises, poolContext, {
-    allowDraftFallback: options.allowDraftFallback === true,
-    generatedAt: options.generatedAt || getNowIso(deps),
-    schemaVersion: EXERCISE_POOL_SCHEMA_VERSION,
-  });
+  return buildExercisePoolFromSnapshot(
+    userId,
+    profileRecord?.onboardingSnapshot,
+    options,
+    deps
+  );
+}
+
+async function getExercisePoolForUser(userId, query = {}, deps = {}) {
+  const poolResult = await buildExercisePoolForUser(userId, {}, deps);
+  return buildExercisePoolSearchResponse(poolResult, query);
 }
 
 module.exports = {
@@ -138,6 +314,10 @@ module.exports = {
   EXERCISE_POOL_SCHEMA_VERSION,
   EXERCISE_POOL_SELECT,
   ExercisePoolServiceError,
+  buildExercisePoolFromSnapshot,
+  buildExercisePoolSearchResponse,
   buildExercisePoolForUser,
+  filterPoolItems,
+  getExercisePoolForUser,
   resolvePoolContext,
 };

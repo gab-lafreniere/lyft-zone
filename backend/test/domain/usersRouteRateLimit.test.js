@@ -14,12 +14,18 @@ test('users router applies movement constraint analyze rate limit only to analyz
     '/:userId/settings/training-profile/movement-constraints/analyze',
     'post'
   );
+  const exercisePoolRoute = findRoute('/:userId/exercise-pool', 'get');
   const settingsRoute = findRoute('/:userId/settings', 'get');
   const updateTrainingProfileRoute = findRoute('/:userId/settings/training-profile', 'patch');
 
   assert.ok(analyzeRoute);
+  assert.ok(exercisePoolRoute);
   assert.ok(settingsRoute);
   assert.ok(updateTrainingProfileRoute);
+  assert.deepEqual(
+    exercisePoolRoute.route.stack.map((layer) => layer.handle.name),
+    ['getUserExercisePoolHandler']
+  );
   assert.deepEqual(
     analyzeRoute.route.stack.map((layer) => layer.handle.name),
     ['movementConstraintAnalyzeRateLimitMiddleware', 'analyzeMovementConstraintSettingsHandler']

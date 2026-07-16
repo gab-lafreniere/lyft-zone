@@ -11,6 +11,11 @@ const STATUS_DRAFT = 'draft';
 const TRAINING_TYPE_STRENGTH = 'strength';
 const TRAINING_TYPE_CARDIO = 'cardio';
 const EXCLUDED_TRAINING_TYPES = ['warmup', 'mobility', 'plyometric'];
+const DIFFICULTY_BY_EXPERIENCE = Object.freeze({
+  beginner: ['beginner'],
+  intermediate: ['beginner', 'intermediate'],
+  advanced: ['beginner', 'intermediate', 'advanced'],
+});
 
 const MACHINE_BIAS_CATEGORIES = new Set([
   'assisted_machine',
@@ -90,6 +95,11 @@ function buildAllowedTrainingTypes(cardioRole) {
   }
 
   return allowedTrainingTypes;
+}
+
+function buildAllowedDifficulties(experience) {
+  const normalizedExperience = normalizeValue(experience);
+  return DIFFICULTY_BY_EXPERIENCE[normalizedExperience] || [];
 }
 
 function getExerciseAreas(exercise = {}) {
@@ -237,6 +247,7 @@ function createItem(exercise = {}, poolContext = {}) {
   return {
     exerciseId: exercise.exerciseId,
     name: exercise.name,
+    aliases: normalizeArray(exercise.aliases),
     status: normalizeValue(exercise.status) || null,
     trainingType: normalizeValue(exercise.trainingType) || null,
     attributes: {
@@ -318,6 +329,8 @@ function buildExercisePool(exercises = [], poolContext = {}, options = {}) {
   const allowDraftFallback = options.allowDraftFallback === true;
   const cardioRole = normalizeValue(poolContext.cardioProfile?.cardioRole) || null;
   const allowedTrainingTypes = buildAllowedTrainingTypes(cardioRole);
+  const experience = normalizeValue(poolContext.experience) || null;
+  const allowedDifficulties = buildAllowedDifficulties(experience);
   const normalizedMovementConstraints = normalizeMovementConstraints(
     poolContext.movementConstraints
   );
@@ -337,6 +350,7 @@ function buildExercisePool(exercises = [], poolContext = {}, options = {}) {
   const excludedByReason = {
     status_not_allowed: 0,
     training_type_not_allowed: 0,
+    difficulty_not_allowed: 0,
     missing_equipment: 0,
     blocked_exercise_id: 0,
     blocked_joint_stress_tag: 0,
@@ -347,6 +361,7 @@ function buildExercisePool(exercises = [], poolContext = {}, options = {}) {
     const reasons = new Set();
     const status = normalizeValue(exercise.status);
     const trainingType = normalizeValue(exercise.trainingType);
+    const difficulty = normalizeValue(exercise.difficulty);
 
     if (!effectiveAllowedStatuses.includes(status)) {
       reasons.add('status_not_allowed');
@@ -354,6 +369,10 @@ function buildExercisePool(exercises = [], poolContext = {}, options = {}) {
 
     if (!allowedTrainingTypes.includes(trainingType)) {
       reasons.add('training_type_not_allowed');
+    }
+
+    if (!difficulty || !allowedDifficulties.includes(difficulty)) {
+      reasons.add('difficulty_not_allowed');
     }
 
     const compatibility = isExerciseCompatible(exercise, compatibilityContext);
@@ -403,9 +422,14 @@ function buildExercisePool(exercises = [], poolContext = {}, options = {}) {
         allowedTrainingTypes,
         excludedTrainingTypes: EXCLUDED_TRAINING_TYPES,
       },
+      difficultyPolicy: {
+        experience,
+        allowedDifficulties,
+      },
     },
     context: {
       primaryGoal: poolContext.primaryGoal || null,
+      experience,
       musclePriorityProfile: poolContext.musclePriorityProfile || {
         primaryFocus: null,
         secondaryFocuses: [],
@@ -430,6 +454,7 @@ function buildExercisePool(exercises = [], poolContext = {}, options = {}) {
       availableEquipment: normalizeArray(poolContext.equipmentContext?.availableEquipment),
       allowedTrainingTypes,
       effectiveAllowedStatuses,
+      allowedDifficulties,
     },
     pool: {
       items,
@@ -448,9 +473,11 @@ function buildExercisePool(exercises = [], poolContext = {}, options = {}) {
 module.exports = {
   EXERCISE_POOL_SCHEMA_VERSION,
   EXCLUDED_TRAINING_TYPES,
+  DIFFICULTY_BY_EXPERIENCE,
   STATUS_APPROVED,
   STATUS_DRAFT,
   TRAINING_TYPE_CARDIO,
   TRAINING_TYPE_STRENGTH,
+  buildAllowedDifficulties,
   buildExercisePool,
 };

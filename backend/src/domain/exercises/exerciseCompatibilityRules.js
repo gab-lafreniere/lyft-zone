@@ -56,7 +56,7 @@ function isExerciseCompatible(exercise = {}, resolvedContext = {}) {
   if (
     availableEquipment.length > 0 &&
     exerciseEquipment.length > 0 &&
-    !exerciseEquipment.some((requiredEquipment) => availableEquipment.includes(requiredEquipment))
+    !exerciseEquipment.every((requiredEquipment) => availableEquipment.includes(requiredEquipment))
   ) {
     reasons.push('missing_equipment');
   }

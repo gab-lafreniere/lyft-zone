@@ -9,8 +9,7 @@ function mapTrainingProfileToUserProfileUpdate(normalizedProfile) {
   const equipmentContext = resolveEquipmentContext(normalizedProfile);
   const movementConstraints = resolveMovementConstraints(normalizedProfile);
 
-  return {
-    primaryGoal: normalizedProfile.primaryGoal,
+  const update = {
     availableSessionsPerWeek: normalizedProfile.availability.sessionsPerWeek,
     sessionDurationMinutes: normalizedProfile.availability.durationPerSession,
     trainingPreferences: {
@@ -44,6 +43,12 @@ function mapTrainingProfileToUserProfileUpdate(normalizedProfile) {
       },
     },
   };
+
+  if (normalizedProfile.primaryGoal !== 'MIXED') {
+    update.primaryGoal = normalizedProfile.primaryGoal;
+  }
+
+  return update;
 }
 
 module.exports = {

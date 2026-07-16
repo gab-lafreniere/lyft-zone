@@ -299,6 +299,103 @@ describe("SettingsDrawer autosave", () => {
   });
 });
 
+describe("SettingsDrawer primary goal availability", () => {
+  test("keeps Hypertrophy selectable and shows Strength and Mixed as locked", async () => {
+    await renderDrawer();
+    await openTrainingProfileSection("Goals");
+
+    expect(screen.getByText("Hypertrophy").closest("button")).toBeEnabled();
+    expect(screen.getByText("Strength").closest("button")).toBeDisabled();
+    expect(screen.getByText("Mixed").closest("button")).toBeDisabled();
+    expect(screen.getAllByText(/Available in a future version\./i)).toHaveLength(2);
+
+    await advance(700);
+    expect(updateTrainingProfileSettings).not.toHaveBeenCalled();
+  });
+
+  test("displays a legacy locked goal and preserves it while another setting saves", async () => {
+    const baseProfile = createSettingsResponse().trainingProfile.profile;
+    const legacyResponse = createSettingsResponse({
+      trainingProfile: {
+        profile: {
+          ...baseProfile,
+          primaryGoal: "STRENGTH",
+        },
+      },
+    });
+    updateTrainingProfileSettings.mockImplementation(async (payload) =>
+      createSettingsResponse({
+        trainingProfile: {
+          profile: {
+            ...baseProfile,
+            ...payload,
+          },
+        },
+      })
+    );
+
+    await renderDrawer(legacyResponse);
+    await openTrainingProfileSection("Goals");
+
+    const strengthButton = screen.getByText("Strength").closest("button");
+    expect(strengthButton).toBeDisabled();
+    expect(strengthButton).toHaveTextContent("check_circle");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Go back$/i }));
+    await screen.findByRole("heading", { name: "Training Profile" });
+    fireEvent.click(screen.getByRole("button", { name: /Experience/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Intermediate/i }));
+
+    await advance(700);
+
+    await waitFor(() => expect(updateTrainingProfileSettings).toHaveBeenCalledTimes(1));
+    expect(updateTrainingProfileSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        primaryGoal: "STRENGTH",
+        experience: "intermediate",
+      })
+    );
+  });
+
+  test("allows a legacy Mixed profile to explicitly switch to Hypertrophy", async () => {
+    const baseProfile = createSettingsResponse().trainingProfile.profile;
+    updateTrainingProfileSettings.mockImplementation(async (payload) =>
+      createSettingsResponse({
+        trainingProfile: {
+          profile: {
+            ...baseProfile,
+            ...payload,
+          },
+        },
+      })
+    );
+
+    await renderDrawer(
+      createSettingsResponse({
+        trainingProfile: {
+          profile: {
+            ...baseProfile,
+            primaryGoal: "MIXED",
+          },
+        },
+      })
+    );
+    await openTrainingProfileSection("Goals");
+
+    const mixedButton = screen.getByText("Mixed").closest("button");
+    expect(mixedButton).toBeDisabled();
+    expect(mixedButton).toHaveTextContent("check_circle");
+
+    fireEvent.click(screen.getByRole("button", { name: /Hypertrophy/i }));
+    await advance(700);
+
+    await waitFor(() => expect(updateTrainingProfileSettings).toHaveBeenCalledTimes(1));
+    expect(updateTrainingProfileSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ primaryGoal: "HYPERTROPHY" })
+    );
+  });
+});
+
 describe("SettingsDrawer environment equipment setup", () => {
   test("shows default bodyweight equipment without Training Environment controls", async () => {
     const baseProfile = createSettingsResponse().trainingProfile.profile;
