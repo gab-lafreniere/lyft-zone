@@ -1173,56 +1173,147 @@ Statut:
 ### Phase 6: AI Program Review V1
 
 But:
-Faire relire le plan par l’IA avant sauvegarde finale.
+Faire relire le plan par l’IA après les analytics et avant toute persistence.
 
-À faire:
+Implémentation:
 
-* créer programReviewPrompt
-* créer review schema
-* inclure context + document + analytics
-* produire review structurée
-* pass/fail
-* issues
-* suggestions
-* severity
-* no overtraining exaggeration
-* no medical claims
+* contrat AI Program Review V1 strict et versionné
+* prompt ai-program-review-prompt-v1.0.0
+* Structured Outputs strict
+* store:false
+* décisions PASS, REPAIR_REQUIRED et FAIL
+* décision canonique validée par le backend
+* JSON Pointers RFC 6901 validés et résolus
+* review exécutée après analytics et avant persistence
+* feature flag ENABLE_AI_WEEKLY_PLAN_REVIEW
+* comportement fail-closed lorsque la review est activée
+* bypass explicite lorsque la review est désactivée
+* metadata limitée aux exercices sélectionnés
+* prescriptions cardio compactes
+* aucune donnée provider brute persistée
+* aucun changement du Manual Builder
+
+Versions:
+
+* ProgramGenerationContext V3
+* generationContext V5
+* review contract V1
+* review output schema V1
+
+Limite du review input:
+
+* MAX_PROGRAM_REVIEW_INPUT_CHARACTERS = 120000
+* fixture lourde de 6 séances acceptée
+* 60 exercices sélectionnés
+* 177 séries
+* cardio inclus
+* 107618 caractères
+* aucune troncation
+* input pathologique supérieur à la limite rejeté
 
 Tests:
 
-* review pass
-* review fail
-* issue volume
-* issue duration
-* issue redundancy
-* issue notes overuse
-* invalid review response
+* tests domaine: 357/357 PASS
+
+Smoke test réel final:
+
+Génération:
+
+* modèle demandé: gpt-5.4-mini
+* modèle retourné: gpt-5.4-mini-2026-03-17
+* 3 séances demandées et retournées
+* 3 workouts
+* 9 blocks
+* 12 exercices
+* 26 setTemplates
+* 26 prescriptions targetReps exactes
+* 0 ranges
+* Schema PASS
+* validation sémantique PASS
+* normalisation PASS
+* pool PASS
+* business preflight PASS
+* analytics PASS
+* aucune transaction Prisma
+
+Review:
+
+* exactement un appel réel
+* modèle demandé: gpt-5.4-mini
+* modèle retourné: gpt-5.4-mini-2026-03-17
+* review input: 47233 caractères
+* utilisation de la limite: environ 39,4 %
+* Schema review PASS
+* validation sémantique review PASS
+* JSON Pointers valides et résolus
+* décision: REPAIR_REQUIRED
+* issue MEDIUM GOAL_PRIORITY_ALIGNMENT:
+  upper_chest travaillé directement 1 fois au lieu de la cible de 2
+* issue HIGH SPLIT_DURATION_COHERENCE:
+  séances calculées beaucoup plus courtes que les 60 minutes demandées
+* aucun repair exécuté
+* aucune persistence
+* createWeeklyPlan non appelé
+* aucune transaction Prisma
+* exactement 2 appels fournisseur
+* repository inchangé
+
+Verdict du smoke test:
+
+* TECHNICAL CONTRACT PASS
+* EXPECTED QUALITY BLOCK: REPAIR_REQUIRED
 
 Critère de succès:
-Le service peut obtenir une review structurée et décider si un repair est nécessaire.
+La review détecte et bloque un programme techniquement valide, mais insuffisamment aligné avec le profil.
 
 Statut:
 
 * complétée
-* contrat de review V1 strict et versionné
-* Structured Outputs strict pour la review
-* validation JSON Schema de la review
-* validation sémantique et décision canonique backend
-* décisions PASS, REPAIR_REQUIRED et FAIL
-* review exécutée après les analytics et avant toute persistence
-* PASS seulement permet la persistence lorsque le flag est actif
-* REPAIR_REQUIRED et FAIL bloquent la persistence
-* feature flag ENABLE_AI_WEEKLY_PLAN_REVIEW
-* bypass explicite et audité lorsque le flag est désactivé
-* input de review compact et déterministe
-* metadata limitée aux exercices sélectionnés
-* prescriptions cardio compactes ajoutées
-* JSON Pointers RFC 6901 validés
-* generationContext V5
-* ProgramGenerationContext V3
-* prompt ai-program-review-prompt-v1.0.0
-* aucun changement du Manual Builder ou des flows manuels
-* tests domaine: 356/356 PASS
+* validée avec un smoke test réel
+
+### Prérequis Phase 7: Evaluation Policy V1
+
+But:
+Partager les règles exactes d’évaluation avec la génération initiale, la review et le futur repair loop.
+
+Règles:
+
+* durationPerSession est une cible, pas seulement un maximum
+* plage préférée: 90 % à 100 % de la durée demandée
+* plage acceptable: 85 % à 105 %
+* sous 85 % ou au-dessus de 105 %: correction requise
+* weeklyPlanMetrics reste l’autorité technique pour la durée
+* weeklyPlanAnalytics reste l’autorité coaching pour le volume et la fréquence
+* seules les séries WORKING comptent dans le volume coaching
+* volume direct et volume indirect restent séparés
+* fréquence directe = nombre de workouts contenant une exposition directe
+* plusieurs exercices du même muscle dans une séance comptent pour une seule exposition
+* résolution des targets:
+  muscle_focus, puis body_part, puis target_muscle
+* ne pas confondre muscleDistribution historique et volume coaching
+* une seule source de vérité versionnée
+* aucune duplication manuelle des formules dans plusieurs prompts
+
+La politique doit être transmise:
+
+* au prompt de génération initiale
+* au review input
+* au futur repair prompt
+
+Analytics de durée à ajouter par workout:
+
+* requestedDurationMinutes
+* calculatedDurationMinutes
+* durationDifferenceMinutes
+* durationUtilizationRatio
+* durationAlignmentStatus
+
+Aucun changement du résultat du Manual Builder ne doit être introduit.
+
+Statut:
+
+* à planifier
+* prérequis avant l’implémentation de la Phase 7
 
 ### Phase 7: Repair loop V1
 
@@ -1231,15 +1322,24 @@ Permettre une réparation contrôlée du plan.
 
 À faire:
 
-* créer repair prompt
-* inclure original plan + issues + constraints
-* produire un plan corrigé
-* max 1 repair attempt
-* revalider schema
-* revalider pool snapshot
-* revalider business rules
-* recalculer analytics
-* refaire review ou review légère finale
+* créer un repair prompt
+* inclure le plan complet, les analytics et les issues de review
+* maximum une réparation
+* réparer obligatoirement les issues HIGH + REPAIRABLE
+* fournir aussi les issues MEDIUM + REPAIRABLE
+* ne jamais appliquer aveuglément suggestedAction
+* utiliser les analytics et la direction réelle des écarts
+* produire un output de génération complet corrigé
+* revalider Schema
+* revalider la sémantique
+* renormaliser
+* revalider le pool snapshot
+* revalider les business rules
+* recalculer les analytics
+* refaire une review finale
+* reconstruire strategySummary à partir du programme final
+* persister seulement si la review finale retourne PASS
+* aucune persistence si la réparation ou la review finale échoue
 
 Tests:
 
@@ -1464,52 +1564,23 @@ Le AI Weekly Plan Builder V1 est considéré fonctionnel quand:
 
 ## 26. Prochaine étape Codex
 
-La prochaine étape immédiate est un smoke test réel contrôlé de la
-Phase 6.
+Prochaine étape:
 
-Le smoke test doit vérifier:
+1. planification seulement de Evaluation Policy V1
+2. validation du plan d’implantation
+3. implémentation et tests hors réseau
+4. planification de Phase 7 Repair Loop V1
+5. implémentation de Phase 7
+6. smoke test réel avec:
+   * génération initiale
+   * review
+   * maximum une réparation
+   * nouvelles validations
+   * nouvelles analytics
+   * review finale
+   * aucune persistence sauf si la review finale retourne PASS
 
-* une génération réelle avec le modèle de génération configuré
-* une review réelle avec le modèle de review configuré
-* exactement un appel de génération
-* exactement un appel de review
-* Structured Outputs strict pour les deux appels
-* store:false pour les deux appels
-* Schema de génération PASS
-* validation sémantique de génération PASS
-* normalisation PASS
-* validation du pool PASS
-* business preflight PASS
-* analytics calculées
-* Schema de review PASS
-* validation sémantique de review PASS
-* décision canonique cohérente
-* JSON Pointers valides
-* aucune donnée sensible dans les métadonnées
-* aucune réparation
-* aucune persistence
-* repository inchangé après le test
-* mesure des tokens, de la durée et de la taille des prompts
-
-Après validation du smoke test, la prochaine phase est:
-
-Phase 7: Repair Loop V1.
-
-Avant de coder la Phase 7, demander à Codex de produire un plan
-d’implantation limité au repair loop.
-
-La Phase 7 devra:
-
-* utiliser les issues HIGH + REPAIRABLE de la review
-* produire un output de génération complet corrigé
-* limiter la réparation à une tentative
-* revalider Schema, sémantique, normalisation, pool et business rules
-* recalculer les analytics
-* refaire une review finale
-* ne persister que si la review finale retourne PASS
-* échouer proprement sans persistence autrement
-
-Aucun changement frontend ne doit être inclus dans la Phase 7.
+Ne pas coder immédiatement la Phase 7 avant Evaluation Policy V1.
 
 ---
 
