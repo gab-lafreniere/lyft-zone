@@ -14,6 +14,9 @@ const {
 const {
   validateProgramReviewSemantics,
 } = require('../../src/domain/programGeneration/programReviewValidation');
+const {
+  stableStringify,
+} = require('../../src/domain/programGeneration/prompts/programGenerationPrompt');
 
 const MOCK_DOCTRINE = Object.freeze({
   id: 'bodybuilding_runtime_classic',
@@ -400,6 +403,255 @@ function createCardioReviewOptions(overrides = {}) {
   });
 }
 
+function createHeavySixSessionReviewOptions() {
+  const strengthExerciseIds = Array.from(
+    { length: 59 },
+    (_value, index) => `ex_heavy_strength_${String(index + 1).padStart(2, '0')}`
+  );
+  const cardioExerciseId = 'ex_heavy_cardio';
+  const allSelectedExerciseIds = [...strengthExerciseIds, cardioExerciseId];
+  const exercisePoolItems = [
+    ...strengthExerciseIds.map((exerciseId, index) => ({
+      exerciseId,
+      name: `Heavy Fixture Strength Exercise ${index + 1}`,
+      trainingType: 'strength',
+      movementPattern: index % 2 === 0 ? 'horizontal_push' : 'horizontal_pull',
+      jointStressTags: index % 3 === 0 ? ['shoulder_load'] : ['elbow_load'],
+      equipmentCategory: index % 2 === 0 ? 'dumbbell' : 'cable',
+      bodyParts: index % 2 === 0 ? ['chest'] : ['back'],
+      muscleFocus: index % 2 === 0 ? ['upper_chest'] : ['lats'],
+      targetMuscles: index % 2 === 0 ? ['pectoralis_major'] : ['latissimus_dorsi'],
+      secondaryMuscles: index % 2 === 0 ? ['triceps'] : ['biceps'],
+    })),
+    {
+      exerciseId: cardioExerciseId,
+      name: 'Heavy Fixture Stationary Bike',
+      trainingType: 'cardio',
+      movementPattern: 'cyclical',
+      jointStressTags: [],
+      equipmentCategory: 'cardio_machine',
+      bodyParts: ['cardio'],
+      muscleFocus: [],
+      targetMuscles: [],
+      secondaryMuscles: [],
+      cardioModality: 'stationary_bike',
+    },
+    {
+      exerciseId: 'ex_heavy_unused',
+      name: 'PRIVATE_HEAVY_UNUSED_EXERCISE_SENTINEL',
+      trainingType: 'strength',
+      movementPattern: 'vertical_push',
+      jointStressTags: ['PRIVATE_HEAVY_UNUSED_TAG_SENTINEL'],
+      equipmentCategory: 'machine',
+      bodyParts: ['shoulders'],
+      muscleFocus: ['front_delts'],
+      targetMuscles: ['deltoids'],
+      secondaryMuscles: [],
+    },
+  ];
+  let strengthExerciseCursor = 0;
+
+  function createStrengthExercise(exerciseId, orderIndex) {
+    const item = exercisePoolItems.find((candidate) => candidate.exerciseId === exerciseId);
+    return {
+      orderIndex,
+      exerciseId,
+      exerciseName: item.name,
+      bodyParts: item.bodyParts,
+      muscleFocus: item.muscleFocus,
+      defaultTempo: '3010',
+      defaultRestSeconds: 90,
+      defaultTargetRir: 2,
+      notes: 'PRIVATE_HEAVY_EXERCISE_NOTE_SENTINEL',
+      setTemplates: [
+        { targetReps: 8, minReps: null, maxReps: null, targetRir: 2, tempo: '3010', restSeconds: 90 },
+        { targetReps: 10, minReps: null, maxReps: null, targetRir: 2, tempo: '3010', restSeconds: 90 },
+        { targetReps: 12, minReps: null, maxReps: null, targetRir: 2, tempo: '3010', restSeconds: 90 },
+      ],
+    };
+  }
+
+  function takeStrengthExercises(count) {
+    return Array.from({ length: count }, (_value, index) => {
+      const exercise = createStrengthExercise(
+        strengthExerciseIds[strengthExerciseCursor],
+        index + 1
+      );
+      strengthExerciseCursor += 1;
+      return exercise;
+    });
+  }
+
+  const workouts = Array.from({ length: 6 }, (_value, workoutIndex) => {
+    const hasCardio = workoutIndex === 5;
+    const firstSuperset = takeStrengthExercises(2);
+    const secondSuperset = takeStrengthExercises(2);
+    const thirdSuperset = takeStrengthExercises(2);
+    const fourthSuperset = takeStrengthExercises(2);
+    const singleExercises = takeStrengthExercises(hasCardio ? 1 : 2);
+    const blocks = [
+      { orderIndex: 1, blockType: 'SUPERSET', restSeconds: 90, exercises: firstSuperset },
+      { orderIndex: 2, blockType: 'SUPERSET', restSeconds: 90, exercises: secondSuperset },
+      { orderIndex: 3, blockType: 'SUPERSET', restSeconds: 90, exercises: thirdSuperset },
+      { orderIndex: 4, blockType: 'SUPERSET', restSeconds: 90, exercises: fourthSuperset },
+      ...singleExercises.map((exercise, index) => ({
+        orderIndex: index + 5,
+        blockType: 'SINGLE',
+        restSeconds: 90,
+        exercises: [exercise],
+      })),
+    ];
+
+    if (hasCardio) {
+      blocks.push({
+        orderIndex: 6,
+        blockType: 'CARDIO',
+        restSeconds: null,
+        exercises: [
+          {
+            orderIndex: 1,
+            exerciseId: cardioExerciseId,
+            exerciseName: 'Heavy Fixture Stationary Bike',
+            bodyParts: ['cardio'],
+            muscleFocus: [],
+            defaultTempo: null,
+            defaultRestSeconds: null,
+            defaultTargetRir: null,
+            notes: 'PRIVATE_HEAVY_CARDIO_NOTE_SENTINEL',
+            setTemplates: [],
+            cardioPrescription: {
+              durationMinutes: 20,
+              heartRateTargetMode: 'zone',
+              heartRateTargetValue: 2,
+              machineSettings: [{ key: 'resistance', value: 'PRIVATE_HEAVY_MACHINE_SETTING' }],
+              notes: 'PRIVATE_HEAVY_CARDIO_PRESCRIPTION_NOTE_SENTINEL',
+            },
+          },
+        ],
+      });
+    }
+
+    return {
+      name: `Heavy Fixture Session ${workoutIndex + 1}`,
+      orderIndex: workoutIndex + 1,
+      estimatedDurationMinutes: 75,
+      notes: 'PRIVATE_HEAVY_WORKOUT_NOTE_SENTINEL',
+      blocks,
+    };
+  });
+
+  const projectionEntries = Array.from({ length: 8 }, (_value, index) => ({
+    taxonomy: index % 2 === 0 ? 'muscle_focus' : 'target_muscles',
+    key: `heavy_metric_${String(index + 1).padStart(2, '0')}`,
+    directWorkingSets: 6 + (index % 4),
+    indirectWorkingSets: index % 3,
+    directWorkoutCount: 2 + (index % 3),
+    indirectWorkoutCount: index % 2,
+  }));
+  const targetItems = Array.from({ length: 6 }, (_value, index) => ({
+    targetIndex: index,
+    area: `heavy_target_${String(index + 1).padStart(2, '0')}`,
+    resolvedTaxonomy: 'muscle_focus',
+    targetValue: 10,
+    generatedDirectValue: 8 + (index % 3),
+    difference: -2 + (index % 3),
+    absoluteDifference: Math.abs(-2 + (index % 3)),
+    relativeDifference: (-2 + (index % 3)) / 10,
+    status: index % 3 === 0 ? 'below_target' : 'within_target',
+  }));
+
+  return {
+    context: createContext({
+      availability: { sessionsPerWeek: 6, durationPerSession: 75 },
+      cardioProfile: { cardioRole: 'supportive', preferredModalities: ['stationary_bike'] },
+      poolSnapshot: { allowedExerciseIds: [...allSelectedExerciseIds, 'ex_heavy_unused'] },
+      exercisePoolItems,
+    }),
+    generatedAIOutput: createGeneratedAIOutput({
+      splitType: 'push_pull_legs',
+      volumeTargets: {
+        perMuscle: targetItems.map((item, index) => ({
+          area: item.area,
+          targetSetsPerWeek: item.targetValue,
+          priority: index === 0 ? 'primary' : 'secondary',
+          rationale: 'PRIVATE_HEAVY_TARGET_RATIONALE_SENTINEL',
+        })),
+      },
+      frequencyTargets: {
+        perMuscle: targetItems.map((item) => ({
+          area: item.area,
+          targetSessionsPerWeek: 2,
+        })),
+      },
+    }),
+    generatedPlanDocument: {
+      name: 'Heavy Six Session Review Draft',
+      sessionsPerWeek: 6,
+      strategySummary: 'Six-session hypertrophy fixture for review-input capacity coverage.',
+      workouts,
+    },
+    analytics: createAnalytics({
+      plan: {
+        workoutCount: 6,
+        blockCount: workouts.reduce((count, workout) => count + workout.blocks.length, 0),
+        exerciseCount: 60,
+        strengthExerciseCount: 59,
+        cardioExerciseCount: 1,
+        uniqueExerciseCount: 60,
+        workingSetCount: 177,
+        totalSetTemplateCount: 177,
+        estimatedDurationMinutesTotal: 450,
+        estimatedDurationMinutesAverage: 75,
+        declaredEstimatedDurationMinutesTotal: 450,
+        durationDifferenceMinutesTotal: 0,
+        minWorkoutDurationMinutes: 75,
+        maxWorkoutDurationMinutes: 75,
+        singleBlockCount: 11,
+        supersetBlockCount: 24,
+        cardioBlockCount: 1,
+        cardioDurationMinutes: 20,
+        bodyPartDistribution: projectionEntries.map((entry, index) => ({
+          key: entry.key,
+          rawSets: 6 + index,
+          normalizedShare: 0.04,
+          percentageOfWorkout: 4,
+        })),
+      },
+      workouts: workouts.map((workout, index) => ({
+        workoutOrderIndex: workout.orderIndex,
+        blockCount: workout.blocks.length,
+        strengthExerciseCount: index === 5 ? 9 : 10,
+        cardioExerciseCount: index === 5 ? 1 : 0,
+        workingSetCount: index === 5 ? 27 : 30,
+        totalSetTemplateCount: index === 5 ? 27 : 30,
+        estimatedDurationMinutes: 75,
+        declaredEstimatedDurationMinutes: 75,
+        durationDifferenceMinutes: 0,
+        supersetCount: 4,
+        cardioDurationMinutes: index === 5 ? 20 : 0,
+        muscleProjections: projectionEntries.slice(index * 4, index * 4 + 4),
+      })),
+      muscleMetrics: projectionEntries,
+      metadataCoverage: {
+        totalStrengthWorkingSets: 177,
+        attributedStrengthWorkingSets: 177,
+        coverageRatio: 1,
+        unresolvedExerciseIds: [],
+      },
+      targetComparisons: {
+        volume: {
+          summary: { targetCount: 6, belowTargetCount: 2, withinTargetCount: 4, aboveTargetCount: 0, unavailableCount: 0 },
+          items: targetItems,
+        },
+        frequency: {
+          summary: { targetCount: 6, belowTargetCount: 1, withinTargetCount: 5, aboveTargetCount: 0, unavailableCount: 0 },
+          items: targetItems.map((item) => ({ ...item, targetValue: 2, generatedDirectValue: 2, difference: 0, absoluteDifference: 0, relativeDifference: 0, status: 'within_target' })),
+        },
+      },
+    }),
+  };
+}
+
 test('buildProgramReviewInput is deterministic, compact, and only projects selected metadata', () => {
   const options = createReviewOptions();
   const before = clone(options);
@@ -634,6 +886,24 @@ test('buildProgramReviewInput rejects oversized input without truncation', () =>
       return true;
     }
   );
+});
+
+test('buildProgramReviewInput accepts a heavy valid six-session fixture without truncation', () => {
+  const options = createHeavySixSessionReviewOptions();
+  const before = clone(options);
+  const reviewInput = buildProgramReviewInput(options);
+  const serialized = stableStringify(reviewInput);
+
+  assert.equal(reviewInput.plan.workouts.length, 6);
+  assert.equal(reviewInput.plan.selectedExerciseMetadata.coverage.selectedExerciseCount, 60);
+  assert.equal(serialized.length > 40000, true);
+  assert.equal(serialized.length <= MAX_PROGRAM_REVIEW_INPUT_CHARACTERS, true);
+  assert.match(serialized, /ex_heavy_strength_59/);
+  assert.match(serialized, /ex_heavy_cardio/);
+  assert.doesNotMatch(serialized, /ex_heavy_unused|PRIVATE_HEAVY_UNUSED_EXERCISE_SENTINEL/);
+  assert.doesNotMatch(serialized, /PRIVATE_HEAVY_(?:WORKOUT|EXERCISE|CARDIO|MACHINE|TARGET)_/);
+  assert.equal(serialized.includes('machineSettings'), false);
+  assert.deepEqual(options, before);
 });
 
 test('runAIProgramReview validates provider output and returns only compact domain metadata', async () => {

@@ -19,7 +19,7 @@ const {
 } = require('./prompts/programGenerationPrompt');
 
 const PROGRAM_REVIEW_INPUT_SCHEMA_VERSION = 1;
-const MAX_PROGRAM_REVIEW_INPUT_CHARACTERS = 40000;
+const MAX_PROGRAM_REVIEW_INPUT_CHARACTERS = 120000;
 
 class AIProgramReviewError extends Error {
   constructor(code, message) {
