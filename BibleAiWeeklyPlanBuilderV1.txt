@@ -1201,6 +1201,29 @@ Tests:
 Critère de succès:
 Le service peut obtenir une review structurée et décider si un repair est nécessaire.
 
+Statut:
+
+* complétée
+* contrat de review V1 strict et versionné
+* Structured Outputs strict pour la review
+* validation JSON Schema de la review
+* validation sémantique et décision canonique backend
+* décisions PASS, REPAIR_REQUIRED et FAIL
+* review exécutée après les analytics et avant toute persistence
+* PASS seulement permet la persistence lorsque le flag est actif
+* REPAIR_REQUIRED et FAIL bloquent la persistence
+* feature flag ENABLE_AI_WEEKLY_PLAN_REVIEW
+* bypass explicite et audité lorsque le flag est désactivé
+* input de review compact et déterministe
+* metadata limitée aux exercices sélectionnés
+* prescriptions cardio compactes ajoutées
+* JSON Pointers RFC 6901 validés
+* generationContext V5
+* ProgramGenerationContext V3
+* prompt ai-program-review-prompt-v1.0.0
+* aucun changement du Manual Builder ou des flows manuels
+* tests domaine: 356/356 PASS
+
 ### Phase 7: Repair loop V1
 
 But:
@@ -1441,35 +1464,52 @@ Le AI Weekly Plan Builder V1 est considéré fonctionnel quand:
 
 ## 26. Prochaine étape Codex
 
-La prochaine étape est la Phase 6: AI Program Review V1.
+La prochaine étape immédiate est un smoke test réel contrôlé de la
+Phase 6.
 
-Avant de coder, demander à Codex de produire un plan d’implantation limité à la Phase 6.
+Le smoke test doit vérifier:
 
-Le prompt de planification doit demander:
+* une génération réelle avec le modèle de génération configuré
+* une review réelle avec le modèle de review configuré
+* exactement un appel de génération
+* exactement un appel de review
+* Structured Outputs strict pour les deux appels
+* store:false pour les deux appels
+* Schema de génération PASS
+* validation sémantique de génération PASS
+* normalisation PASS
+* validation du pool PASS
+* business preflight PASS
+* analytics calculées
+* Schema de review PASS
+* validation sémantique de review PASS
+* décision canonique cohérente
+* JSON Pointers valides
+* aucune donnée sensible dans les métadonnées
+* aucune réparation
+* aucune persistence
+* repository inchangé après le test
+* mesure des tokens, de la durée et de la taille des prompts
 
-* inspecter le pipeline actuel après les analytics
-* proposer le contrat exact de la review AI
-* proposer un JSON Schema strict pour la review
-* définir pass/fail, issues, severity et suggestions
-* définir les catégories d’issues supportées en V1
-* définir quelles issues nécessiteront un repair en Phase 7
-* définir les données transmises à la review
-* utiliser context, generatedAIOutput, generatedPlanDocument et analytics
-* éviter de transmettre du contenu inutilement massif
-* définir le prompt de review et sa version
-* définir le modèle et les variables de configuration
-* définir les erreurs contrôlées
-* définir le feature flag ENABLE_AI_WEEKLY_PLAN_REVIEW
-* définir les métadonnées compactes à écrire dans generationContext
-* préserver les flows manuels
-* préserver le pipeline sans review lorsque le flag est désactivé selon la décision produit
-* proposer les tests exacts
-* confirmer les fichiers à ajouter et modifier
-* ne pas coder immédiatement
+Après validation du smoke test, la prochaine phase est:
 
-Après validation du plan seulement, lancer l’implémentation de la Phase 6.
+Phase 7: Repair Loop V1.
 
-Aucun changement frontend, repair loop ou migration Prisma ne doit être inclus dans cette phase.
+Avant de coder la Phase 7, demander à Codex de produire un plan
+d’implantation limité au repair loop.
+
+La Phase 7 devra:
+
+* utiliser les issues HIGH + REPAIRABLE de la review
+* produire un output de génération complet corrigé
+* limiter la réparation à une tentative
+* revalider Schema, sémantique, normalisation, pool et business rules
+* recalculer les analytics
+* refaire une review finale
+* ne persister que si la review finale retourne PASS
+* échouer proprement sans persistence autrement
+
+Aucun changement frontend ne doit être inclus dans la Phase 7.
 
 ---
 
@@ -1544,3 +1584,27 @@ Tests domaine: 266/266 PASS
 generationContext V4
 Analytics backend intégrées
 Manual Builder inchangé
+
+Phase 6: complétée
+
+AI Program Review V1 ajoutée:
+
+- contrat de review strict et versionné
+- décisions PASS, REPAIR_REQUIRED et FAIL
+- décision canonique vérifiée par le backend
+- review après analytics et avant persistence
+- Structured Outputs strict
+- input compact avec metadata des exercices sélectionnés
+- prescriptions cardio compactes
+- JSON Pointers RFC 6901
+- audit generationContext V5
+- feature flag ENABLE_AI_WEEKLY_PLAN_REVIEW
+- fail-closed lorsque la review est activée
+- aucun changement des flows manuels
+
+Tests domaine: 356/356 PASS
+
+Prochaine validation:
+- smoke test réel contrôlé de la génération et de la review
+- aucune réparation
+- aucune persistence
