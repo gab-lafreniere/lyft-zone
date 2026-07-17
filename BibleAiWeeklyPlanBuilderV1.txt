@@ -1156,6 +1156,20 @@ Tests:
 Critère de succès:
 Chaque plan généré a des analytics backend fiables avant review.
 
+Statut:
+
+* complétée
+* métriques historiques extraites dans un module backend partagé
+* analytics plan-level et workout-level ajoutées
+* volume et fréquence par taxonomie musculaire calculés
+* durée AI comparée à la durée backend
+* cardio traité séparément
+* comparaison informative des volumeTargets et frequencyTargets
+* generationContext V4
+* préflight business AI sans persistence
+* Manual Builder et flows manuels inchangés
+* tests domaine: 266/266 PASS
+
 ### Phase 6: AI Program Review V1
 
 But:
@@ -1427,31 +1441,35 @@ Le AI Weekly Plan Builder V1 est considéré fonctionnel quand:
 
 ## 26. Prochaine étape Codex
 
-La prochaine étape est la Phase 5: Analytics backend et strategy metadata.
+La prochaine étape est la Phase 6: AI Program Review V1.
 
-Avant de coder, demander à Codex de produire un plan d’implantation limité à la Phase 5.
+Avant de coder, demander à Codex de produire un plan d’implantation limité à la Phase 6.
 
 Le prompt de planification doit demander:
 
-* lire les analytics et métriques déjà présents dans weeklyPlansService
-* identifier computeWeeklyPlanWorkoutMetrics et les fonctions réutilisables
-* éviter de dupliquer les calculs existants
-* proposer le contrat exact de weeklyPlanAnalytics
-* définir les métriques plan-level et workout-level
-* définir le calcul du volume par muscle
-* définir le traitement des contributions directes et indirectes
-* définir le traitement du cardio
-* définir l’estimation de durée
-* définir la comparaison volumeTargets vs volume généré
-* définir strategySummary et validationSummary dans generationContext
-* confirmer les fichiers exacts à modifier
-* proposer les tests
-* identifier les risques de divergence avec weeklyPlansService
+* inspecter le pipeline actuel après les analytics
+* proposer le contrat exact de la review AI
+* proposer un JSON Schema strict pour la review
+* définir pass/fail, issues, severity et suggestions
+* définir les catégories d’issues supportées en V1
+* définir quelles issues nécessiteront un repair en Phase 7
+* définir les données transmises à la review
+* utiliser context, generatedAIOutput, generatedPlanDocument et analytics
+* éviter de transmettre du contenu inutilement massif
+* définir le prompt de review et sa version
+* définir le modèle et les variables de configuration
+* définir les erreurs contrôlées
+* définir le feature flag ENABLE_AI_WEEKLY_PLAN_REVIEW
+* définir les métadonnées compactes à écrire dans generationContext
+* préserver les flows manuels
+* préserver le pipeline sans review lorsque le flag est désactivé selon la décision produit
+* proposer les tests exacts
+* confirmer les fichiers à ajouter et modifier
 * ne pas coder immédiatement
 
-Après validation du plan seulement, lancer le prompt d’implémentation Phase 5.
+Après validation du plan seulement, lancer l’implémentation de la Phase 6.
 
-Aucun nouvel appel fournisseur réel n’est nécessaire avant que la Phase 5 soit implémentée et testée hors réseau.
+Aucun changement frontend, repair loop ou migration Prisma ne doit être inclus dans cette phase.
 
 ---
 
@@ -1518,3 +1536,11 @@ Décision:
 - Phase 4 fermée
 - tests réels de 5 et 7 séances reportés à la Phase 12
 - prochaine étape: Phase 5 Analytics backend et strategy metadata
+
+17 juillet 2026
+
+Phase 5: complétée
+Tests domaine: 266/266 PASS
+generationContext V4
+Analytics backend intégrées
+Manual Builder inchangé
