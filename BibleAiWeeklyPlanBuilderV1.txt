@@ -71,9 +71,9 @@ L’ordre de décision officiel est:
 
 2. Objectif principal
 
-   * hypertrophy
-   * strength
-   * mixed
+   * HYPERTROPHY uniquement dans le AI Weekly Plan Builder V1
+   * STRENGTH et MIXED restent conservés dans le Training Profile, mais sont verrouillés pour la génération V1
+   * Le backend refuse une génération AI Builder V1 pour STRENGTH ou MIXED
 
 3. Priorités musculaires
 
@@ -449,16 +449,30 @@ Chaque exercice doit contenir:
 * setTemplates
 * notes seulement si pertinent
 
-### Sets
-
 Chaque set doit contenir:
 
 * setIndex
 * setType
-* targetReps ou minReps/maxReps
 * targetRir
 * tempo
 * restSeconds
+* une seule des deux prescriptions de répétitions suivantes:
+
+Prescription exacte:
+
+* targetReps: entier
+* minReps: null
+* maxReps: null
+
+Prescription par plage:
+
+* targetReps: null
+* minReps: entier
+* maxReps: entier
+* minReps doit être inférieur ou égal à maxReps
+
+Il est interdit de combiner targetReps avec minReps/maxReps.
+Tous les champs restent présents dans le JSON strict, même lorsqu’ils valent null.
 
 ### Cardio
 
@@ -476,21 +490,55 @@ Si cardio est généré:
 
 La validation se fait en couches.
 
-### Couche 1: JSON schema AI
+### Couche 1: JSON Schema AI
 
-Valide que l’IA respecte la forme stricte.
+Valide la forme stricte de l’output fournisseur.
 
-### Couche 2: AI normalization
+Le Schema impose notamment:
 
-Nettoie les strings, enums, nombres et formats.
+* champs requis
+* champs inconnus interdits
+* types et bornes
+* block types V1
+* contrat exclusif targetReps ou minReps/maxReps
+* au moins un workout
+* au moins un block par workout
+* limites de cardinalité
 
-### Couche 3: AI scoped pool validation
+### Couche 2: Validation sémantique AI
 
-Valide que tous les exerciseIds générés sont dans allowedExerciseIds du pool snapshot.
+Valide les invariants relationnels qui ne sont pas entièrement exprimés par le JSON Schema:
 
-Seulement dans le pipeline AI Builder.
+* sessionsPerWeek égal à workouts.length
+* orderIndex et setIndex séquentiels et uniques
+* cardinalité exacte des blocs SINGLE, SUPERSET et CARDIO
+* au moins un setTemplate pour les exercices de musculation
+* minReps inférieur ou égal à maxReps
+* égalité du nombre de sets dans un superset
+* champs obligatoires de musculation non null
+* structure cardio valide
+* politique globale des notes
 
-### Couche 4: Weekly plan business rules
+### Couche 3: AI normalization
+
+Convertit l’output AI validé vers le document weekly plan normalisé.
+
+Elle nettoie et organise notamment:
+
+* strings
+* nombres
+* enums
+* ordre des workouts, blocks, exercices et sets
+* prescriptions cardio
+* defaults d’exercice
+
+### Couche 4: AI scoped pool validation
+
+Valide que tous les exerciseIds générés sont dans allowedExerciseIds du même pool snapshot.
+
+Cette validation est limitée au pipeline AI Builder.
+
+### Couche 5: Weekly plan business rules
 
 Valide:
 
@@ -508,7 +556,7 @@ Valide:
 * exerciseIds connus globalement
 * publish readiness
 
-### Couche 5: Analytics
+### Couche 6: Analytics
 
 Calcule:
 
@@ -519,17 +567,19 @@ Calcule:
 * weekly volume
 * workout level metrics
 
-### Couche 6: AI Program Review
+### Couche 7: AI Program Review
 
-Vérifie la cohérence de coach.
+Vérifie la cohérence de coaching.
 
-### Couche 7: Repair
+### Couche 8: Repair
 
-Répare si nécessaire.
+Répare une fois si nécessaire.
 
-### Couche 8: Revalidation finale
+### Couche 9: Revalidation finale
 
-Le backend revalide tout avant sauvegarde.
+Le backend réexécute les validations pertinentes avant toute sauvegarde.
+
+Aucun plan invalide ne doit être persisté.
 
 ## 14. AI Program Review
 
@@ -573,15 +623,19 @@ V1 doit inclure un repair loop simple.
 
 Pipeline:
 
-1. Generate plan
-2. Validate schema
-3. Validate pool snapshot
-4. Validate business rules
-5. Calculate analytics
-6. AI Program Review
-7. If issues, repair once
-8. Revalidate everything
-9. If still invalid, fail gracefully
+1. Generate strict AI output
+2. Validate JSON Schema
+3. Validate AI semantic invariants
+4. Normalize to weekly plan document
+5. Validate against the generation-time pool snapshot
+6. Validate weekly plan business rules
+7. Calculate backend analytics
+8. Run AI Program Review
+9. If repairable issues exist, repair once
+10. Revalidate schema, semantics, normalization, pool, business rules and analytics
+11. Run the required final review or deterministic final checks
+12. Save only if every required layer passes
+13. If still invalid, fail gracefully without persistence
 
 Limite V1:
 
@@ -845,7 +899,7 @@ Livrable:
 
 Statut:
 
-* presque complet
+* complet
 
 ### Phase 1: Fondations backend sans vrai OpenAI
 
@@ -879,6 +933,16 @@ Tests:
 Critère de succès:
 Un test peut créer un draft AI avec un document mock valide, et le backend refuse un document mock hors pool.
 
+Statut:
+
+* complétée
+* endpoint AI draft ajouté
+* ProgramGenerationContextBuilder ajouté
+* pool snapshot compact ajouté
+* validation AI scoped du pool ajoutée
+* generationContext ajouté au flow source AI
+* flows manuels et plans existants inchangés
+
 ### Phase 2: JSON schema et validation AI complète
 
 But:
@@ -887,8 +951,9 @@ Définir le contrat exact entre IA et backend.
 À faire:
 
 * créer weeklyPlanAiSchema
-* créer validateGeneratedWeeklyPlan
-* normaliser output IA vers document weekly plan
+* créer la validation JSON Schema AI
+* créer la validation sémantique AI
+* normaliser l’output AI validé vers un document weekly plan
 * limiter les block types V1
 * valider notes policy
 * valider RIR/rest/tempo/reps
@@ -906,6 +971,15 @@ Tests:
 
 Critère de succès:
 Tout output IA est soit converti en document weekly plan valide, soit rejeté avec issues structurées.
+
+Statut:
+
+* complétée
+* JSON Schema strict ajouté
+* validation sémantique ajoutée
+* normalizer ajouté
+* validation du pool séparée et scoped au AI Builder
+* erreurs structurées ajoutées
 
 ### Phase 3: Coach Doctrine V1
 
@@ -930,6 +1004,15 @@ Tests:
 Critère de succès:
 Le ProgramGenerationService peut charger une doctrine versionnée et l’attacher au contexte/prompt.
 
+Statut:
+
+* complétée pour HYPERTROPHY V1
+* doctrine canonique versionnée
+* runtime classique statique versionné
+* doctrine injectée dans le prompt
+* défense contre prompt injection ajoutée
+* STRENGTH et MIXED verrouillés pour le AI Builder V1
+
 ### Phase 4: Génération OpenAI V1
 
 But:
@@ -943,7 +1026,6 @@ Appeler le modèle pour générer un weekly plan JSON strict.
 * utiliser structured output JSON schema
 * timeout
 * max_output_tokens
-* température basse/modérée
 * parsing robuste
 * erreurs contrôlées
 * injection deps pour tests
@@ -959,7 +1041,97 @@ Tests:
 * model routing
 
 Critère de succès:
-Le backend peut générer un plan structuré avec mock OpenAI et le convertir en draft.
+Le backend peut appeler OpenAI Responses API, recevoir un output JSON strict, le parser, le valider, le normaliser et vérifier les exerciseIds contre le pool snapshot sans exposer de données sensibles ni persister un plan invalide.
+
+Statut:
+
+* complétée
+* OpenAI Responses API intégrée
+* requête model-agnostic avec instructions et input
+* Structured Outputs strict avec text.format json_schema
+* store:false
+* timeout configurable
+* max_output_tokens configurable
+* parsing robuste
+* métadonnées fournisseur compactes
+* erreurs fournisseur contrôlées
+* aucun retry applicatif
+* tests fournisseur sans réseau complétés
+
+Smoke test réel initial:
+
+* 3 séances demandées
+* 3 séances retournées
+* JSON Schema PASS
+* validation sémantique FAIL avec 32 issues
+* aucune persistence
+* cause dominante identifiée: contrat de répétitions trop permissif dans le Schema
+
+### Phase 4.1: Alignement du contrat d’output AI
+
+But:
+Aligner le JSON Schema, le prompt et la validation sémantique après le premier smoke test fournisseur.
+
+À faire:
+
+* imposer un choix exclusif entre targetReps et minReps/maxReps
+* garder tous les champs présents dans le JSON strict
+* ajouter minItems: 1 aux blocks d’un workout
+* communiquer les invariants relationnels essentiels dans le prompt
+* conserver le backend comme autorité finale
+* ne pas assouplir le validator
+* augmenter la promptVersion en patch
+
+Implémentation:
+
+* promptVersion ai-weekly-plan-builder-prompt-v1.0.1
+* deux branches anyOf imbriquées pour les setTemplates
+* target exact ou plage complète
+* aucun keyword Structured Outputs non supporté
+* invariants de sessions, index, blocs, supersets, cardio, reps et notes ajoutés au prompt
+
+Tests:
+
+* target exact accepté
+* plage complète acceptée
+* prescription ambiguë rejetée
+* prescription manquante rejetée
+* plage partielle rejetée
+* plage inversée laissée à la validation sémantique
+* workout sans block rejeté
+* tests des invariants sémantiques ajoutés
+* test récursif des keywords Structured Outputs non supportés
+
+Smoke retest réel:
+
+* modèle demandé: gpt-5.4-mini
+* 3 séances demandées
+* 3 séances retournées
+* 14 exercices générés
+* 32 setTemplates générés
+* JSON Schema PASS
+* validation sémantique PASS
+* normalisation PASS
+* validation du pool PASS
+* 0 exerciseId hors pool
+* store:false confirmé
+* aucune persistence
+* exactement un appel réel
+* repository inchangé
+
+Observation non bloquante:
+
+* les 32 setTemplates utilisaient targetReps exact
+* aucune plage minReps/maxReps n’a été générée
+* la diversité des prescriptions sera évaluée pendant la QA
+* les scénarios 5 et 7 séances sont reportés à la Phase 12
+
+Critère de succès:
+Un appel fournisseur réel de trois séances passe entièrement le pipeline Schema, sémantique, normalisation et pool sans persistence.
+
+Statut:
+
+* complétée
 
 ### Phase 5: Analytics backend et strategy metadata
 
@@ -1159,6 +1331,12 @@ Stabiliser avant vraie utilisation.
 * gestion coût IA
 * gestion timeout
 * fallback errors
+* smoke tests contrôlés de 5 et 7 séances
+* vérifier la montée en charge du prompt et de l’output
+* vérifier la diversité targetReps exact vs minReps/maxReps
+* vérifier que le modèle ne favorise pas systématiquement la première branche anyOf
+* mesurer les tokens et la durée selon le nombre de séances
+* vérifier Schema, sémantique, normalisation et pool pour chaque scénario
 
 Profils test à créer:
 
@@ -1172,6 +1350,8 @@ Profils test à créer:
 * cardio role low intensity
 * deprioritized legs
 * machine bias
+* intermediate 5 jours
+* advanced 7 jours
 
 Critère de succès:
 Le AI Builder génère des plans utilisables, éditables, cohérents et validés dans les cas principaux.
@@ -1194,6 +1374,7 @@ Inclut:
 
 * Phase 3
 * Phase 4
+* Phase 4.1
 * Phase 5
 * Phase 6
 * Phase 7
@@ -1246,18 +1427,31 @@ Le AI Weekly Plan Builder V1 est considéré fonctionnel quand:
 
 ## 26. Prochaine étape Codex
 
-Avant de coder directement, demander à Codex de produire un plan d’implantation détaillé à partir de cette bible.
+La prochaine étape est la Phase 5: Analytics backend et strategy metadata.
 
-Le premier prompt Codex doit demander:
+Avant de coder, demander à Codex de produire un plan d’implantation limité à la Phase 5.
 
-* lire les fichiers actuels
-* proposer l’ordre exact des modifications
-* proposer les tests à créer
-* proposer les risques de régression
+Le prompt de planification doit demander:
+
+* lire les analytics et métriques déjà présents dans weeklyPlansService
+* identifier computeWeeklyPlanWorkoutMetrics et les fonctions réutilisables
+* éviter de dupliquer les calculs existants
+* proposer le contrat exact de weeklyPlanAnalytics
+* définir les métriques plan-level et workout-level
+* définir le calcul du volume par muscle
+* définir le traitement des contributions directes et indirectes
+* définir le traitement du cardio
+* définir l’estimation de durée
+* définir la comparaison volumeTargets vs volume généré
+* définir strategySummary et validationSummary dans generationContext
+* confirmer les fichiers exacts à modifier
+* proposer les tests
+* identifier les risques de divergence avec weeklyPlansService
 * ne pas coder immédiatement
-* confirmer les fichiers à modifier pour Phase 1 seulement
 
-Ensuite seulement, lancer un prompt d’implémentation Phase 1.
+Après validation du plan seulement, lancer le prompt d’implémentation Phase 5.
+
+Aucun nouvel appel fournisseur réel n’est nécessaire avant que la Phase 5 soit implémentée et testée hors réseau.
 
 ---
 
@@ -1281,3 +1475,46 @@ Les flows manual, drafts existants, plans publiés et anciens plans AI ne sont p
 
 Tests:
 npm run test:domain passe avec 114 tests verts.
+
+---
+
+16 juillet 2026
+AI Weekly Plan Builder V1 - Phases 2, 3, 4 et 4.1 complétées.
+
+Phase 2:
+- JSON Schema AI strict
+- validation sémantique
+- normalisation
+- validation scoped du pool
+- erreurs structurées
+
+Phase 3:
+- doctrine bodybuilding canonique
+- runtime classique statique
+- doctrineVersion et promptVersion
+- défense contre prompt injection
+- génération HYPERTROPHY uniquement en V1
+
+Phase 4:
+- OpenAI Responses API
+- Structured Outputs strict
+- store:false
+- timeout et max_output_tokens configurables
+- parsing et erreurs fournisseur contrôlés
+- métadonnées compactes
+- tests sans réseau
+
+Phase 4.1:
+- contrat targetReps ou minReps/maxReps aligné
+- promptVersion ai-weekly-plan-builder-prompt-v1.0.1
+- invariants sémantiques explicités
+- tests domaine: 235/235 PASS
+- smoke test réel de 3 séances: PASS
+- Schema, sémantique, normalisation et pool: PASS
+- aucune persistence
+- aucun exerciseId hors pool
+
+Décision:
+- Phase 4 fermée
+- tests réels de 5 et 7 séances reportés à la Phase 12
+- prochaine étape: Phase 5 Analytics backend et strategy metadata
