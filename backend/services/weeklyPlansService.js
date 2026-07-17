@@ -418,6 +418,43 @@ function collectExerciseIds(workouts = []) {
   );
 }
 
+async function prepareAIWeeklyPlanDraftForCreate(payload = {}) {
+  const sourceType = normalizeSourceType(payload.source);
+
+  if (sourceType !== 'AI') {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'source must be AI for AI weekly plan preflight'
+    );
+  }
+
+  const userId = normalizeOptionalString(payload.userId);
+  const document = validateDraftDocument(
+    {
+      name: payload.name,
+      sessionsPerWeek: payload.sessionsPerWeek,
+      workouts: payload.workouts || [],
+    },
+    'draft'
+  );
+
+  await assertUserExists(userId);
+  const exerciseById = await assertKnownExerciseIds(collectExerciseIds(document.workouts));
+  validateAndNormalizeCardioBlocks(document.workouts, exerciseById, {
+    mode: 'draft',
+    path: 'workouts',
+  });
+
+  return {
+    document,
+    businessRulesValidation: {
+      ok: true,
+      issueCount: 0,
+    },
+  };
+}
+
 function hasGenerationContext(payload = {}) {
   return Object.prototype.hasOwnProperty.call(payload, 'generationContext');
 }
@@ -1281,6 +1318,7 @@ module.exports = {
   getWeeklyPlanDetails,
   listVisibleWeeklyPlans,
   openOrCreateEditDraft,
+  prepareAIWeeklyPlanDraftForCreate,
   publishWeeklyPlanDraft,
   setWeeklyPlanBookmark,
   updateWeeklyPlanDraft,

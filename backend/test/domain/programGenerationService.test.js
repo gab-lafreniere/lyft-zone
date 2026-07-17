@@ -10,6 +10,9 @@ const {
 const {
   buildWeeklyPlanAiJsonSchema,
 } = require('../../src/domain/programGeneration/weeklyPlanAiSchema');
+const {
+  WeeklyPlanAnalyticsError,
+} = require('../../src/domain/programGeneration/weeklyPlanAnalytics');
 
 const MOCK_CLASSIC_DOCTRINE = Object.freeze({
   id: 'bodybuilding_runtime_classic',
@@ -30,6 +33,17 @@ function createPhase3Deps() {
   return {
     loadWeeklyPlanBuilderDoctrine: () => MOCK_CLASSIC_DOCTRINE,
     buildProgramGenerationPrompt: () => createMockPromptDescriptor(),
+    prepareAIWeeklyPlanDraftForCreate: async (payload) => ({
+      document: {
+        name: payload.name,
+        sessionsPerWeek: payload.sessionsPerWeek,
+        workouts: payload.workouts,
+      },
+      businessRulesValidation: {
+        ok: true,
+        issueCount: 0,
+      },
+    }),
   };
 }
 
@@ -389,6 +403,7 @@ test('createAIWeeklyPlanDraft keeps schema, semantic, and pool validation on pro
     await t.test(entry.name, async () => {
       let createCalled = false;
       let generatorCalled = false;
+      let preflightCalled = false;
 
       await assert.rejects(
         () =>
@@ -401,6 +416,9 @@ test('createAIWeeklyPlanDraft keeps schema, semantic, and pool validation on pro
               generateWeeklyPlanAiOutput: async () => {
                 generatorCalled = true;
                 return createOpenAIGeneratorResult(entry.generatedAIOutput);
+              },
+              prepareAIWeeklyPlanDraftForCreate: async () => {
+                preflightCalled = true;
               },
               createWeeklyPlan: async () => {
                 createCalled = true;
@@ -416,6 +434,7 @@ test('createAIWeeklyPlanDraft keeps schema, semantic, and pool validation on pro
       );
 
       assert.equal(generatorCalled, true);
+      assert.equal(preflightCalled, false);
       assert.equal(createCalled, false);
     });
   }
@@ -705,7 +724,7 @@ test('createAIWeeklyPlanDraft creates an AI draft from a valid mock generated do
   assert.equal(createPayload.source, 'ai');
   assert.equal(createPayload.name, 'AI Draft');
   assert.equal(createPayload.generationContext.generationType, 'ai_weekly_plan_builder_v1');
-  assert.equal(createPayload.generationContext.schemaVersion, 3);
+  assert.equal(createPayload.generationContext.schemaVersion, 4);
   assert.equal(
     createPayload.generationContext.doctrineId,
     'bodybuilding_runtime_classic'
@@ -724,7 +743,30 @@ test('createAIWeeklyPlanDraft creates an AI draft from a valid mock generated do
   );
   assert.equal(createPayload.generationContext.generator.type, 'mock');
   assert.equal(createPayload.generationContext.poolSnapshot.checksum, 'checksum');
+  assert.equal(
+    createPayload.generationContext.strategySummary,
+    'Simple upper session.'
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(createPayload, 'strategySummary'),
+    false
+  );
   assert.equal(createPayload.generationContext.validationSummary.poolValidation.ok, true);
+  assert.deepEqual(
+    createPayload.generationContext.validationSummary.businessRulesValidation,
+    { ok: true, issueCount: 0 }
+  );
+  assert.equal(createPayload.generationContext.validationSummary.analytics.status, 'complete');
+  assert.equal(
+    createPayload.generationContext.validationSummary.analytics.targetComparisons.volume
+      .targetCount,
+    0
+  );
+  assert.equal(
+    createPayload.generationContext.validationSummary.analytics.targetComparisons.frequency
+      .targetCount,
+    0
+  );
   const persistedAudit = JSON.stringify(createPayload.generationContext);
   assert.doesNotMatch(persistedAudit, /MOCK_CLASSIC_DOCTRINE_CONTENT_SENTINEL/);
   assert.doesNotMatch(persistedAudit, /MOCK_SYSTEM_MESSAGE_SENTINEL/);
@@ -774,6 +816,11 @@ test('createAIWeeklyPlanDraft creates an AI draft from valid generatedAIOutput',
   assert.equal(createPayload.generationContext.validationSummary.aiOutputSchemaValidation.ok, true);
   assert.equal(createPayload.generationContext.validationSummary.aiOutputSemanticValidation.ok, true);
   assert.equal(createPayload.generationContext.validationSummary.poolValidation.ok, true);
+  assert.deepEqual(
+    createPayload.generationContext.validationSummary.businessRulesValidation,
+    { ok: true, issueCount: 0 }
+  );
+  assert.equal(createPayload.generationContext.validationSummary.analytics.status, 'partial');
   assert.equal(createPayload.generationContext.workouts, undefined);
   assert.equal(createPayload.generationContext.generator.type, 'mock');
   assert.equal(generatorCalled, false);
@@ -949,4 +996,321 @@ test('createAIWeeklyPlanDraft rejects mock documents with exercises outside the 
   );
 
   assert.equal(createCalled, false);
+});
+
+test('createAIWeeklyPlanDraft orders provider pool, preflight, analytics, audit, and create', async () => {
+  const order = [];
+  const context = createContext();
+  const allowedExerciseIds = context.poolSnapshot.allowedExerciseIds;
+  let poolValidationRecorded = false;
+  Object.defineProperty(context.poolSnapshot, 'allowedExerciseIds', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      if (!poolValidationRecorded) {
+        order.push('pool');
+        poolValidationRecorded = true;
+      }
+      return allowedExerciseIds;
+    },
+  });
+  const generatedAIOutput = createGeneratedAIOutput();
+  const preparedDocument = {
+    name: 'Business Prepared Draft',
+    sessionsPerWeek: 1,
+    workouts: [{ name: 'Prepared Workout', orderIndex: 1, blocks: [] }],
+  };
+  const businessRulesValidation = { ok: true, issueCount: 0 };
+  const analytics = { analyticsResult: 'memory-only' };
+  const generationContext = { schemaVersion: 4, audit: 'allowlisted' };
+  let preflightPayload;
+  let analyticsInput;
+  let auditInput;
+  let createPayload;
+
+  await createAIWeeklyPlanDraft(
+    { userId: 'user_123' },
+    {
+      ...createPhase3Deps(),
+      env: enabledEnv(),
+      buildProgramGenerationContext: async () => context,
+      generatedAIOutput,
+      prepareAIWeeklyPlanDraftForCreate: async (payload) => {
+        order.push('preflight');
+        preflightPayload = payload;
+        return { document: preparedDocument, businessRulesValidation };
+      },
+      calculateWeeklyPlanAnalytics: async (input) => {
+        order.push('analytics');
+        analyticsInput = input;
+        return analytics;
+      },
+      buildWeeklyPlanGenerationContext: async (input) => {
+        order.push('audit');
+        auditInput = input;
+        return generationContext;
+      },
+      createWeeklyPlan: async (payload) => {
+        order.push('create');
+        createPayload = payload;
+        return { source: 'ai' };
+      },
+    }
+  );
+
+  assert.deepEqual(order, ['pool', 'preflight', 'analytics', 'audit', 'create']);
+  assert.deepEqual(Object.keys(preflightPayload).sort(), [
+    'name',
+    'sessionsPerWeek',
+    'source',
+    'userId',
+    'workouts',
+  ]);
+  assert.equal(preflightPayload.name, 'AI Output Draft');
+  assert.equal(preflightPayload.source, 'ai');
+  assert.equal(preflightPayload.userId, 'user_123');
+  assert.equal(preflightPayload.workouts[0].blocks[0].blockType, 'SINGLE');
+  assert.strictEqual(analyticsInput.generatedAIOutput, generatedAIOutput);
+  assert.strictEqual(analyticsInput.generatedPlanDocument, preparedDocument);
+  assert.strictEqual(auditInput.generatedPlanDocument, preparedDocument);
+  assert.strictEqual(auditInput.generatedAIOutput, generatedAIOutput);
+  assert.strictEqual(auditInput.analytics, analytics);
+  assert.strictEqual(auditInput.businessRulesValidation, businessRulesValidation);
+  assert.strictEqual(analyticsInput.context, auditInput.context);
+  assert.equal(auditInput.validation.schemaValidation.ok, true);
+  assert.equal(auditInput.validation.semanticValidation.ok, true);
+  assert.equal(auditInput.validation.poolValidation.ok, true);
+  assert.deepEqual(createPayload, {
+    ...preparedDocument,
+    userId: 'user_123',
+    source: 'ai',
+    generationContext,
+  });
+});
+
+test('createAIWeeklyPlanDraft sends null AI output to legacy analytics', async () => {
+  const generatedPlanDocument = createGeneratedPlanDocument();
+  const preparedDocument = {
+    name: 'Prepared Legacy Draft',
+    sessionsPerWeek: 1,
+    workouts: generatedPlanDocument.workouts,
+  };
+  let analyticsInput;
+  let auditInput;
+  let createPayload;
+
+  await createAIWeeklyPlanDraft(
+    { userId: 'user_123' },
+    {
+      ...createPhase3Deps(),
+      env: enabledEnv(),
+      buildProgramGenerationContext: async () => createContext(),
+      generatedPlanDocument,
+      prepareAIWeeklyPlanDraftForCreate: async () => ({
+        document: preparedDocument,
+        businessRulesValidation: { ok: true, issueCount: 0 },
+      }),
+      calculateWeeklyPlanAnalytics: async (input) => {
+        analyticsInput = input;
+        return { analyticsResult: 'legacy' };
+      },
+      buildWeeklyPlanGenerationContext: async (input) => {
+        auditInput = input;
+        return { schemaVersion: 4 };
+      },
+      createWeeklyPlan: async (payload) => {
+        createPayload = payload;
+        return { source: 'ai' };
+      },
+    }
+  );
+
+  assert.equal(analyticsInput.generatedAIOutput, null);
+  assert.strictEqual(analyticsInput.generatedPlanDocument, preparedDocument);
+  assert.strictEqual(auditInput.generatedAIOutput, null);
+  assert.deepEqual(auditInput.generatedPlanDocument, {
+    ...preparedDocument,
+    strategySummary: 'Simple upper session.',
+  });
+  assert.notStrictEqual(auditInput.generatedPlanDocument, preparedDocument);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(createPayload, 'strategySummary'),
+    false
+  );
+  assert.deepEqual(createPayload.workouts, preparedDocument.workouts);
+  assert.equal(createPayload.name, preparedDocument.name);
+  assert.equal(createPayload.sessionsPerWeek, preparedDocument.sessionsPerWeek);
+  assert.equal(auditInput.validation.schemaValidation, null);
+  assert.equal(auditInput.validation.semanticValidation, null);
+  assert.equal(auditInput.validation.poolValidation.ok, true);
+});
+
+test('createAIWeeklyPlanDraft propagates preflight ApiError before analytics or persistence', async () => {
+  const preflightError = new Error('Unknown exerciseId: ex_missing');
+  preflightError.status = 400;
+  preflightError.code = 'VALIDATION_ERROR';
+  let analyticsCalled = false;
+  let auditCalled = false;
+  let createCalled = false;
+
+  await assert.rejects(
+    () =>
+      createAIWeeklyPlanDraft(
+        { userId: 'user_123' },
+        {
+          ...createPhase3Deps(),
+          env: enabledEnv(),
+          buildProgramGenerationContext: async () => createContext(),
+          generatedPlanDocument: createGeneratedPlanDocument(),
+          prepareAIWeeklyPlanDraftForCreate: async () => {
+            throw preflightError;
+          },
+          calculateWeeklyPlanAnalytics: async () => {
+            analyticsCalled = true;
+          },
+          buildWeeklyPlanGenerationContext: async () => {
+            auditCalled = true;
+          },
+          createWeeklyPlan: async () => {
+            createCalled = true;
+          },
+        }
+      ),
+    (error) => error === preflightError
+  );
+
+  assert.equal(analyticsCalled, false);
+  assert.equal(auditCalled, false);
+  assert.equal(createCalled, false);
+});
+
+test('createAIWeeklyPlanDraft maps analytics failures without audit or persistence', async () => {
+  let auditCalled = false;
+  let createCalled = false;
+
+  await assert.rejects(
+    () =>
+      createAIWeeklyPlanDraft(
+        { userId: 'user_123' },
+        {
+          ...createPhase3Deps(),
+          env: enabledEnv(),
+          buildProgramGenerationContext: async () => createContext(),
+          generatedPlanDocument: createGeneratedPlanDocument(),
+          calculateWeeklyPlanAnalytics: async () => {
+            throw new WeeklyPlanAnalyticsError(
+              'PRIVATE_ANALYTICS_CODE',
+              'PRIVATE_PLAN_CONTENT_SENTINEL',
+              { pool: 'PRIVATE_POOL_SENTINEL' }
+            );
+          },
+          buildWeeklyPlanGenerationContext: async () => {
+            auditCalled = true;
+          },
+          createWeeklyPlan: async () => {
+            createCalled = true;
+          },
+        }
+      ),
+    (error) => {
+      assert.equal(error.status, 500);
+      assert.equal(error.code, 'AI_WEEKLY_PLAN_ANALYTICS_FAILED');
+      assert.equal(error.message, 'AI weekly plan analytics could not be calculated');
+      assert.equal(error.details, undefined);
+      assert.doesNotMatch(error.message, /PRIVATE_/);
+      return true;
+    }
+  );
+
+  assert.equal(auditCalled, false);
+  assert.equal(createCalled, false);
+});
+
+test('createAIWeeklyPlanDraft does not persist when audit construction fails', async () => {
+  const auditError = new Error('audit construction failed');
+  let createCalled = false;
+
+  await assert.rejects(
+    () =>
+      createAIWeeklyPlanDraft(
+        { userId: 'user_123' },
+        {
+          ...createPhase3Deps(),
+          env: enabledEnv(),
+          buildProgramGenerationContext: async () => createContext(),
+          generatedPlanDocument: createGeneratedPlanDocument(),
+          calculateWeeklyPlanAnalytics: async () => ({ status: 'complete' }),
+          buildWeeklyPlanGenerationContext: async () => {
+            throw auditError;
+          },
+          createWeeklyPlan: async () => {
+            createCalled = true;
+          },
+        }
+      ),
+    (error) => error === auditError
+  );
+
+  assert.equal(createCalled, false);
+});
+
+test('createAIWeeklyPlanDraft persists below and above target analytics', async () => {
+  const generatedAIOutput = createGeneratedAIOutput({
+    volumeTargets: {
+      perMuscle: [
+        {
+          area: 'upper_chest',
+          targetSetsPerWeek: 2,
+          priority: 'primary',
+          rationale: null,
+        },
+        {
+          area: 'chest',
+          targetSetsPerWeek: 0,
+          priority: 'secondary',
+          rationale: 'Comparison coverage.',
+        },
+      ],
+    },
+  });
+  let createPayload;
+
+  const response = await createAIWeeklyPlanDraft(
+    { userId: 'user_123' },
+    {
+      ...createPhase3Deps(),
+      env: enabledEnv(),
+      buildProgramGenerationContext: async () =>
+        createContext({
+          exercisePoolItems: [
+            {
+              exerciseId: 'ex_bench',
+              targetMuscles: [],
+              muscleFocus: ['upper_chest'],
+              bodyParts: ['chest'],
+              secondaryMuscles: [],
+            },
+          ],
+        }),
+      generatedAIOutput,
+      createWeeklyPlan: async (payload) => {
+        createPayload = payload;
+        return { source: 'ai' };
+      },
+    }
+  );
+
+  assert.equal(response.source, 'ai');
+  assert.equal(createPayload.generationContext.schemaVersion, 4);
+  assert.equal(createPayload.generationContext.validationSummary.analytics.status, 'complete');
+  assert.equal(
+    createPayload.generationContext.validationSummary.analytics.targetComparisons.volume
+      .belowTargetCount,
+    1
+  );
+  assert.equal(
+    createPayload.generationContext.validationSummary.analytics.targetComparisons.volume
+      .aboveTargetCount,
+    1
+  );
 });

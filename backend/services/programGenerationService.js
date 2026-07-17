@@ -1,5 +1,8 @@
 const { ApiError } = require('./usersService');
-const { createWeeklyPlan } = require('./weeklyPlansService');
+const {
+  createWeeklyPlan,
+  prepareAIWeeklyPlanDraftForCreate,
+} = require('./weeklyPlansService');
 const {
   generateWeeklyPlanAiOutput,
 } = require('./weeklyPlanAiGenerationService');
@@ -34,6 +37,10 @@ const {
 const {
   buildWeeklyPlanGenerationContext,
 } = require('../src/domain/programGeneration/weeklyPlanGenerationAudit');
+const {
+  WeeklyPlanAnalyticsError,
+  calculateWeeklyPlanAnalytics,
+} = require('../src/domain/programGeneration/weeklyPlanAnalytics');
 
 const EXERCISE_POOL_ERROR_STATUS = Object.freeze({
   PROFILE_NOT_READY: 409,
@@ -56,6 +63,18 @@ function mapExercisePoolError(error) {
     EXERCISE_POOL_ERROR_STATUS[error.code] || 500,
     error.code,
     error.message
+  );
+}
+
+function mapWeeklyPlanAnalyticsError(error) {
+  if (!(error instanceof WeeklyPlanAnalyticsError)) {
+    return error;
+  }
+
+  return new ApiError(
+    500,
+    'AI_WEEKLY_PLAN_ANALYTICS_FAILED',
+    'AI weekly plan analytics could not be calculated'
   );
 }
 
@@ -345,57 +364,88 @@ async function createAIWeeklyPlanDraft(payload = {}, deps = {}) {
   const promptDescriptor = await buildPromptForWeeklyPlanBuilder(doctrine, context, deps);
 
   const generatedArtifact = await resolveGeneratedArtifact(promptDescriptor, deps);
+  let generatedAIOutput = null;
+  let generatedPlanDocument;
+  let schemaValidation = null;
+  let semanticValidation = null;
+  let poolValidation;
 
   if (generatedArtifact.type === 'aiOutput') {
-    const {
-      generatedPlanDocument,
-      schemaValidation,
-      semanticValidation,
-    } = normalizeGeneratedAIOutput(generatedArtifact.value, context);
-    const poolValidation = validateGeneratedExerciseIdsAgainstPool(
+    generatedAIOutput = generatedArtifact.value;
+    const normalizedArtifact = normalizeGeneratedAIOutput(generatedAIOutput, context);
+    generatedPlanDocument = normalizedArtifact.generatedPlanDocument;
+    schemaValidation = normalizedArtifact.schemaValidation;
+    semanticValidation = normalizedArtifact.semanticValidation;
+    poolValidation = validateGeneratedExerciseIdsAgainstPool(
       generatedPlanDocument,
       context.poolSnapshot
     );
 
     assertPoolValidationOk(poolValidation, { structuredDetails: true });
-
-    const generationContext = buildWeeklyPlanGenerationContext({
-      context,
-      generatedAIOutput: generatedArtifact.value,
+  } else {
+    generatedPlanDocument = generatedArtifact.value;
+    poolValidation = validateGeneratedExerciseIdsAgainstPool(
       generatedPlanDocument,
+      context.poolSnapshot
+    );
+
+    assertPoolValidationOk(poolValidation);
+  }
+
+  const prepared = await (
+    deps.prepareAIWeeklyPlanDraftForCreate || prepareAIWeeklyPlanDraftForCreate
+  )({
+    ...generatedPlanDocument,
+    userId: payload.userId,
+    source: 'ai',
+  });
+
+  let analytics;
+  try {
+    analytics = await (
+      deps.calculateWeeklyPlanAnalytics || calculateWeeklyPlanAnalytics
+    )({
+      generatedAIOutput,
+      generatedPlanDocument: prepared.document,
+      context,
+    });
+  } catch (error) {
+    throw mapWeeklyPlanAnalyticsError(error);
+  }
+
+  const generatedPlanDocumentForAudit = generatedAIOutput
+    ? prepared.document
+    : {
+        ...prepared.document,
+        strategySummary:
+          typeof generatedPlanDocument?.strategySummary === 'string'
+            ? generatedPlanDocument.strategySummary
+            : null,
+      };
+
+  let generationContext;
+  try {
+    generationContext = await (
+      deps.buildWeeklyPlanGenerationContext || buildWeeklyPlanGenerationContext
+    )({
+      context,
+      generatedAIOutput,
+      generatedPlanDocument: generatedPlanDocumentForAudit,
       validation: {
         schemaValidation,
         semanticValidation,
         poolValidation,
       },
+      businessRulesValidation: prepared.businessRulesValidation,
+      analytics,
       generator: generatedArtifact.generator,
     });
-
-    return (deps.createWeeklyPlan || createWeeklyPlan)({
-      ...generatedPlanDocument,
-      userId: payload.userId,
-      source: 'ai',
-      generationContext,
-    });
+  } catch (error) {
+    throw mapWeeklyPlanAnalyticsError(error);
   }
 
-  const generatedPlanDocument = generatedArtifact.value;
-  const poolValidation = validateGeneratedExerciseIdsAgainstPool(
-    generatedPlanDocument,
-    context.poolSnapshot
-  );
-
-  assertPoolValidationOk(poolValidation);
-
-  const generationContext = buildWeeklyPlanGenerationContext({
-    context,
-    generatedPlanDocument,
-    validation: poolValidation,
-    generator: generatedArtifact.generator,
-  });
-
   return (deps.createWeeklyPlan || createWeeklyPlan)({
-    ...generatedPlanDocument,
+    ...prepared.document,
     userId: payload.userId,
     source: 'ai',
     generationContext,

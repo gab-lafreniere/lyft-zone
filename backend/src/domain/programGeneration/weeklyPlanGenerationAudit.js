@@ -1,8 +1,11 @@
 const {
   buildWeeklyPlanAiGenerationMetadata,
 } = require('./weeklyPlanAiNormalizer');
+const {
+  buildWeeklyPlanAnalyticsAuditSummary,
+} = require('./weeklyPlanAnalytics');
 
-const GENERATION_CONTEXT_SCHEMA_VERSION = 3;
+const GENERATION_CONTEXT_SCHEMA_VERSION = 4;
 
 function normalizeOptionalString(value) {
   const normalized = String(value ?? '').trim();
@@ -56,9 +59,12 @@ function buildWeeklyPlanGenerationContext({
   generatedPlanDocument,
   generatedAIOutput,
   validation,
+  businessRulesValidation,
+  analytics,
   generator = {},
 }) {
   const poolValidation = validation?.poolValidation || validation || {};
+  const uniqueExerciseIds = poolValidation?.uniqueExerciseIds || [];
   const aiMetadata = generatedAIOutput
     ? buildWeeklyPlanAiGenerationMetadata(generatedAIOutput)
     : {
@@ -108,8 +114,20 @@ function buildWeeklyPlanGenerationContext({
       poolValidation: {
         ok: Boolean(poolValidation?.ok),
         issueCount: Array.isArray(poolValidation?.issues) ? poolValidation.issues.length : 0,
-        uniqueExerciseIds: poolValidation?.uniqueExerciseIds || [],
+        uniqueExerciseIds,
+        uniqueExerciseCount: new Set(uniqueExerciseIds).size,
       },
+      businessRulesValidation: businessRulesValidation
+        ? {
+            ok: Boolean(businessRulesValidation.ok),
+            issueCount:
+              Number.isSafeInteger(businessRulesValidation.issueCount) &&
+              businessRulesValidation.issueCount >= 0
+                ? businessRulesValidation.issueCount
+                : 0,
+          }
+        : null,
+      analytics: analytics ? buildWeeklyPlanAnalyticsAuditSummary(analytics) : null,
     },
     repairAttempts: 0,
   };

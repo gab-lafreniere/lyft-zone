@@ -6,6 +6,64 @@ const {
   buildWeeklyPlanGenerationContext,
 } = require('../../src/domain/programGeneration/weeklyPlanGenerationAudit');
 
+function createAnalytics(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    status: 'partial',
+    plan: {
+      workoutCount: 1,
+      blockCount: 1,
+      exerciseCount: 1,
+      strengthExerciseCount: 1,
+      cardioExerciseCount: 0,
+      uniqueExerciseCount: 1,
+      workingSetCount: 3,
+      totalSetTemplateCount: 3,
+      singleBlockCount: 1,
+      supersetBlockCount: 0,
+      cardioBlockCount: 0,
+      estimatedDurationMinutesTotal: 42,
+      estimatedDurationMinutesAverage: 42,
+      declaredEstimatedDurationMinutesTotal: 60,
+      durationDifferenceMinutesTotal: -18,
+      minWorkoutDurationMinutes: 42,
+      maxWorkoutDurationMinutes: 42,
+      cardioDurationMinutes: 0,
+    },
+    workouts: [{ name: 'PRIVATE_WORKOUT_NAME_SENTINEL' }],
+    muscleMetrics: [{ exerciseName: 'PRIVATE_EXERCISE_NAME_SENTINEL' }],
+    metadataCoverage: {
+      totalStrengthWorkingSets: 3,
+      attributedStrengthWorkingSets: 0,
+      coverageRatio: 0,
+      unresolvedExerciseIds: ['PRIVATE_UNRESOLVED_EXERCISE_ID_SENTINEL'],
+    },
+    targetComparisons: {
+      volume: {
+        summary: {
+          targetCount: 2,
+          belowTargetCount: 1,
+          withinTargetCount: 0,
+          aboveTargetCount: 1,
+          unavailableCount: 0,
+        },
+        items: [{ rationale: 'PRIVATE_TARGET_RATIONALE_SENTINEL' }],
+      },
+      frequency: {
+        summary: {
+          targetCount: 1,
+          belowTargetCount: 0,
+          withinTargetCount: 1,
+          aboveTargetCount: 0,
+          unavailableCount: 0,
+        },
+        items: [],
+      },
+    },
+    ...overrides,
+  };
+}
+
 test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt metadata only', () => {
   const generationContext = buildWeeklyPlanGenerationContext({
     context: {
@@ -48,8 +106,25 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
     },
   });
 
-  assert.equal(GENERATION_CONTEXT_SCHEMA_VERSION, 3);
-  assert.equal(generationContext.schemaVersion, 3);
+  assert.equal(GENERATION_CONTEXT_SCHEMA_VERSION, 4);
+  assert.equal(generationContext.schemaVersion, 4);
+  [
+    'generator',
+    'aiContractVersion',
+    'aiOutputSchemaVersion',
+    'poolSnapshot',
+    'profileSnapshotSummary',
+    'strategySummary',
+    'splitType',
+    'volumeTargets',
+    'frequencyTargets',
+    'progressionModel',
+    'cautionHandling',
+    'notesPolicy',
+    'repairAttempts',
+  ].forEach((field) => {
+    assert.equal(Object.prototype.hasOwnProperty.call(generationContext, field), true);
+  });
   assert.equal(generationContext.doctrineId, 'bodybuilding_runtime_classic');
   assert.equal(
     generationContext.doctrineVersion,
@@ -85,9 +160,13 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
   assert.doesNotMatch(serialized, /req_http_private_123/);
   assert.equal(generationContext.systemMessage, undefined);
   assert.equal(generationContext.userMessage, undefined);
+  assert.equal(generationContext.validationSummary.poolValidation.uniqueExerciseCount, 1);
+  assert.equal(generationContext.validationSummary.businessRulesValidation, null);
+  assert.equal(generationContext.validationSummary.analytics, null);
 });
 
-test('buildWeeklyPlanGenerationContext persists allowlisted OpenAI metadata in V3', () => {
+test('buildWeeklyPlanGenerationContext retains V3 fields and adds allowlisted V4 analytics', () => {
+  const analytics = createAnalytics();
   const generationContext = buildWeeklyPlanGenerationContext({
     context: {
       generationMode: 'weekly_plan_draft',
@@ -102,8 +181,14 @@ test('buildWeeklyPlanGenerationContext persists allowlisted OpenAI metadata in V
     validation: {
       schemaValidation: { ok: true, issues: [] },
       semanticValidation: { ok: true, issues: [], summary: {} },
-      poolValidation: { ok: true, issues: [], uniqueExerciseIds: [] },
+      poolValidation: {
+        ok: true,
+        issues: [],
+        uniqueExerciseIds: ['ex_db_bench', 'ex_row'],
+      },
     },
+    businessRulesValidation: { ok: true, issueCount: 0 },
+    analytics,
     generator: {
       type: 'openai',
       model: 'gpt-program-model',
@@ -121,7 +206,7 @@ test('buildWeeklyPlanGenerationContext persists allowlisted OpenAI metadata in V
     },
   });
 
-  assert.equal(generationContext.schemaVersion, 3);
+  assert.equal(generationContext.schemaVersion, 4);
   assert.deepEqual(generationContext.generator, {
     type: 'openai',
     model: 'gpt-program-model',
@@ -133,12 +218,77 @@ test('buildWeeklyPlanGenerationContext persists allowlisted OpenAI metadata in V
       reasoningTokens: 250,
     },
   });
+  assert.equal(generationContext.strategySummary, 'Provider strategy summary.');
+  assert.deepEqual(generationContext.validationSummary.poolValidation, {
+    ok: true,
+    issueCount: 0,
+    uniqueExerciseIds: ['ex_db_bench', 'ex_row'],
+    uniqueExerciseCount: 2,
+  });
+  assert.deepEqual(generationContext.validationSummary.businessRulesValidation, {
+    ok: true,
+    issueCount: 0,
+  });
+  assert.deepEqual(generationContext.validationSummary.analytics, {
+    schemaVersion: 1,
+    status: 'partial',
+    counts: {
+      workoutCount: 1,
+      blockCount: 1,
+      exerciseCount: 1,
+      strengthExerciseCount: 1,
+      cardioExerciseCount: 0,
+      uniqueExerciseCount: 1,
+      workingSetCount: 3,
+      totalSetTemplateCount: 3,
+      singleBlockCount: 1,
+      supersetBlockCount: 0,
+      cardioBlockCount: 0,
+    },
+    duration: {
+      estimatedDurationMinutesTotal: 42,
+      estimatedDurationMinutesAverage: 42,
+      declaredEstimatedDurationMinutesTotal: 60,
+      durationDifferenceMinutesTotal: -18,
+      minWorkoutDurationMinutes: 42,
+      maxWorkoutDurationMinutes: 42,
+      cardioDurationMinutes: 0,
+    },
+    muscleMetadata: {
+      totalStrengthWorkingSets: 3,
+      attributedStrengthWorkingSets: 0,
+      coverageRatio: 0,
+      unresolvedExerciseCount: 1,
+    },
+    targetComparisons: {
+      volume: {
+        targetCount: 2,
+        belowTargetCount: 1,
+        withinTargetCount: 0,
+        aboveTargetCount: 1,
+        unavailableCount: 0,
+      },
+      frequency: {
+        targetCount: 1,
+        belowTargetCount: 0,
+        withinTargetCount: 1,
+        aboveTargetCount: 0,
+        unavailableCount: 0,
+      },
+    },
+  });
+  assert.equal(generationContext.validationSummary.analytics.workouts, undefined);
+  assert.equal(generationContext.validationSummary.analytics.muscleMetrics, undefined);
 
   const serialized = JSON.stringify(generationContext);
   assert.doesNotMatch(serialized, /RAW_USAGE_SENTINEL/);
   assert.doesNotMatch(serialized, /RAW_RESPONSE_SENTINEL/);
   assert.doesNotMatch(serialized, /RAW_OUTPUT_TEXT_SENTINEL/);
   assert.doesNotMatch(serialized, /req_http_private_456/);
+  assert.doesNotMatch(serialized, /PRIVATE_WORKOUT_NAME_SENTINEL/);
+  assert.doesNotMatch(serialized, /PRIVATE_EXERCISE_NAME_SENTINEL/);
+  assert.doesNotMatch(serialized, /PRIVATE_UNRESOLVED_EXERCISE_ID_SENTINEL/);
+  assert.doesNotMatch(serialized, /PRIVATE_TARGET_RATIONALE_SENTINEL/);
 });
 
 test('buildWeeklyPlanGenerationContext normalizes absent OpenAI metadata to null', () => {
@@ -169,4 +319,6 @@ test('buildWeeklyPlanGenerationContext normalizes absent OpenAI metadata to null
       reasoningTokens: null,
     },
   });
+  assert.equal(generationContext.validationSummary.businessRulesValidation, null);
+  assert.equal(generationContext.validationSummary.analytics, null);
 });
