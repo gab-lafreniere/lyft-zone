@@ -2,8 +2,20 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  buildWeeklyPlanAiJsonSchema,
   validateWeeklyPlanAiOutputSchema,
 } = require('../../src/domain/programGeneration/weeklyPlanAiSchema');
+
+const UNSUPPORTED_STRUCTURED_OUTPUT_KEYWORDS = new Set([
+  'oneOf',
+  'allOf',
+  'not',
+  'if',
+  'then',
+  'else',
+  'dependentRequired',
+  'dependentSchemas',
+]);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -85,11 +97,142 @@ function createValidAIOutput(overrides = {}) {
   };
 }
 
+function createOutputWithSetTemplate(overrides = {}) {
+  const payload = clone(createValidAIOutput());
+  payload.workouts[0].blocks[0].exercises[0].setTemplates = [
+    createSetTemplate(overrides),
+  ];
+  return payload;
+}
+
+function findUnsupportedKeywords(value, path = 'root', matches = []) {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) =>
+      findUnsupportedKeywords(entry, `${path}[${index}]`, matches)
+    );
+    return matches;
+  }
+
+  if (!value || typeof value !== 'object') {
+    return matches;
+  }
+
+  Object.entries(value).forEach(([key, entry]) => {
+    const entryPath = `${path}.${key}`;
+    if (UNSUPPORTED_STRUCTURED_OUTPUT_KEYWORDS.has(key)) {
+      matches.push(entryPath);
+    }
+    findUnsupportedKeywords(entry, entryPath, matches);
+  });
+
+  return matches;
+}
+
 test('validateWeeklyPlanAiOutputSchema accepts a minimal valid AI output', () => {
   const result = validateWeeklyPlanAiOutputSchema(createValidAIOutput());
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.issues, []);
+});
+
+test('setTemplate schema uses two complete nested anyOf variants', () => {
+  const schema = buildWeeklyPlanAiJsonSchema();
+  const setTemplateSchema =
+    schema.properties.workouts.items.properties.blocks.items.properties.exercises
+      .items.properties.setTemplates.items;
+  const requiredFields = [
+    'setIndex',
+    'setType',
+    'targetReps',
+    'minReps',
+    'maxReps',
+    'targetRir',
+    'tempo',
+    'restSeconds',
+  ];
+
+  assert.equal(schema.anyOf, undefined);
+  assert.equal(setTemplateSchema.anyOf.length, 2);
+  setTemplateSchema.anyOf.forEach((variant) => {
+    assert.equal(variant.type, 'object');
+    assert.equal(variant.additionalProperties, false);
+    assert.deepEqual(variant.required, requiredFields);
+    assert.deepEqual(Object.keys(variant.properties), requiredFields);
+  });
+});
+
+test('validateWeeklyPlanAiOutputSchema accepts an exact repetition target', () => {
+  const result = validateWeeklyPlanAiOutputSchema(
+    createOutputWithSetTemplate({
+      targetReps: 10,
+      minReps: null,
+      maxReps: null,
+    })
+  );
+
+  assert.equal(result.ok, true);
+});
+
+test('validateWeeklyPlanAiOutputSchema accepts a complete repetition range', () => {
+  const result = validateWeeklyPlanAiOutputSchema(
+    createOutputWithSetTemplate({
+      targetReps: null,
+      minReps: 8,
+      maxReps: 12,
+    })
+  );
+
+  assert.equal(result.ok, true);
+});
+
+test('validateWeeklyPlanAiOutputSchema rejects an ambiguous repetition prescription', () => {
+  const result = validateWeeklyPlanAiOutputSchema(
+    createOutputWithSetTemplate({
+      targetReps: 10,
+      minReps: 8,
+      maxReps: 12,
+    })
+  );
+
+  assert.equal(result.ok, false);
+});
+
+test('validateWeeklyPlanAiOutputSchema rejects a missing repetition prescription', () => {
+  const result = validateWeeklyPlanAiOutputSchema(
+    createOutputWithSetTemplate({
+      targetReps: null,
+      minReps: null,
+      maxReps: null,
+    })
+  );
+
+  assert.equal(result.ok, false);
+});
+
+test('validateWeeklyPlanAiOutputSchema rejects partial repetition ranges', () => {
+  const cases = [
+    { targetReps: null, minReps: 8, maxReps: null },
+    { targetReps: null, minReps: null, maxReps: 12 },
+  ];
+
+  cases.forEach((entry) => {
+    assert.equal(
+      validateWeeklyPlanAiOutputSchema(createOutputWithSetTemplate(entry)).ok,
+      false
+    );
+  });
+});
+
+test('validateWeeklyPlanAiOutputSchema leaves inverted ranges to semantic validation', () => {
+  const result = validateWeeklyPlanAiOutputSchema(
+    createOutputWithSetTemplate({
+      targetReps: null,
+      minReps: 12,
+      maxReps: 8,
+    })
+  );
+
+  assert.equal(result.ok, true);
 });
 
 test('validateWeeklyPlanAiOutputSchema rejects unknown fields', () => {
@@ -123,6 +266,17 @@ test('validateWeeklyPlanAiOutputSchema rejects more than seven workouts', () => 
 
   assert.equal(result.ok, false);
   assert.equal(result.issues.some((issue) => issue.code === 'MAX_ITEMS_EXCEEDED'), true);
+});
+
+test('validateWeeklyPlanAiOutputSchema rejects a workout without blocks', () => {
+  const result = validateWeeklyPlanAiOutputSchema(
+    createValidAIOutput({
+      workouts: [createWorkout(1, { blocks: [] })],
+    })
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.issues.some((issue) => issue.path === 'workouts[0].blocks'), true);
 });
 
 test('validateWeeklyPlanAiOutputSchema rejects unsupported block types', () => {
@@ -164,4 +318,8 @@ test('validateWeeklyPlanAiOutputSchema rejects RIR outside 0-4', () => {
 
   assert.equal(result.ok, false);
   assert.equal(result.issues.some((issue) => issue.code === 'VALUE_TOO_LARGE'), true);
+});
+
+test('weekly plan schema excludes unsupported Structured Outputs keywords', () => {
+  assert.deepEqual(findUnsupportedKeywords(buildWeeklyPlanAiJsonSchema()), []);
 });

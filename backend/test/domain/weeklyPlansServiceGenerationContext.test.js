@@ -97,7 +97,7 @@ test('createWeeklyPlan AI flow writes generationContext on WeeklyPlanVersion', a
     doctrineId: 'bodybuilding_runtime_classic',
     doctrineVersion: 'bodybuilding-hypertrophy-runtime-classic-v1.0.0',
     derivedFromDoctrineVersion: 'bodybuilding-hypertrophy-v1.0.0',
-    promptVersion: 'ai-weekly-plan-builder-prompt-v1.0.0',
+    promptVersion: 'ai-weekly-plan-builder-prompt-v1.0.1',
     poolSnapshot: {
       checksum: 'checksum',
     },

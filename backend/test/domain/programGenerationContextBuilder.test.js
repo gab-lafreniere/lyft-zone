@@ -207,7 +207,7 @@ test('attachCoachInputsToProgramGenerationContext adds compact metadata without 
       derivedFromDoctrineVersion: 'bodybuilding-hypertrophy-v1.0.0',
       content: 'DOCTRINE_CONTENT_MUST_NOT_BE_COPIED',
     },
-    promptVersion: 'ai-weekly-plan-builder-prompt-v1.0.0',
+    promptVersion: 'ai-weekly-plan-builder-prompt-v1.0.1',
   });
 
   assert.equal(baseContext.coachInputs, null);
@@ -215,7 +215,7 @@ test('attachCoachInputsToProgramGenerationContext adds compact metadata without 
     doctrineId: 'bodybuilding_runtime_classic',
     doctrineVersion: 'bodybuilding-hypertrophy-runtime-classic-v1.0.0',
     derivedFromDoctrineVersion: 'bodybuilding-hypertrophy-v1.0.0',
-    promptVersion: 'ai-weekly-plan-builder-prompt-v1.0.0',
+    promptVersion: 'ai-weekly-plan-builder-prompt-v1.0.1',
   });
   assert.doesNotMatch(JSON.stringify(context), /DOCTRINE_CONTENT_MUST_NOT_BE_COPIED/);
 });

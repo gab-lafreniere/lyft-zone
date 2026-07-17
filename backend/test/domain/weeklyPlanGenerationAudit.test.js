@@ -23,7 +23,7 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
         doctrineId: 'bodybuilding_runtime_classic',
         doctrineVersion: 'bodybuilding-hypertrophy-runtime-classic-v1.0.0',
         derivedFromDoctrineVersion: 'bodybuilding-hypertrophy-v1.0.0',
-        promptVersion: 'ai-weekly-plan-builder-prompt-v1.0.0',
+        promptVersion: 'ai-weekly-plan-builder-prompt-v1.0.1',
       },
       doctrineContent: 'FULL_DOCTRINE_CONTENT_SENTINEL',
       systemMessage: 'SYSTEM_MESSAGE_SENTINEL',
@@ -61,7 +61,7 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
   );
   assert.equal(
     generationContext.promptVersion,
-    'ai-weekly-plan-builder-prompt-v1.0.0'
+    'ai-weekly-plan-builder-prompt-v1.0.1'
   );
   assert.equal(generationContext.profileSnapshotSummary.hasPhysicalNotes, true);
   assert.deepEqual(generationContext.generator, {

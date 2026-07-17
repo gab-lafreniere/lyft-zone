@@ -39,7 +39,7 @@ test('buildProgramGenerationPrompt injects the exact classic runtime and structu
 
   assert.equal(
     prompt.promptVersion,
-    'ai-weekly-plan-builder-prompt-v1.0.0'
+    'ai-weekly-plan-builder-prompt-v1.0.1'
   );
   assert.match(prompt.systemMessage, /Doctrine ID: bodybuilding_runtime_classic/);
   assert.match(
@@ -66,6 +66,41 @@ test('buildProgramGenerationPrompt injects the exact classic runtime and structu
     /Lyft Zone Longitudinal Bodybuilding Runtime Doctrine/
   );
   assert.doesNotMatch(combinedPrompt, /# Lyft Zone Bodybuilding Doctrine\n/);
+  assert.equal(prompt.systemMessage.split(doctrine.content).length - 1, 1);
+});
+
+test('system instructions state the output semantic invariants without duplicating the schema', () => {
+  const doctrine = {
+    id: 'bodybuilding_runtime_classic',
+    version: 'bodybuilding-hypertrophy-runtime-classic-v1.0.0',
+    derivedFromDoctrineVersion: 'bodybuilding-hypertrophy-v1.0.0',
+    content: 'Mock classic doctrine.',
+  };
+  const prompt = buildProgramGenerationPrompt({
+    doctrine,
+    context: createContext(),
+  });
+
+  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.0.1');
+  assert.match(prompt.systemMessage, /Output semantic invariants:/);
+  assert.match(prompt.systemMessage, /sessionsPerWeek must equal workouts\.length/);
+  assert.match(prompt.systemMessage, /orderIndex and setIndex start at 1/);
+  assert.match(prompt.systemMessage, /sequential and unique/);
+  assert.match(prompt.systemMessage, /SINGLE and CARDIO blocks contain exactly one exercise/);
+  assert.match(prompt.systemMessage, /SUPERSET blocks contain exactly two exercises/);
+  assert.match(prompt.systemMessage, /same number of setTemplates/);
+  assert.match(prompt.systemMessage, /Strength exercises use at least one setTemplate/);
+  assert.match(prompt.systemMessage, /use only WORKING setType/);
+  assert.match(prompt.systemMessage, /non-null defaultTempo, defaultRestSeconds, and defaultTargetRir/);
+  assert.match(prompt.systemMessage, /set cardioPrescription to null/);
+  assert.match(prompt.systemMessage, /CARDIO exercises use an empty setTemplates array/);
+  assert.match(prompt.systemMessage, /When cardioRole is none, do not generate CARDIO blocks/);
+  assert.match(prompt.systemMessage, /either non-null targetReps/);
+  assert.match(prompt.systemMessage, /never combine both forms/);
+  assert.match(prompt.systemMessage, /require minReps <= maxReps/);
+  assert.match(prompt.systemMessage, /ceil\(30% of strength exercises\)/);
+  assert.doesNotMatch(prompt.systemMessage, /"additionalProperties"/);
+  assert.doesNotMatch(prompt.systemMessage, /"\$schema"/);
 });
 
 test('system instructions treat serialized fields as untrusted data without discarding them', () => {

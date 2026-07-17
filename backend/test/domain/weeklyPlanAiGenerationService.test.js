@@ -12,7 +12,7 @@ const {
 
 function createPromptDescriptor() {
   return {
-    promptVersion: 'ai-weekly-plan-builder-prompt-v1.0.0',
+    promptVersion: 'ai-weekly-plan-builder-prompt-v1.0.1',
     systemMessage: 'SYSTEM_MESSAGE_SENTINEL',
     userMessage: 'USER_MESSAGE_SENTINEL',
   };

@@ -173,6 +173,28 @@ test('validateWeeklyPlanAiOutputSemantics rejects non-sequential orderIndex valu
   assert.equal(result.issues.some((issue) => issue.code === 'ORDER_INDEX_NOT_SEQUENTIAL'), true);
 });
 
+test('validateWeeklyPlanAiOutputSemantics rejects duplicate setIndex values', () => {
+  const result = validateWeeklyPlanAiOutputSemantics(
+    createAiOutput({
+      workouts: [
+        createAiWorkout(1, {
+          exercises: [
+            createAiExercise('ex_bench', {
+              setTemplates: [
+                createSetTemplate({ setIndex: 1 }),
+                createSetTemplate({ setIndex: 1 }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    })
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.issues.some((issue) => issue.code === 'DUPLICATE_ORDER_INDEX'), true);
+});
+
 test('validateWeeklyPlanAiOutputSemantics rejects SINGLE blocks without exactly one exercise', () => {
   const emptyResult = validateWeeklyPlanAiOutputSemantics(
     createAiOutput({
@@ -331,6 +353,31 @@ test('validateWeeklyPlanAiOutputSemantics rejects strength exercises without set
   assert.equal(result.issues.some((issue) => issue.code === 'MIN_ITEMS_REQUIRED'), true);
 });
 
+test('validateWeeklyPlanAiOutputSemantics rejects ambiguous reps contract', () => {
+  const result = validateWeeklyPlanAiOutputSemantics(
+    createAiOutput({
+      workouts: [
+        createAiWorkout(1, {
+          exercises: [
+            createAiExercise('ex_bench', {
+              setTemplates: [
+                createSetTemplate({
+                  targetReps: 10,
+                  minReps: 8,
+                  maxReps: 12,
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    })
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.issues.some((issue) => issue.code === 'AMBIGUOUS_REP_TARGET'), true);
+});
+
 test('validateWeeklyPlanAiOutputSemantics rejects incomplete reps contract', () => {
   const result = validateWeeklyPlanAiOutputSemantics(
     createAiOutput({
@@ -354,6 +401,62 @@ test('validateWeeklyPlanAiOutputSemantics rejects incomplete reps contract', () 
 
   assert.equal(result.ok, false);
   assert.equal(result.issues.some((issue) => issue.code === 'MISSING_REP_TARGET'), true);
+});
+
+test('validateWeeklyPlanAiOutputSemantics rejects inverted repetition ranges', () => {
+  const result = validateWeeklyPlanAiOutputSemantics(
+    createAiOutput({
+      workouts: [
+        createAiWorkout(1, {
+          exercises: [
+            createAiExercise('ex_bench', {
+              setTemplates: [
+                createSetTemplate({
+                  targetReps: null,
+                  minReps: 12,
+                  maxReps: 8,
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    })
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.issues.some((issue) => issue.code === 'INVALID_REP_RANGE'), true);
+});
+
+test('validateWeeklyPlanAiOutputSemantics rejects mismatched superset set counts', () => {
+  const result = validateWeeklyPlanAiOutputSemantics(
+    createAiOutput({
+      workouts: [
+        createAiWorkout(1, {
+          blockType: 'SUPERSET',
+          exercises: [
+            createAiExercise('ex_bench', {
+              orderIndex: 1,
+              setTemplates: [createSetTemplate({ setIndex: 1 })],
+            }),
+            createAiExercise('ex_row', {
+              orderIndex: 2,
+              setTemplates: [
+                createSetTemplate({ setIndex: 1 }),
+                createSetTemplate({ setIndex: 2 }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    })
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.issues.some((issue) => issue.code === 'SUPERSET_SET_COUNT_MISMATCH'),
+    true
+  );
 });
 
 test('validateWeeklyPlanAiOutputSemantics applies bounded strength exercise notes policy', () => {

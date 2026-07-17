@@ -116,7 +116,15 @@ function buildCardioPrescriptionSchema() {
   };
 }
 
-function buildSetTemplateSchema() {
+function buildRepCountSchema() {
+  return {
+    type: 'integer',
+    minimum: AI_WEEKLY_PLAN_LIMITS.repsMin,
+    maximum: AI_WEEKLY_PLAN_LIMITS.repsMax,
+  };
+}
+
+function buildSetTemplateVariant(repTargetProperties) {
   return {
     type: 'object',
     additionalProperties: false,
@@ -140,21 +148,7 @@ function buildSetTemplateSchema() {
         type: 'string',
         enum: AI_WEEKLY_PLAN_SET_TYPES,
       },
-      targetReps: nullable({
-        type: 'integer',
-        minimum: AI_WEEKLY_PLAN_LIMITS.repsMin,
-        maximum: AI_WEEKLY_PLAN_LIMITS.repsMax,
-      }),
-      minReps: nullable({
-        type: 'integer',
-        minimum: AI_WEEKLY_PLAN_LIMITS.repsMin,
-        maximum: AI_WEEKLY_PLAN_LIMITS.repsMax,
-      }),
-      maxReps: nullable({
-        type: 'integer',
-        minimum: AI_WEEKLY_PLAN_LIMITS.repsMin,
-        maximum: AI_WEEKLY_PLAN_LIMITS.repsMax,
-      }),
+      ...repTargetProperties,
       targetRir: {
         type: 'number',
         minimum: AI_WEEKLY_PLAN_LIMITS.targetRirMin,
@@ -170,6 +164,23 @@ function buildSetTemplateSchema() {
         maximum: AI_WEEKLY_PLAN_LIMITS.restSecondsMax,
       },
     },
+  };
+}
+
+function buildSetTemplateSchema() {
+  return {
+    anyOf: [
+      buildSetTemplateVariant({
+        targetReps: buildRepCountSchema(),
+        minReps: { type: 'null' },
+        maxReps: { type: 'null' },
+      }),
+      buildSetTemplateVariant({
+        targetReps: { type: 'null' },
+        minReps: buildRepCountSchema(),
+        maxReps: buildRepCountSchema(),
+      }),
+    ],
   };
 }
 
@@ -277,6 +288,7 @@ function buildWorkoutSchema() {
       focus: buildStringSchema(1, 160),
       blocks: {
         type: 'array',
+        minItems: 1,
         maxItems: AI_WEEKLY_PLAN_LIMITS.blocksPerWorkoutMaxCount,
         items: buildBlockSchema(),
       },
