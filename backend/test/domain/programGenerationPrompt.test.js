@@ -11,7 +11,7 @@ const {
 
 function createContext(overrides = {}) {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generationMode: 'weekly_plan_draft',
     primaryGoal: 'HYPERTROPHY',
     physicalNotes: 'Keep setup changes simple.',
@@ -26,6 +26,7 @@ function createContext(overrides = {}) {
       {
         exerciseId: 'ex_db_bench',
         name: 'Dumbbell Bench Press',
+        jointStressTags: ['shoulder_load'],
       },
     ],
     ...overrides,
@@ -50,6 +51,7 @@ test('buildProgramGenerationPrompt injects the exact classic runtime and structu
   assert.ok(prompt.systemMessage.includes(doctrine.content));
   assert.match(prompt.userMessage, /"primaryGoal": "HYPERTROPHY"/);
   assert.match(prompt.userMessage, /"exerciseId": "ex_db_bench"/);
+  assert.match(prompt.userMessage, /"jointStressTags": \[\n\s+"shoulder_load"\n\s+\]/);
   assert.doesNotMatch(prompt.systemMessage, /Keep setup changes simple\./);
 
   const combinedPrompt = `${prompt.systemMessage}\n${prompt.userMessage}`;

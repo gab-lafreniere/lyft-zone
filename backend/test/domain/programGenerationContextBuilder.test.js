@@ -148,7 +148,9 @@ test('buildProgramGenerationContext builds profile context, compact pool items, 
     },
     exercise: {
       findMany: async () => [
-        createEligibleExercise(),
+        createEligibleExercise({
+          jointStressTags: ['shoulder_load', 'elbow_load', 'shoulder_load', ' '],
+        }),
         createEligibleExercise({
           exerciseId: 'ex_advanced_press',
           name: 'Advanced Press',
@@ -167,8 +169,8 @@ test('buildProgramGenerationContext builds profile context, compact pool items, 
     }
   );
 
-  assert.equal(PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION, 2);
-  assert.equal(context.schemaVersion, 2);
+  assert.equal(PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION, 3);
+  assert.equal(context.schemaVersion, 3);
   assert.equal(context.generationMode, 'weekly_plan_draft');
   assert.equal(context.coachInputs, null);
   assert.equal(context.userId, 'user_123');
@@ -190,12 +192,16 @@ test('buildProgramGenerationContext builds profile context, compact pool items, 
   );
   assert.equal(context.exercisePoolItems[0].name, 'Dumbbell Bench Press');
   assert.equal(context.exercisePoolItems[0].movementPattern, 'horizontal_push');
+  assert.deepEqual(context.exercisePoolItems[0].jointStressTags, [
+    'elbow_load',
+    'shoulder_load',
+  ]);
   assert.equal(context.exercisePoolItems[0].softSignals.equipmentBias.value, 'no_preference');
 });
 
 test('attachCoachInputsToProgramGenerationContext adds compact metadata without doctrine content', () => {
   const baseContext = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generationMode: 'weekly_plan_draft',
     primaryGoal: 'HYPERTROPHY',
     coachInputs: null,
@@ -211,6 +217,7 @@ test('attachCoachInputsToProgramGenerationContext adds compact metadata without 
   });
 
   assert.equal(baseContext.coachInputs, null);
+  assert.equal(context.schemaVersion, 3);
   assert.deepEqual(context.coachInputs, {
     doctrineId: 'bodybuilding_runtime_classic',
     doctrineVersion: 'bodybuilding-hypertrophy-runtime-classic-v1.0.0',

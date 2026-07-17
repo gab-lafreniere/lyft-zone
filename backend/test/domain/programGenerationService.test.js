@@ -13,6 +13,9 @@ const {
 const {
   WeeklyPlanAnalyticsError,
 } = require('../../src/domain/programGeneration/weeklyPlanAnalytics');
+const {
+  AIProgramReviewError,
+} = require('../../src/domain/programGeneration/aiProgramReview');
 
 const MOCK_CLASSIC_DOCTRINE = Object.freeze({
   id: 'bodybuilding_runtime_classic',
@@ -53,9 +56,80 @@ function enabledEnv() {
   };
 }
 
+function reviewEnabledEnv() {
+  return {
+    ...enabledEnv(),
+    ENABLE_AI_WEEKLY_PLAN_REVIEW: 'true',
+  };
+}
+
+function createReviewIssue(overrides = {}) {
+  return {
+    issueIndex: 1,
+    category: 'EXERCISE_REDUNDANCY',
+    severity: 'LOW',
+    path: '/plan/workouts/0',
+    message: 'The repeated exercise can be monitored for redundancy.',
+    repairability: 'NOT_APPLICABLE',
+    suggestedAction: null,
+    ...overrides,
+  };
+}
+
+function createReviewResult({
+  decision = 'PASS',
+  requiresRepair = false,
+  issues = [],
+  reviewSummary = 'The structured plan review passed.',
+  provider = {
+    type: 'openai',
+    model: 'review-model',
+    responseId: 'resp_review_123',
+    usage: {
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      reasoningTokens: 10,
+    },
+  },
+} = {}) {
+  const severityCounts = { INFO: 0, LOW: 0, MEDIUM: 0, HIGH: 0 };
+  const categoryCounts = {};
+
+  issues.forEach((issue) => {
+    if (Object.prototype.hasOwnProperty.call(severityCounts, issue.severity)) {
+      severityCounts[issue.severity] += 1;
+    }
+    categoryCounts[issue.category] = (categoryCounts[issue.category] || 0) + 1;
+  });
+
+  return {
+    enabled: true,
+    review: {
+      schemaVersion: 1,
+      decision,
+      requiresRepair,
+      reviewSummary,
+      issues,
+    },
+    provider,
+    promptVersion: 'ai-program-review-prompt-v1.0.0',
+    contractVersion: 1,
+    outputSchemaVersion: 1,
+    decision,
+    requiresRepair,
+    issueCount: issues.length,
+    severityCounts,
+    categoryCounts,
+    repairIssues: issues.filter(
+      (issue) => issue.severity === 'HIGH' && issue.repairability === 'REPAIRABLE'
+    ),
+  };
+}
+
 function createContext(overrides = {}) {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generationMode: 'weekly_plan_draft',
     coachInputs: null,
     userId: 'user_123',
@@ -724,7 +798,7 @@ test('createAIWeeklyPlanDraft creates an AI draft from a valid mock generated do
   assert.equal(createPayload.source, 'ai');
   assert.equal(createPayload.name, 'AI Draft');
   assert.equal(createPayload.generationContext.generationType, 'ai_weekly_plan_builder_v1');
-  assert.equal(createPayload.generationContext.schemaVersion, 4);
+  assert.equal(createPayload.generationContext.schemaVersion, 5);
   assert.equal(
     createPayload.generationContext.doctrineId,
     'bodybuilding_runtime_classic'
@@ -998,7 +1072,7 @@ test('createAIWeeklyPlanDraft rejects mock documents with exercises outside the 
   assert.equal(createCalled, false);
 });
 
-test('createAIWeeklyPlanDraft orders provider pool, preflight, analytics, audit, and create', async () => {
+test('createAIWeeklyPlanDraft orders provider pool, preflight, analytics, review, audit, and create', async () => {
   const order = [];
   const context = createContext();
   const allowedExerciseIds = context.poolSnapshot.allowedExerciseIds;
@@ -1022,9 +1096,10 @@ test('createAIWeeklyPlanDraft orders provider pool, preflight, analytics, audit,
   };
   const businessRulesValidation = { ok: true, issueCount: 0 };
   const analytics = { analyticsResult: 'memory-only' };
-  const generationContext = { schemaVersion: 4, audit: 'allowlisted' };
+  const generationContext = { schemaVersion: 5, audit: 'allowlisted' };
   let preflightPayload;
   let analyticsInput;
+  let reviewInput;
   let auditInput;
   let createPayload;
 
@@ -1032,7 +1107,7 @@ test('createAIWeeklyPlanDraft orders provider pool, preflight, analytics, audit,
     { userId: 'user_123' },
     {
       ...createPhase3Deps(),
-      env: enabledEnv(),
+      env: reviewEnabledEnv(),
       buildProgramGenerationContext: async () => context,
       generatedAIOutput,
       prepareAIWeeklyPlanDraftForCreate: async (payload) => {
@@ -1044,6 +1119,11 @@ test('createAIWeeklyPlanDraft orders provider pool, preflight, analytics, audit,
         order.push('analytics');
         analyticsInput = input;
         return analytics;
+      },
+      runAIProgramReview: async (input) => {
+        order.push('review');
+        reviewInput = input;
+        return createReviewResult();
       },
       buildWeeklyPlanGenerationContext: async (input) => {
         order.push('audit');
@@ -1058,7 +1138,7 @@ test('createAIWeeklyPlanDraft orders provider pool, preflight, analytics, audit,
     }
   );
 
-  assert.deepEqual(order, ['pool', 'preflight', 'analytics', 'audit', 'create']);
+  assert.deepEqual(order, ['pool', 'preflight', 'analytics', 'review', 'audit', 'create']);
   assert.deepEqual(Object.keys(preflightPayload).sort(), [
     'name',
     'sessionsPerWeek',
@@ -1072,6 +1152,9 @@ test('createAIWeeklyPlanDraft orders provider pool, preflight, analytics, audit,
   assert.equal(preflightPayload.workouts[0].blocks[0].blockType, 'SINGLE');
   assert.strictEqual(analyticsInput.generatedAIOutput, generatedAIOutput);
   assert.strictEqual(analyticsInput.generatedPlanDocument, preparedDocument);
+  assert.strictEqual(reviewInput.analytics, analytics);
+  assert.strictEqual(reviewInput.generatedAIOutput, generatedAIOutput);
+  assert.strictEqual(reviewInput.generatedPlanDocument, preparedDocument);
   assert.strictEqual(auditInput.generatedPlanDocument, preparedDocument);
   assert.strictEqual(auditInput.generatedAIOutput, generatedAIOutput);
   assert.strictEqual(auditInput.analytics, analytics);
@@ -1080,6 +1163,7 @@ test('createAIWeeklyPlanDraft orders provider pool, preflight, analytics, audit,
   assert.equal(auditInput.validation.schemaValidation.ok, true);
   assert.equal(auditInput.validation.semanticValidation.ok, true);
   assert.equal(auditInput.validation.poolValidation.ok, true);
+  assert.equal(auditInput.aiReview.decision, 'PASS');
   assert.deepEqual(createPayload, {
     ...preparedDocument,
     userId: 'user_123',
@@ -1301,7 +1385,7 @@ test('createAIWeeklyPlanDraft persists below and above target analytics', async 
   );
 
   assert.equal(response.source, 'ai');
-  assert.equal(createPayload.generationContext.schemaVersion, 4);
+  assert.equal(createPayload.generationContext.schemaVersion, 5);
   assert.equal(createPayload.generationContext.validationSummary.analytics.status, 'complete');
   assert.equal(
     createPayload.generationContext.validationSummary.analytics.targetComparisons.volume
@@ -1313,4 +1397,455 @@ test('createAIWeeklyPlanDraft persists below and above target analytics', async 
       .aboveTargetCount,
     1
   );
+});
+
+test('createAIWeeklyPlanDraft explicitly bypasses review when the review flag is absent or false', async (t) => {
+  for (const [name, env] of [
+    ['absent', enabledEnv()],
+    ['false', { ...enabledEnv(), ENABLE_AI_WEEKLY_PLAN_REVIEW: 'false' }],
+  ]) {
+    await t.test(name, async () => {
+      let reviewCalled = false;
+      let createPayload;
+
+      await createAIWeeklyPlanDraft(
+        { userId: 'user_123' },
+        {
+          ...createPhase3Deps(),
+          env,
+          buildProgramGenerationContext: async () => createContext(),
+          generatedPlanDocument: createGeneratedPlanDocument(),
+          runAIProgramReview: async () => {
+            reviewCalled = true;
+            return createReviewResult();
+          },
+          createWeeklyPlan: async (payload) => {
+            createPayload = payload;
+            return { source: 'ai' };
+          },
+        }
+      );
+
+      assert.equal(reviewCalled, false);
+      assert.deepEqual(createPayload.generationContext.aiReview, {
+        enabled: false,
+        outcome: 'BYPASSED',
+        reviewAttempts: 0,
+        schemaVersion: 1,
+        contractVersion: 1,
+        outputSchemaVersion: 1,
+        promptVersion: null,
+        decision: null,
+        requiresRepair: false,
+        issueCount: 0,
+        severityCounts: { INFO: 0, LOW: 0, MEDIUM: 0, HIGH: 0 },
+        categoryCounts: {},
+        reviewSummary: null,
+        provider: null,
+      });
+    });
+  }
+});
+
+test('createAIWeeklyPlanDraft persists a PASS review with informational repairable issues only', async () => {
+  const issues = [
+    createReviewIssue({
+      issueIndex: 1,
+      category: 'NOTES_POLICY',
+      severity: 'LOW',
+      path: '/plan/notesSummary',
+      message: 'PRIVATE_LOW_REVIEW_MESSAGE',
+      repairability: 'REPAIRABLE',
+      suggestedAction: 'PRIVATE_LOW_REVIEW_ACTION',
+    }),
+    createReviewIssue({
+      issueIndex: 2,
+      category: 'SPLIT_DURATION_COHERENCE',
+      severity: 'MEDIUM',
+      path: '/analytics/plan/estimatedDurationMinutesAverage',
+      message: 'PRIVATE_MEDIUM_REVIEW_MESSAGE',
+      repairability: 'REPAIRABLE',
+      suggestedAction: 'PRIVATE_MEDIUM_REVIEW_ACTION',
+    }),
+  ];
+  let reviewCalled = false;
+  let createPayload;
+
+  await createAIWeeklyPlanDraft(
+    { userId: 'user_123' },
+    {
+      ...createPhase3Deps(),
+      env: reviewEnabledEnv(),
+      buildProgramGenerationContext: async () => createContext(),
+      generatedPlanDocument: createGeneratedPlanDocument(),
+      runAIProgramReview: async () => {
+        reviewCalled = true;
+        return createReviewResult({
+          issues,
+          provider: {
+            type: 'openai',
+            model: 'review-model',
+            responseId: 'resp_review_123',
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+              reasoningTokens: 10,
+            },
+            rawResponse: 'PRIVATE_REVIEW_RAW_RESPONSE',
+          },
+        });
+      },
+      createWeeklyPlan: async (payload) => {
+        createPayload = payload;
+        return { source: 'ai' };
+      },
+    }
+  );
+
+  assert.equal(reviewCalled, true);
+  assert.deepEqual(createPayload.generationContext.aiReview, {
+    enabled: true,
+    outcome: 'PASSED',
+    reviewAttempts: 1,
+    schemaVersion: 1,
+    contractVersion: 1,
+    outputSchemaVersion: 1,
+    promptVersion: 'ai-program-review-prompt-v1.0.0',
+    decision: 'PASS',
+    requiresRepair: false,
+    issueCount: 2,
+    severityCounts: { INFO: 0, LOW: 1, MEDIUM: 1, HIGH: 0 },
+    categoryCounts: { NOTES_POLICY: 1, SPLIT_DURATION_COHERENCE: 1 },
+    reviewSummary: 'The structured plan review passed.',
+    provider: {
+      type: 'openai',
+      model: 'review-model',
+      responseId: 'resp_review_123',
+      usage: {
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+        reasoningTokens: 10,
+      },
+    },
+  });
+  const persistedAudit = JSON.stringify(createPayload.generationContext.aiReview);
+  assert.doesNotMatch(persistedAudit, /PRIVATE_(?:LOW|MEDIUM)_REVIEW_(?:MESSAGE|ACTION)/);
+  assert.doesNotMatch(persistedAudit, /PRIVATE_REVIEW_RAW_RESPONSE/);
+  assert.doesNotMatch(persistedAudit, /\/plan\/|\/analytics\//);
+});
+
+test('createAIWeeklyPlanDraft blocks REPAIR_REQUIRED and FAIL before audit or persistence', async (t) => {
+  const cases = [
+    {
+      name: 'REPAIR_REQUIRED',
+      decision: 'REPAIR_REQUIRED',
+      requiresRepair: true,
+      code: 'AI_WEEKLY_PLAN_REVIEW_REQUIRES_REPAIR',
+      issue: createReviewIssue({
+        severity: 'HIGH',
+        path: '/plan/workouts/0',
+        message: 'PRIVATE_REPAIR_MESSAGE',
+        repairability: 'REPAIRABLE',
+        suggestedAction: 'PRIVATE_REPAIR_ACTION',
+      }),
+    },
+    {
+      name: 'FAIL',
+      decision: 'FAIL',
+      requiresRepair: false,
+      code: 'AI_WEEKLY_PLAN_REVIEW_FAILED',
+      issue: createReviewIssue({
+        severity: 'HIGH',
+        path: '/plan/workouts/0',
+        message: 'PRIVATE_FAIL_MESSAGE',
+        repairability: 'NON_REPAIRABLE',
+        suggestedAction: null,
+      }),
+    },
+  ];
+
+  for (const entry of cases) {
+    await t.test(entry.name, async () => {
+      let analyticsCalled = false;
+      let reviewCalled = false;
+      let auditCalled = false;
+      let createCalled = false;
+
+      await assert.rejects(
+        () =>
+          createAIWeeklyPlanDraft(
+            { userId: 'user_123' },
+            {
+              ...createPhase3Deps(),
+              env: reviewEnabledEnv(),
+              buildProgramGenerationContext: async () => createContext(),
+              generatedPlanDocument: createGeneratedPlanDocument(),
+              calculateWeeklyPlanAnalytics: async () => {
+                analyticsCalled = true;
+                return { status: 'complete' };
+              },
+              runAIProgramReview: async () => {
+                reviewCalled = true;
+                return createReviewResult({
+                  decision: entry.decision,
+                  requiresRepair: entry.requiresRepair,
+                  issues: [entry.issue],
+                });
+              },
+              buildWeeklyPlanGenerationContext: async () => {
+                auditCalled = true;
+              },
+              createWeeklyPlan: async () => {
+                createCalled = true;
+              },
+            }
+          ),
+        (error) => {
+          assert.equal(error.status, 422);
+          assert.equal(error.code, entry.code);
+          assert.deepEqual(Object.keys(error.details).sort(), [
+            'categoryCounts',
+            'decision',
+            'issueCount',
+            'severityCounts',
+          ]);
+          assert.equal(error.details.decision, entry.decision);
+          assert.equal(error.details.issueCount, 1);
+          assert.doesNotMatch(JSON.stringify(error.details), /PRIVATE_|\/plan\//);
+          return true;
+        }
+      );
+
+      assert.equal(analyticsCalled, true);
+      assert.equal(reviewCalled, true);
+      assert.equal(auditCalled, false);
+      assert.equal(createCalled, false);
+    });
+  }
+});
+
+test('createAIWeeklyPlanDraft rejects an implicit review bypass when review is enabled', async () => {
+  let auditCalled = false;
+  let createCalled = false;
+
+  await assert.rejects(
+    () =>
+      createAIWeeklyPlanDraft(
+        { userId: 'user_123' },
+        {
+          ...createPhase3Deps(),
+          env: reviewEnabledEnv(),
+          buildProgramGenerationContext: async () => createContext(),
+          generatedPlanDocument: createGeneratedPlanDocument(),
+          runAIProgramReview: async () => ({
+            enabled: false,
+            decision: 'PASS',
+            requiresRepair: false,
+          }),
+          buildWeeklyPlanGenerationContext: async () => {
+            auditCalled = true;
+          },
+          createWeeklyPlan: async () => {
+            createCalled = true;
+          },
+        }
+      ),
+    (error) => {
+      assert.equal(error.status, 502);
+      assert.equal(error.code, 'AI_WEEKLY_PLAN_REVIEW_INVALID_RESPONSE');
+      assert.equal(error.details, undefined);
+      return true;
+    }
+  );
+
+  assert.equal(auditCalled, false);
+  assert.equal(createCalled, false);
+});
+
+test('createAIWeeklyPlanDraft rejects incomplete PASS review metadata before audit', async () => {
+  let auditCalled = false;
+  let createCalled = false;
+
+  await assert.rejects(
+    () =>
+      createAIWeeklyPlanDraft(
+        { userId: 'user_123' },
+        {
+          ...createPhase3Deps(),
+          env: reviewEnabledEnv(),
+          buildProgramGenerationContext: async () => createContext(),
+          generatedPlanDocument: createGeneratedPlanDocument(),
+          runAIProgramReview: async () => ({ ...createReviewResult(), provider: null }),
+          buildWeeklyPlanGenerationContext: async () => {
+            auditCalled = true;
+          },
+          createWeeklyPlan: async () => {
+            createCalled = true;
+          },
+        }
+      ),
+    (error) => {
+      assert.equal(error.status, 502);
+      assert.equal(error.code, 'AI_WEEKLY_PLAN_REVIEW_INVALID_RESPONSE');
+      return true;
+    }
+  );
+
+  assert.equal(auditCalled, false);
+  assert.equal(createCalled, false);
+});
+
+test('createAIWeeklyPlanDraft fails closed for review provider, validation, and input failures', async (t) => {
+  const providerError = Object.assign(
+    new Error('AI weekly plan review provider is unavailable'),
+    {
+      status: 503,
+      code: 'AI_WEEKLY_PLAN_REVIEW_PROVIDER_UNAVAILABLE',
+    }
+  );
+  const cases = [
+    {
+      name: 'provider',
+      error: providerError,
+      status: 503,
+      code: 'AI_WEEKLY_PLAN_REVIEW_PROVIDER_UNAVAILABLE',
+    },
+    {
+      name: 'schema',
+      error: new AIProgramReviewError(
+        'AI_WEEKLY_PLAN_REVIEW_SCHEMA_VALIDATION_FAILED',
+        'private schema response'
+      ),
+      status: 502,
+      code: 'AI_WEEKLY_PLAN_REVIEW_SCHEMA_VALIDATION_FAILED',
+    },
+    {
+      name: 'semantic',
+      error: new AIProgramReviewError(
+        'AI_WEEKLY_PLAN_REVIEW_SEMANTIC_VALIDATION_FAILED',
+        'private semantic response'
+      ),
+      status: 502,
+      code: 'AI_WEEKLY_PLAN_REVIEW_SEMANTIC_VALIDATION_FAILED',
+    },
+    {
+      name: 'input incomplete',
+      error: new AIProgramReviewError(
+        'AI_WEEKLY_PLAN_REVIEW_INPUT_INCOMPLETE',
+        'private pool detail'
+      ),
+      status: 502,
+      code: 'AI_WEEKLY_PLAN_REVIEW_INPUT_INCOMPLETE',
+    },
+    {
+      name: 'input too large',
+      error: new AIProgramReviewError(
+        'AI_WEEKLY_PLAN_REVIEW_INPUT_TOO_LARGE',
+        'private input detail'
+      ),
+      status: 502,
+      code: 'AI_WEEKLY_PLAN_REVIEW_INPUT_TOO_LARGE',
+    },
+  ];
+
+  for (const entry of cases) {
+    await t.test(entry.name, async () => {
+      let auditCalled = false;
+      let createCalled = false;
+
+      await assert.rejects(
+        () =>
+          createAIWeeklyPlanDraft(
+            { userId: 'user_123' },
+            {
+              ...createPhase3Deps(),
+              env: reviewEnabledEnv(),
+              buildProgramGenerationContext: async () => createContext(),
+              generatedPlanDocument: createGeneratedPlanDocument(),
+              runAIProgramReview: async () => {
+                throw entry.error;
+              },
+              buildWeeklyPlanGenerationContext: async () => {
+                auditCalled = true;
+              },
+              createWeeklyPlan: async () => {
+                createCalled = true;
+              },
+            }
+          ),
+        (error) => {
+          assert.equal(error.status, entry.status);
+          assert.equal(error.code, entry.code);
+          assert.equal(error.details, undefined);
+          assert.doesNotMatch(error.message, /private/i);
+          return true;
+        }
+      );
+
+      assert.equal(auditCalled, false);
+      assert.equal(createCalled, false);
+    });
+  }
+});
+
+test('createAIWeeklyPlanDraft reviews legacy, mock AI output, and provider AI output paths', async (t) => {
+  const providerOutput = createGeneratedAIOutput();
+  const cases = [
+    {
+      name: 'legacy document',
+      artifactDeps: { generatedPlanDocument: createGeneratedPlanDocument() },
+      expectedAIOutput: null,
+      expectedPlanName: 'AI Draft',
+    },
+    {
+      name: 'mock AI output',
+      artifactDeps: { generatedAIOutput: createGeneratedAIOutput() },
+      expectedAIOutput: 'mock',
+      expectedPlanName: 'AI Output Draft',
+    },
+    {
+      name: 'provider AI output',
+      artifactDeps: {
+        generateWeeklyPlanAiOutput: async () => createOpenAIGeneratorResult(providerOutput),
+      },
+      expectedAIOutput: providerOutput,
+      expectedPlanName: 'AI Output Draft',
+    },
+  ];
+
+  for (const entry of cases) {
+    await t.test(entry.name, async () => {
+      let reviewInput;
+      let createCalled = false;
+
+      await createAIWeeklyPlanDraft(
+        { userId: 'user_123' },
+        {
+          ...createPhase3Deps(),
+          ...entry.artifactDeps,
+          env: reviewEnabledEnv(),
+          buildProgramGenerationContext: async () => createContext(),
+          runAIProgramReview: async (input) => {
+            reviewInput = input;
+            return createReviewResult();
+          },
+          createWeeklyPlan: async () => {
+            createCalled = true;
+            return { source: 'ai' };
+          },
+        }
+      );
+
+      assert.equal(createCalled, true);
+      assert.ok(reviewInput);
+      if (entry.expectedAIOutput === 'mock') {
+        assert.equal(reviewInput.generatedAIOutput.schemaVersion, 1);
+      } else {
+        assert.strictEqual(reviewInput.generatedAIOutput, entry.expectedAIOutput);
+      }
+      assert.equal(reviewInput.generatedPlanDocument.name, entry.expectedPlanName);
+    });
+  }
 });

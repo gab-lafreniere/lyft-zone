@@ -9,7 +9,7 @@ const {
   createPoolSummary,
 } = require('./poolSnapshot');
 
-const PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION = 2;
+const PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION = 3;
 
 function attachCoachInputsToProgramGenerationContext(
   context,

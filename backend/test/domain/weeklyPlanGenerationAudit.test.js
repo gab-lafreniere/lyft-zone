@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   GENERATION_CONTEXT_SCHEMA_VERSION,
+  buildAIReviewAuditMetadata,
   buildWeeklyPlanGenerationContext,
 } = require('../../src/domain/programGeneration/weeklyPlanGenerationAudit');
 
@@ -106,8 +107,8 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
     },
   });
 
-  assert.equal(GENERATION_CONTEXT_SCHEMA_VERSION, 4);
-  assert.equal(generationContext.schemaVersion, 4);
+  assert.equal(GENERATION_CONTEXT_SCHEMA_VERSION, 5);
+  assert.equal(generationContext.schemaVersion, 5);
   [
     'generator',
     'aiContractVersion',
@@ -121,6 +122,7 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
     'progressionModel',
     'cautionHandling',
     'notesPolicy',
+    'aiReview',
     'repairAttempts',
   ].forEach((field) => {
     assert.equal(Object.prototype.hasOwnProperty.call(generationContext, field), true);
@@ -163,6 +165,22 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
   assert.equal(generationContext.validationSummary.poolValidation.uniqueExerciseCount, 1);
   assert.equal(generationContext.validationSummary.businessRulesValidation, null);
   assert.equal(generationContext.validationSummary.analytics, null);
+  assert.deepEqual(generationContext.aiReview, {
+    enabled: false,
+    outcome: 'BYPASSED',
+    reviewAttempts: 0,
+    schemaVersion: 1,
+    contractVersion: 1,
+    outputSchemaVersion: 1,
+    promptVersion: null,
+    decision: null,
+    requiresRepair: false,
+    issueCount: 0,
+    severityCounts: { INFO: 0, LOW: 0, MEDIUM: 0, HIGH: 0 },
+    categoryCounts: {},
+    reviewSummary: null,
+    provider: null,
+  });
 });
 
 test('buildWeeklyPlanGenerationContext retains V3 fields and adds allowlisted V4 analytics', () => {
@@ -206,7 +224,7 @@ test('buildWeeklyPlanGenerationContext retains V3 fields and adds allowlisted V4
     },
   });
 
-  assert.equal(generationContext.schemaVersion, 4);
+  assert.equal(generationContext.schemaVersion, 5);
   assert.deepEqual(generationContext.generator, {
     type: 'openai',
     model: 'gpt-program-model',
@@ -321,4 +339,75 @@ test('buildWeeklyPlanGenerationContext normalizes absent OpenAI metadata to null
   });
   assert.equal(generationContext.validationSummary.businessRulesValidation, null);
   assert.equal(generationContext.validationSummary.analytics, null);
+});
+
+test('buildAIReviewAuditMetadata persists only allowlisted PASS review data', () => {
+  const metadata = buildAIReviewAuditMetadata({
+    enabled: true,
+    promptVersion: 'ai-program-review-prompt-v1.0.0',
+    contractVersion: 1,
+    outputSchemaVersion: 1,
+    provider: {
+      type: 'openai',
+      model: 'review-model',
+      responseId: 'resp_review_123',
+      usage: {
+        inputTokens: 120,
+        outputTokens: 80,
+        totalTokens: 200,
+        reasoningTokens: 10,
+        rawUsage: 'RAW_REVIEW_USAGE_SENTINEL',
+      },
+      rawResponse: 'RAW_REVIEW_RESPONSE_SENTINEL',
+    },
+    review: {
+      schemaVersion: 1,
+      decision: 'PASS',
+      requiresRepair: false,
+      reviewSummary: 'Plan review passed.',
+      issues: [
+        {
+          category: 'NOTES_POLICY',
+          severity: 'LOW',
+          path: '/plan/notesSummary',
+          message: 'PRIVATE_REVIEW_MESSAGE_SENTINEL',
+          suggestedAction: 'PRIVATE_REVIEW_ACTION_SENTINEL',
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(metadata, {
+    enabled: true,
+    outcome: 'PASSED',
+    reviewAttempts: 1,
+    schemaVersion: 1,
+    contractVersion: 1,
+    outputSchemaVersion: 1,
+    promptVersion: 'ai-program-review-prompt-v1.0.0',
+    decision: 'PASS',
+    requiresRepair: false,
+    issueCount: 1,
+    severityCounts: { INFO: 0, LOW: 1, MEDIUM: 0, HIGH: 0 },
+    categoryCounts: { NOTES_POLICY: 1 },
+    reviewSummary: 'Plan review passed.',
+    provider: {
+      type: 'openai',
+      model: 'review-model',
+      responseId: 'resp_review_123',
+      usage: {
+        inputTokens: 120,
+        outputTokens: 80,
+        totalTokens: 200,
+        reasoningTokens: 10,
+      },
+    },
+  });
+
+  const serialized = JSON.stringify(metadata);
+  assert.doesNotMatch(serialized, /RAW_REVIEW_USAGE_SENTINEL/);
+  assert.doesNotMatch(serialized, /RAW_REVIEW_RESPONSE_SENTINEL/);
+  assert.doesNotMatch(serialized, /PRIVATE_REVIEW_MESSAGE_SENTINEL/);
+  assert.doesNotMatch(serialized, /PRIVATE_REVIEW_ACTION_SENTINEL/);
+  assert.doesNotMatch(serialized, /\/plan\/notesSummary/);
 });

@@ -6,6 +6,17 @@ function toArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function normalizeJointStressTags(value) {
+  return Array.from(
+    new Set(
+      toArray(value)
+        .filter((tag) => typeof tag === 'string')
+        .map((tag) => tag.trim().toLowerCase())
+        .filter(Boolean)
+    )
+  ).sort();
+}
+
 function stableStringify(value) {
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(',')}]`;
@@ -73,6 +84,7 @@ function createExercisePoolItems(poolResult = {}) {
       name: item.name,
       trainingType: item.trainingType || null,
       movementPattern: attributes.movementPattern || null,
+      jointStressTags: normalizeJointStressTags(attributes.jointStressTags),
       bodyParts: toArray(attributes.bodyParts),
       muscleFocus: toArray(attributes.muscleFocus),
       targetMuscles: toArray(attributes.targetMuscles),

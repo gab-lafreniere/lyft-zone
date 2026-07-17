@@ -41,6 +41,10 @@ const {
   WeeklyPlanAnalyticsError,
   calculateWeeklyPlanAnalytics,
 } = require('../src/domain/programGeneration/weeklyPlanAnalytics');
+const {
+  AIProgramReviewError,
+  runAIProgramReview,
+} = require('../src/domain/programGeneration/aiProgramReview');
 
 const EXERCISE_POOL_ERROR_STATUS = Object.freeze({
   PROFILE_NOT_READY: 409,
@@ -52,6 +56,10 @@ const TEMPORARILY_UNSUPPORTED_PRIMARY_GOALS = new Set(['STRENGTH', 'MIXED']);
 
 function isAIWeeklyPlanBuilderEnabled(env = process.env) {
   return String(env.ENABLE_AI_WEEKLY_PLAN_BUILDER || '').toLowerCase() === 'true';
+}
+
+function isAIWeeklyPlanReviewEnabled(env = process.env) {
+  return String(env.ENABLE_AI_WEEKLY_PLAN_REVIEW || '').toLowerCase() === 'true';
 }
 
 function mapExercisePoolError(error) {
@@ -76,6 +84,28 @@ function mapWeeklyPlanAnalyticsError(error) {
     'AI_WEEKLY_PLAN_ANALYTICS_FAILED',
     'AI weekly plan analytics could not be calculated'
   );
+}
+
+function mapAIProgramReviewError(error) {
+  if (!(error instanceof AIProgramReviewError)) {
+    return error;
+  }
+
+  const messages = {
+    AI_WEEKLY_PLAN_REVIEW_INPUT_INCOMPLETE: 'AI weekly plan review input is incomplete',
+    AI_WEEKLY_PLAN_REVIEW_INPUT_TOO_LARGE: 'AI weekly plan review input is too large',
+    AI_WEEKLY_PLAN_REVIEW_SCHEMA_VALIDATION_FAILED:
+      'AI weekly plan review provider returned output that does not match the schema',
+    AI_WEEKLY_PLAN_REVIEW_SEMANTIC_VALIDATION_FAILED:
+      'AI weekly plan review provider returned semantically invalid output',
+    AI_WEEKLY_PLAN_REVIEW_INVALID_RESPONSE:
+      'AI weekly plan review provider returned an invalid response',
+  };
+  const code = Object.prototype.hasOwnProperty.call(messages, error.code)
+    ? error.code
+    : 'AI_WEEKLY_PLAN_REVIEW_INVALID_RESPONSE';
+
+  return new ApiError(502, code, messages[code]);
 }
 
 function assertAIWeeklyPlanBuilderEnabled(env) {
@@ -288,6 +318,86 @@ function assertPoolValidationOk(poolValidation, options = {}) {
   );
 }
 
+function buildBypassedAIProgramReview() {
+  return {
+    enabled: false,
+    decision: null,
+    requiresRepair: false,
+    issueCount: 0,
+    severityCounts: {
+      INFO: 0,
+      LOW: 0,
+      MEDIUM: 0,
+      HIGH: 0,
+    },
+    categoryCounts: {},
+    repairIssues: [],
+  };
+}
+
+function buildReviewDecisionErrorDetails(review = {}) {
+  return {
+    decision: review.decision || null,
+    issueCount: Number.isSafeInteger(review.issueCount) ? review.issueCount : 0,
+    severityCounts: review.severityCounts || {
+      INFO: 0,
+      LOW: 0,
+      MEDIUM: 0,
+      HIGH: 0,
+    },
+    categoryCounts: review.categoryCounts || {},
+  };
+}
+
+function assertAIProgramReviewAllowsPersistence(review) {
+  if (review?.enabled !== true) {
+    throw new ApiError(
+      502,
+      'AI_WEEKLY_PLAN_REVIEW_INVALID_RESPONSE',
+      'AI weekly plan review provider returned an invalid response'
+    );
+  }
+
+  if (
+    review?.decision === 'PASS' &&
+    review.requiresRepair === false &&
+    review.review &&
+    typeof review.review === 'object' &&
+    !Array.isArray(review.review) &&
+    review.review.decision === 'PASS' &&
+    review.review.requiresRepair === false &&
+    review.provider &&
+    typeof review.provider === 'object' &&
+    !Array.isArray(review.provider)
+  ) {
+    return;
+  }
+
+  if (review?.decision === 'REPAIR_REQUIRED') {
+    throw new ApiError(
+      422,
+      'AI_WEEKLY_PLAN_REVIEW_REQUIRES_REPAIR',
+      'AI weekly plan review requires a repair before persistence',
+      buildReviewDecisionErrorDetails(review)
+    );
+  }
+
+  if (review?.decision === 'FAIL') {
+    throw new ApiError(
+      422,
+      'AI_WEEKLY_PLAN_REVIEW_FAILED',
+      'AI weekly plan review rejected the generated plan',
+      buildReviewDecisionErrorDetails(review)
+    );
+  }
+
+  throw new ApiError(
+    502,
+    'AI_WEEKLY_PLAN_REVIEW_INVALID_RESPONSE',
+    'AI weekly plan review provider returned an invalid response'
+  );
+}
+
 function normalizeGeneratedAIOutput(generatedAIOutput, context) {
   const schemaValidation = validateWeeklyPlanAiOutputSchema(generatedAIOutput);
 
@@ -413,6 +523,26 @@ async function createAIWeeklyPlanDraft(payload = {}, deps = {}) {
     throw mapWeeklyPlanAnalyticsError(error);
   }
 
+  let aiReview = buildBypassedAIProgramReview();
+  if (isAIWeeklyPlanReviewEnabled(env)) {
+    try {
+      aiReview = await (deps.runAIProgramReview || runAIProgramReview)(
+        {
+          doctrine,
+          context,
+          generatedAIOutput,
+          generatedPlanDocument: prepared.document,
+          analytics,
+        },
+        deps
+      );
+    } catch (error) {
+      throw mapAIProgramReviewError(error);
+    }
+
+    assertAIProgramReviewAllowsPersistence(aiReview);
+  }
+
   const generatedPlanDocumentForAudit = generatedAIOutput
     ? prepared.document
     : {
@@ -439,6 +569,7 @@ async function createAIWeeklyPlanDraft(payload = {}, deps = {}) {
       businessRulesValidation: prepared.businessRulesValidation,
       analytics,
       generator: generatedArtifact.generator,
+      aiReview,
     });
   } catch (error) {
     throw mapWeeklyPlanAnalyticsError(error);
@@ -453,7 +584,11 @@ async function createAIWeeklyPlanDraft(payload = {}, deps = {}) {
 }
 
 module.exports = {
+  assertAIProgramReviewAllowsPersistence,
+  buildBypassedAIProgramReview,
   createAIWeeklyPlanDraft,
   isAIWeeklyPlanBuilderEnabled,
+  isAIWeeklyPlanReviewEnabled,
+  mapAIProgramReviewError,
   mapExercisePoolError,
 };

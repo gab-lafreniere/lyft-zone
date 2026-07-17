@@ -118,6 +118,81 @@ test('POST /api/weekly-plans/ai-drafts maps controlled provider errors', async (
   }
 });
 
+test('POST /api/weekly-plans/ai-drafts returns only compact public details for blocked AI reviews', async (t) => {
+  const cases = [
+    {
+      name: 'repair required',
+      code: 'AI_WEEKLY_PLAN_REVIEW_REQUIRES_REPAIR',
+      message: 'AI weekly plan review requires a repair before persistence',
+      details: {
+        decision: 'REPAIR_REQUIRED',
+        issueCount: 2,
+        severityCounts: {
+          INFO: 0,
+          LOW: 1,
+          MEDIUM: 0,
+          HIGH: 1,
+        },
+        categoryCounts: {
+          EXERCISE_REDUNDANCY: 1,
+          PRESCRIPTION_PARAMETERS: 1,
+        },
+      },
+    },
+    {
+      name: 'review failed',
+      code: 'AI_WEEKLY_PLAN_REVIEW_FAILED',
+      message: 'AI weekly plan review rejected the generated plan',
+      details: {
+        decision: 'FAIL',
+        issueCount: 1,
+        severityCounts: {
+          INFO: 0,
+          LOW: 0,
+          MEDIUM: 0,
+          HIGH: 1,
+        },
+        categoryCounts: {
+          CAUTION_HANDLING: 1,
+        },
+      },
+    },
+  ];
+
+  for (const entry of cases) {
+    await t.test(entry.name, async () => {
+      createAIWeeklyPlanDraft = async () => {
+        const error = new Error(entry.message);
+        error.status = 422;
+        error.code = entry.code;
+        error.details = entry.details;
+        throw error;
+      };
+
+      const res = await invokeAIDraftsRoute();
+
+      assert.equal(res.statusCode, 422);
+      assert.deepEqual(res.body, {
+        error: {
+          code: entry.code,
+          message: entry.message,
+          details: entry.details,
+        },
+      });
+      assert.deepEqual(Object.keys(res.body.error.details).sort(), [
+        'categoryCounts',
+        'decision',
+        'issueCount',
+        'severityCounts',
+      ]);
+      assert.doesNotMatch(
+        JSON.stringify(res.body),
+        /suggestedAction|review input|output raw|prompt|doctrine|notes|pool|reasoning|\/plan\//i
+      );
+    });
+  }
+});
+
 test('POST /api/weekly-plans/ai-drafts maps temporarily unsupported goals with details', async () => {
   createAIWeeklyPlanDraft = async () => {
     const error = new Error(

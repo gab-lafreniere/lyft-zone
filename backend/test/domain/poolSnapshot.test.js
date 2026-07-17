@@ -26,6 +26,7 @@ function createPoolResult() {
           trainingType: 'strength',
           attributes: {
             movementPattern: 'horizontal_pull',
+            jointStressTags: ['spinal_loading'],
             bodyParts: ['back'],
             muscleFocus: ['lats'],
             targetMuscles: ['latissimus_dorsi'],
@@ -101,6 +102,7 @@ test('createPoolSnapshot stores allowedExerciseIds, counts, constraints, and sta
 
 test('createPoolSummary and createExercisePoolItems keep generation payload compact', () => {
   const poolResult = createPoolResult();
+  const exercisePoolItems = createExercisePoolItems(poolResult);
 
   assert.deepEqual(createPoolSummary(poolResult), {
     totalExercises: 3,
@@ -111,11 +113,12 @@ test('createPoolSummary and createExercisePoolItems keep generation payload comp
     },
   });
 
-  assert.deepEqual(createExercisePoolItems(poolResult)[0], {
+  assert.deepEqual(exercisePoolItems[0], {
     exerciseId: 'ex_row',
     name: 'Dumbbell Row',
     trainingType: 'strength',
     movementPattern: 'horizontal_pull',
+    jointStressTags: ['spinal_loading'],
     bodyParts: ['back'],
     muscleFocus: ['lats'],
     targetMuscles: ['latissimus_dorsi'],
@@ -135,4 +138,46 @@ test('createPoolSummary and createExercisePoolItems keep generation payload comp
       },
     },
   });
+  assert.deepEqual(exercisePoolItems[1].jointStressTags, []);
+});
+
+test('createExercisePoolItems normalizes joint stress tags deterministically without mutating source metadata', () => {
+  const poolResult = createPoolResult();
+  const sourceTags = [
+    ' Shoulder_Load ',
+    '',
+    'elbow_load',
+    'shoulder_load',
+    'ELBOW_LOAD',
+    null,
+  ];
+  poolResult.pool.items[0].attributes.jointStressTags = sourceTags;
+
+  const firstItems = createExercisePoolItems(poolResult);
+  const secondItems = createExercisePoolItems(poolResult);
+
+  assert.deepEqual(firstItems[0].jointStressTags, ['elbow_load', 'shoulder_load']);
+  assert.deepEqual(secondItems, firstItems);
+  assert.deepEqual(poolResult.pool.items[0].attributes.jointStressTags, sourceTags);
+  assert.deepEqual(Object.keys(firstItems[0]).sort(), [
+    'bodyParts',
+    'cardioImpactLevel',
+    'cardioModality',
+    'difficulty',
+    'equipmentCategory',
+    'equipmentNeeded',
+    'exerciseId',
+    'fatigueScore',
+    'isSupersetFriendly',
+    'jointStressTags',
+    'mechanicType',
+    'movementPattern',
+    'muscleFocus',
+    'name',
+    'secondaryMuscles',
+    'softSignals',
+    'targetMuscles',
+    'trainingType',
+    'unilateralType',
+  ]);
 });

@@ -5,7 +5,8 @@ const {
   buildWeeklyPlanAnalyticsAuditSummary,
 } = require('./weeklyPlanAnalytics');
 
-const GENERATION_CONTEXT_SCHEMA_VERSION = 4;
+const GENERATION_CONTEXT_SCHEMA_VERSION = 5;
+const REVIEW_SEVERITIES = Object.freeze(['INFO', 'LOW', 'MEDIUM', 'HIGH']);
 
 function normalizeOptionalString(value) {
   const normalized = String(value ?? '').trim();
@@ -28,6 +29,91 @@ function buildGeneratorAuditMetadata(generator = {}) {
       reasoningTokens: normalizeTokenCount(generator.usage?.reasoningTokens),
     },
   };
+}
+
+function createReviewSeverityCounts() {
+  return {
+    INFO: 0,
+    LOW: 0,
+    MEDIUM: 0,
+    HIGH: 0,
+  };
+}
+
+function buildBypassedReviewAuditMetadata() {
+  return {
+    enabled: false,
+    outcome: 'BYPASSED',
+    reviewAttempts: 0,
+    schemaVersion: 1,
+    contractVersion: 1,
+    outputSchemaVersion: 1,
+    promptVersion: null,
+    decision: null,
+    requiresRepair: false,
+    issueCount: 0,
+    severityCounts: createReviewSeverityCounts(),
+    categoryCounts: {},
+    reviewSummary: null,
+    provider: null,
+  };
+}
+
+function buildPassedReviewAuditMetadata(aiReview = {}) {
+  const review = aiReview.review || {};
+
+  if (review.decision !== 'PASS' || review.requiresRepair !== false) {
+    throw new Error('Only a passed AI program review may be persisted');
+  }
+
+  const severityCounts = createReviewSeverityCounts();
+  const categoryCounts = {};
+  const issues = Array.isArray(review.issues) ? review.issues : [];
+
+  issues.forEach((issue) => {
+    if (REVIEW_SEVERITIES.includes(issue?.severity)) {
+      severityCounts[issue.severity] += 1;
+    }
+
+    const category = normalizeOptionalString(issue?.category);
+    if (category) {
+      categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+    }
+  });
+
+  return {
+    enabled: true,
+    outcome: 'PASSED',
+    reviewAttempts: 1,
+    schemaVersion:
+      Number.isSafeInteger(review.schemaVersion) && review.schemaVersion > 0
+        ? review.schemaVersion
+        : 1,
+    contractVersion:
+      Number.isSafeInteger(aiReview.contractVersion) && aiReview.contractVersion > 0
+        ? aiReview.contractVersion
+        : 1,
+    outputSchemaVersion:
+      Number.isSafeInteger(aiReview.outputSchemaVersion) && aiReview.outputSchemaVersion > 0
+        ? aiReview.outputSchemaVersion
+        : 1,
+    promptVersion: normalizeOptionalString(aiReview.promptVersion),
+    decision: 'PASS',
+    requiresRepair: false,
+    issueCount: issues.length,
+    severityCounts,
+    categoryCounts,
+    reviewSummary: normalizeOptionalString(review.reviewSummary),
+    provider: aiReview.provider ? buildGeneratorAuditMetadata(aiReview.provider) : null,
+  };
+}
+
+function buildAIReviewAuditMetadata(aiReview = {}) {
+  if (!aiReview?.enabled) {
+    return buildBypassedReviewAuditMetadata();
+  }
+
+  return buildPassedReviewAuditMetadata(aiReview);
 }
 
 function buildProfileSnapshotSummary(context = {}) {
@@ -62,6 +148,7 @@ function buildWeeklyPlanGenerationContext({
   businessRulesValidation,
   analytics,
   generator = {},
+  aiReview = {},
 }) {
   const poolValidation = validation?.poolValidation || validation || {};
   const uniqueExerciseIds = poolValidation?.uniqueExerciseIds || [];
@@ -93,6 +180,7 @@ function buildWeeklyPlanGenerationContext({
     progressionModel: aiMetadata.progressionModel || null,
     cautionHandling: aiMetadata.cautionHandling || null,
     notesPolicy: aiMetadata.notesPolicy || null,
+    aiReview: buildAIReviewAuditMetadata(aiReview),
     validationSummary: {
       aiOutputSchemaValidation: validation?.schemaValidation
         ? {
@@ -135,6 +223,8 @@ function buildWeeklyPlanGenerationContext({
 
 module.exports = {
   GENERATION_CONTEXT_SCHEMA_VERSION,
+  buildAIReviewAuditMetadata,
+  buildBypassedReviewAuditMetadata,
   buildGeneratorAuditMetadata,
   buildProfileSnapshotSummary,
   buildWeeklyPlanGenerationContext,

@@ -11,3 +11,7 @@ test('getModelForTask maps movement_analysis to SMALL_TASK', () => {
 test('getModelForTask keeps program_generation on PROGRAM_GENERATION', () => {
   assert.equal(getModelForTask('program_generation'), AI_MODELS.PROGRAM_GENERATION);
 });
+
+test('getModelForTask routes program_review to PROGRAM_REVIEW', () => {
+  assert.equal(getModelForTask('program_review'), AI_MODELS.PROGRAM_REVIEW);
+});
