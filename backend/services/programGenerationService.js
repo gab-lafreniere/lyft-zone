@@ -28,6 +28,8 @@ const {
   validateGeneratedExerciseIdsAgainstPool,
 } = require('../src/domain/programGeneration/weeklyPlanAiValidation');
 const {
+  AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION,
+  AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION,
   buildWeeklyPlanAiJsonSchema,
   validateWeeklyPlanAiOutputSchema,
 } = require('../src/domain/programGeneration/weeklyPlanAiSchema');
@@ -45,6 +47,13 @@ const {
   AIProgramReviewError,
   runAIProgramReview,
 } = require('../src/domain/programGeneration/aiProgramReview');
+const {
+  AIProgramRepairError,
+  runAIProgramRepair,
+} = require('../src/domain/programGeneration/aiProgramRepair');
+const {
+  PROGRAM_REPAIR_PROMPT_VERSION,
+} = require('../src/domain/programGeneration/prompts/programRepairPrompt');
 
 const EXERCISE_POOL_ERROR_STATUS = Object.freeze({
   PROFILE_NOT_READY: 409,
@@ -60,6 +69,10 @@ function isAIWeeklyPlanBuilderEnabled(env = process.env) {
 
 function isAIWeeklyPlanReviewEnabled(env = process.env) {
   return String(env.ENABLE_AI_WEEKLY_PLAN_REVIEW || '').toLowerCase() === 'true';
+}
+
+function isAIWeeklyPlanRepairEnabled(env = process.env) {
+  return String(env.ENABLE_AI_WEEKLY_PLAN_REPAIR || '').toLowerCase() === 'true';
 }
 
 function mapExercisePoolError(error) {
@@ -104,6 +117,26 @@ function mapAIProgramReviewError(error) {
   const code = Object.prototype.hasOwnProperty.call(messages, error.code)
     ? error.code
     : 'AI_WEEKLY_PLAN_REVIEW_INVALID_RESPONSE';
+
+  return new ApiError(502, code, messages[code]);
+}
+
+function mapAIProgramRepairError(error) {
+  if (!(error instanceof AIProgramRepairError)) {
+    return error;
+  }
+
+  const messages = {
+    AI_WEEKLY_PLAN_REPAIR_INPUT_INVALID: 'AI weekly plan repair input is invalid',
+    AI_WEEKLY_PLAN_REPAIR_PROMPT_BUILD_FAILED:
+      'AI weekly plan repair prompt could not be prepared',
+    AI_WEEKLY_PLAN_REPAIR_INPUT_TOO_LARGE: 'AI weekly plan repair input is too large',
+    AI_WEEKLY_PLAN_REPAIR_INVALID_PROVIDER_RESPONSE:
+      'AI weekly plan repair provider returned an invalid response',
+  };
+  const code = Object.prototype.hasOwnProperty.call(messages, error.code)
+    ? error.code
+    : 'AI_WEEKLY_PLAN_REPAIR_INVALID_PROVIDER_RESPONSE';
 
   return new ApiError(502, code, messages[code]);
 }
@@ -226,6 +259,10 @@ function hasOwn(object, key) {
   return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
 }
 
+function isObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 async function resolveGeneratedArtifact(promptDescriptor, deps = {}) {
   if (hasOwn(deps, 'generatedAIOutput')) {
     return {
@@ -287,6 +324,13 @@ function buildAIOutputErrorDetails(stage, issues = []) {
   };
 }
 
+function buildRepairValidationErrorDetails(stage, issues = []) {
+  return {
+    stage,
+    issueCount: Array.isArray(issues) ? issues.length : 0,
+  };
+}
+
 function resolveSemanticValidationErrorCode(issues = []) {
   if (issues.some((issue) => issue.code === 'UNSUPPORTED_BLOCK_TYPE')) {
     return 'AI_WEEKLY_PLAN_UNSUPPORTED_BLOCK_TYPE';
@@ -306,6 +350,15 @@ function resolveSemanticValidationErrorCode(issues = []) {
 function assertPoolValidationOk(poolValidation, options = {}) {
   if (poolValidation.ok) {
     return;
+  }
+
+  if (options.repair) {
+    throw new ApiError(
+      422,
+      'AI_WEEKLY_PLAN_REPAIR_POOL_VIOLATION',
+      'Repaired AI weekly plan contains exercises outside the generation pool snapshot',
+      buildRepairValidationErrorDetails('pool', poolValidation.issues)
+    );
   }
 
   throw new ApiError(
@@ -349,8 +402,34 @@ function buildReviewDecisionErrorDetails(review = {}) {
   };
 }
 
+function isValidAIProgramReviewResult(review) {
+  if (
+    review?.enabled !== true ||
+    !isObject(review.review) ||
+    !isObject(review.provider) ||
+    review.review.decision !== review.decision ||
+    review.review.requiresRepair !== review.requiresRepair
+  ) {
+    return false;
+  }
+
+  if (review.decision === 'PASS') {
+    return review.requiresRepair === false;
+  }
+
+  if (review.decision === 'REPAIR_REQUIRED') {
+    return review.requiresRepair === true;
+  }
+
+  if (review.decision === 'FAIL') {
+    return review.requiresRepair === false;
+  }
+
+  return false;
+}
+
 function assertAIProgramReviewAllowsPersistence(review) {
-  if (review?.enabled !== true) {
+  if (!isValidAIProgramReviewResult(review)) {
     throw new ApiError(
       502,
       'AI_WEEKLY_PLAN_REVIEW_INVALID_RESPONSE',
@@ -359,16 +438,8 @@ function assertAIProgramReviewAllowsPersistence(review) {
   }
 
   if (
-    review?.decision === 'PASS' &&
-    review.requiresRepair === false &&
-    review.review &&
-    typeof review.review === 'object' &&
-    !Array.isArray(review.review) &&
-    review.review.decision === 'PASS' &&
-    review.review.requiresRepair === false &&
-    review.provider &&
-    typeof review.provider === 'object' &&
-    !Array.isArray(review.provider)
+    review.decision === 'PASS' &&
+    review.requiresRepair === false
   ) {
     return;
   }
@@ -398,10 +469,147 @@ function assertAIProgramReviewAllowsPersistence(review) {
   );
 }
 
-function normalizeGeneratedAIOutput(generatedAIOutput, context) {
+function assertAIProgramReviewResultIsValid(review) {
+  if (!isValidAIProgramReviewResult(review)) {
+    throw new ApiError(
+      502,
+      'AI_WEEKLY_PLAN_REVIEW_INVALID_RESPONSE',
+      'AI weekly plan review provider returned an invalid response'
+    );
+  }
+}
+
+function buildFinalReviewErrorDetails(review = {}) {
+  const details = buildReviewDecisionErrorDetails(review);
+
+  return {
+    finalDecision: details.decision,
+    issueCount: details.issueCount,
+    severityCounts: details.severityCounts,
+    categoryCounts: details.categoryCounts,
+  };
+}
+
+function assertFinalAIProgramReviewAllowsPersistence(review) {
+  assertAIProgramReviewResultIsValid(review);
+
+  if (review.decision === 'PASS') {
+    return;
+  }
+
+  throw new ApiError(
+    422,
+    'AI_WEEKLY_PLAN_REPAIR_FAILED',
+    'AI weekly plan repair did not pass final review',
+    buildFinalReviewErrorDetails(review)
+  );
+}
+
+function hasOnlyKeys(object, allowedKeys) {
+  return isObject(object) && Object.keys(object).every((key) => allowedKeys.includes(key));
+}
+
+function isValidRepairerMetadata(repairer) {
+  const tokenKeys = ['inputTokens', 'outputTokens', 'totalTokens', 'reasoningTokens'];
+  const isValidTokenCount = (value) =>
+    value === null || (Number.isSafeInteger(value) && value >= 0);
+
+  return (
+    hasOnlyKeys(repairer, ['type', 'model', 'responseId', 'usage']) &&
+    repairer.type === 'openai' &&
+    typeof repairer.model === 'string' &&
+    Boolean(repairer.model.trim()) &&
+    (repairer.responseId === null ||
+      (typeof repairer.responseId === 'string' && Boolean(repairer.responseId.trim()))) &&
+    hasOnlyKeys(repairer.usage, tokenKeys) &&
+    tokenKeys.every((key) => hasOwn(repairer.usage, key)) &&
+    tokenKeys.every((key) => isValidTokenCount(repairer.usage[key]))
+  );
+}
+
+function assertAIProgramRepairResult(repairResult) {
+  if (
+    !isObject(repairResult) ||
+    repairResult.attemptNumber !== 1 ||
+    repairResult.promptVersion !== PROGRAM_REPAIR_PROMPT_VERSION ||
+    repairResult.contractVersion !== AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION ||
+    repairResult.outputSchemaVersion !== AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION ||
+    !isObject(repairResult.repairedAIOutput) ||
+    !isValidRepairerMetadata(repairResult.repairer)
+  ) {
+    throw new AIProgramRepairError(
+      'AI_WEEKLY_PLAN_REPAIR_INVALID_PROVIDER_RESPONSE',
+      'AI weekly plan repair provider returned an invalid response'
+    );
+  }
+}
+
+function buildInitialReviewSummary(review = {}) {
+  const details = buildReviewDecisionErrorDetails(review);
+
+  return {
+    decision: details.decision,
+    issueCount: details.issueCount,
+    severityCounts: details.severityCounts,
+    categoryCounts: details.categoryCounts,
+  };
+}
+
+function buildBypassedAIRepairMetadata(enabled) {
+  return {
+    enabled,
+    outcome: 'BYPASSED',
+    attempts: 0,
+    maxAttempts: 1,
+    promptVersion: null,
+    contractVersion: AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION,
+    outputSchemaVersion: AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION,
+    initialReviewSummary: null,
+    provider: null,
+  };
+}
+
+function buildNotRequiredAIRepairMetadata(initialReview) {
+  return {
+    enabled: true,
+    outcome: 'NOT_REQUIRED',
+    attempts: 0,
+    maxAttempts: 1,
+    promptVersion: null,
+    contractVersion: AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION,
+    outputSchemaVersion: AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION,
+    initialReviewSummary: buildInitialReviewSummary(initialReview),
+    provider: null,
+  };
+}
+
+function buildPassedAIRepairMetadata(repairResult, initialReview) {
+  return {
+    enabled: true,
+    outcome: 'PASSED',
+    attempts: 1,
+    maxAttempts: 1,
+    promptVersion: repairResult.promptVersion,
+    contractVersion: repairResult.contractVersion,
+    outputSchemaVersion: repairResult.outputSchemaVersion,
+    initialReviewSummary: buildInitialReviewSummary(initialReview),
+    provider: repairResult.repairer,
+  };
+}
+
+function normalizeGeneratedAIOutput(generatedAIOutput, context, options = {}) {
   const schemaValidation = validateWeeklyPlanAiOutputSchema(generatedAIOutput);
 
   if (!schemaValidation.ok) {
+    if (options.repair) {
+      throw new ApiError(
+        502,
+        'AI_WEEKLY_PLAN_REPAIR_SCHEMA_VALIDATION_FAILED',
+        'Repaired AI weekly plan output does not match the schema',
+        buildRepairValidationErrorDetails('schema', schemaValidation.issues)
+      );
+    }
+
     throw new ApiError(
       502,
       'AI_WEEKLY_PLAN_SCHEMA_VALIDATION_FAILED',
@@ -413,6 +621,15 @@ function normalizeGeneratedAIOutput(generatedAIOutput, context) {
   const semanticValidation = validateWeeklyPlanAiOutputSemantics(schemaValidation.value);
 
   if (!semanticValidation.ok) {
+    if (options.repair) {
+      throw new ApiError(
+        502,
+        'AI_WEEKLY_PLAN_REPAIR_SEMANTIC_VALIDATION_FAILED',
+        'Repaired AI weekly plan output is semantically invalid',
+        buildRepairValidationErrorDetails('semantic', semanticValidation.issues)
+      );
+    }
+
     throw new ApiError(
       502,
       resolveSemanticValidationErrorCode(semanticValidation.issues),
@@ -423,10 +640,18 @@ function normalizeGeneratedAIOutput(generatedAIOutput, context) {
 
   let generatedPlanDocument;
   try {
-    generatedPlanDocument = normalizeWeeklyPlanAiOutput(semanticValidation.value, {
-      context,
-    });
+    generatedPlanDocument = (
+      options.normalizeWeeklyPlanAiOutput || normalizeWeeklyPlanAiOutput
+    )(semanticValidation.value, { context });
   } catch (error) {
+    if (options.repair) {
+      throw new ApiError(
+        502,
+        'AI_WEEKLY_PLAN_REPAIR_NORMALIZATION_FAILED',
+        'Repaired AI weekly plan output could not be normalized'
+      );
+    }
+
     throw new ApiError(
       502,
       'AI_WEEKLY_PLAN_NORMALIZATION_FAILED',
@@ -523,10 +748,21 @@ async function createAIWeeklyPlanDraft(payload = {}, deps = {}) {
     throw mapWeeklyPlanAnalyticsError(error);
   }
 
+  const reviewEnabled = isAIWeeklyPlanReviewEnabled(env);
+  const repairEnabled = isAIWeeklyPlanRepairEnabled(env);
+  let finalGeneratedAIOutput = generatedAIOutput;
+  let finalPrepared = prepared;
+  let finalSchemaValidation = schemaValidation;
+  let finalSemanticValidation = semanticValidation;
+  let finalPoolValidation = poolValidation;
+  let finalAnalytics = analytics;
   let aiReview = buildBypassedAIProgramReview();
-  if (isAIWeeklyPlanReviewEnabled(env)) {
+  let aiRepair = buildBypassedAIRepairMetadata(repairEnabled);
+
+  if (reviewEnabled) {
+    let initialReview;
     try {
-      aiReview = await (deps.runAIProgramReview || runAIProgramReview)(
+      initialReview = await (deps.runAIProgramReview || runAIProgramReview)(
         {
           doctrine,
           context,
@@ -540,13 +776,133 @@ async function createAIWeeklyPlanDraft(payload = {}, deps = {}) {
       throw mapAIProgramReviewError(error);
     }
 
-    assertAIProgramReviewAllowsPersistence(aiReview);
+    assertAIProgramReviewResultIsValid(initialReview);
+
+    if (initialReview.decision === 'PASS') {
+      assertAIProgramReviewAllowsPersistence(initialReview);
+      aiReview = initialReview;
+      if (repairEnabled) {
+        aiRepair = buildNotRequiredAIRepairMetadata(initialReview);
+      }
+    } else if (initialReview.decision === 'FAIL' || !repairEnabled) {
+      assertAIProgramReviewAllowsPersistence(initialReview);
+    } else {
+      if (!generatedAIOutput) {
+        throw new ApiError(
+          502,
+          'AI_WEEKLY_PLAN_REPAIR_INPUT_INVALID',
+          'AI weekly plan repair input is invalid'
+        );
+      }
+
+      let repairResult;
+      try {
+        repairResult = await (deps.runAIProgramRepair || runAIProgramRepair)(
+          {
+            doctrine,
+            context,
+            generatedAIOutput,
+            generatedPlanDocument: prepared.document,
+            analytics,
+            initialReview,
+          },
+          deps
+        );
+        assertAIProgramRepairResult(repairResult);
+      } catch (error) {
+        throw mapAIProgramRepairError(error);
+      }
+
+      const repairedAIOutput = repairResult.repairedAIOutput;
+      const normalizedRepairedArtifact = normalizeGeneratedAIOutput(
+        repairedAIOutput,
+        context,
+        {
+          repair: true,
+          normalizeWeeklyPlanAiOutput: deps.normalizeWeeklyPlanAiOutput,
+        }
+      );
+      const repairedPoolValidation = validateGeneratedExerciseIdsAgainstPool(
+        normalizedRepairedArtifact.generatedPlanDocument,
+        context.poolSnapshot
+      );
+      assertPoolValidationOk(repairedPoolValidation, { repair: true });
+
+      let preparedRepaired;
+      try {
+        preparedRepaired = await (
+          deps.prepareAIWeeklyPlanDraftForCreate || prepareAIWeeklyPlanDraftForCreate
+        )({
+          ...normalizedRepairedArtifact.generatedPlanDocument,
+          userId: payload.userId,
+          source: 'ai',
+        });
+
+        if (!isObject(preparedRepaired) || !isObject(preparedRepaired.document)) {
+          throw new Error('Invalid repaired weekly plan preflight result');
+        }
+      } catch (_error) {
+        throw new ApiError(
+          422,
+          'AI_WEEKLY_PLAN_REPAIR_BUSINESS_RULES_FAILED',
+          'Repaired AI weekly plan failed business rules validation',
+          { stage: 'business_rules' }
+        );
+      }
+
+      let repairedAnalytics;
+      try {
+        repairedAnalytics = await (
+          deps.calculateWeeklyPlanAnalytics || calculateWeeklyPlanAnalytics
+        )({
+          generatedAIOutput: repairedAIOutput,
+          generatedPlanDocument: preparedRepaired.document,
+          context,
+        });
+      } catch (_error) {
+        throw new ApiError(
+          500,
+          'AI_WEEKLY_PLAN_REPAIR_ANALYTICS_FAILED',
+          'Repaired AI weekly plan analytics could not be calculated'
+        );
+      }
+
+      let finalReview;
+      try {
+        finalReview = await (deps.runAIProgramReview || runAIProgramReview)(
+          {
+            doctrine,
+            context,
+            generatedAIOutput: repairedAIOutput,
+            generatedPlanDocument: preparedRepaired.document,
+            analytics: repairedAnalytics,
+          },
+          deps
+        );
+      } catch (error) {
+        throw mapAIProgramReviewError(error);
+      }
+
+      assertFinalAIProgramReviewAllowsPersistence(finalReview);
+
+      finalGeneratedAIOutput = repairedAIOutput;
+      finalPrepared = preparedRepaired;
+      finalSchemaValidation = normalizedRepairedArtifact.schemaValidation;
+      finalSemanticValidation = normalizedRepairedArtifact.semanticValidation;
+      finalPoolValidation = repairedPoolValidation;
+      finalAnalytics = repairedAnalytics;
+      aiReview = {
+        ...finalReview,
+        reviewAttempts: 2,
+      };
+      aiRepair = buildPassedAIRepairMetadata(repairResult, initialReview);
+    }
   }
 
-  const generatedPlanDocumentForAudit = generatedAIOutput
-    ? prepared.document
+  const generatedPlanDocumentForAudit = finalGeneratedAIOutput
+    ? finalPrepared.document
     : {
-        ...prepared.document,
+        ...finalPrepared.document,
         strategySummary:
           typeof generatedPlanDocument?.strategySummary === 'string'
             ? generatedPlanDocument.strategySummary
@@ -559,24 +915,25 @@ async function createAIWeeklyPlanDraft(payload = {}, deps = {}) {
       deps.buildWeeklyPlanGenerationContext || buildWeeklyPlanGenerationContext
     )({
       context,
-      generatedAIOutput,
+      generatedAIOutput: finalGeneratedAIOutput,
       generatedPlanDocument: generatedPlanDocumentForAudit,
       validation: {
-        schemaValidation,
-        semanticValidation,
-        poolValidation,
+        schemaValidation: finalSchemaValidation,
+        semanticValidation: finalSemanticValidation,
+        poolValidation: finalPoolValidation,
       },
-      businessRulesValidation: prepared.businessRulesValidation,
-      analytics,
+      businessRulesValidation: finalPrepared.businessRulesValidation,
+      analytics: finalAnalytics,
       generator: generatedArtifact.generator,
       aiReview,
+      aiRepair,
     });
   } catch (error) {
     throw mapWeeklyPlanAnalyticsError(error);
   }
 
   return (deps.createWeeklyPlan || createWeeklyPlan)({
-    ...prepared.document,
+    ...finalPrepared.document,
     userId: payload.userId,
     source: 'ai',
     generationContext,
@@ -588,7 +945,9 @@ module.exports = {
   buildBypassedAIProgramReview,
   createAIWeeklyPlanDraft,
   isAIWeeklyPlanBuilderEnabled,
+  isAIWeeklyPlanRepairEnabled,
   isAIWeeklyPlanReviewEnabled,
+  mapAIProgramRepairError,
   mapAIProgramReviewError,
   mapExercisePoolError,
 };
