@@ -14,6 +14,9 @@ const {
   WeeklyPlanAnalyticsError,
 } = require('../../src/domain/programGeneration/weeklyPlanAnalytics');
 const {
+  WEEKLY_PLAN_EVALUATION_POLICY,
+} = require('../../src/domain/programGeneration/weeklyPlanEvaluationPolicy');
+const {
   AIProgramReviewError,
 } = require('../../src/domain/programGeneration/aiProgramReview');
 
@@ -113,7 +116,7 @@ function createReviewResult({
       issues,
     },
     provider,
-    promptVersion: 'ai-program-review-prompt-v1.0.0',
+    promptVersion: 'ai-program-review-prompt-v1.1.0',
     contractVersion: 1,
     outputSchemaVersion: 1,
     decision,
@@ -129,7 +132,7 @@ function createReviewResult({
 
 function createContext(overrides = {}) {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     generationMode: 'weekly_plan_draft',
     coachInputs: null,
     userId: 'user_123',
@@ -141,6 +144,7 @@ function createContext(overrides = {}) {
       sessionsPerWeek: 1,
       durationPerSession: 60,
     },
+    evaluationPolicy: WEEKLY_PLAN_EVALUATION_POLICY,
     musclePriorityProfile: {},
     equipmentContext: {
       equipmentPreset: 'full_gym',
@@ -798,7 +802,15 @@ test('createAIWeeklyPlanDraft creates an AI draft from a valid mock generated do
   assert.equal(createPayload.source, 'ai');
   assert.equal(createPayload.name, 'AI Draft');
   assert.equal(createPayload.generationContext.generationType, 'ai_weekly_plan_builder_v1');
-  assert.equal(createPayload.generationContext.schemaVersion, 5);
+  assert.equal(createPayload.generationContext.schemaVersion, 6);
+  assert.deepEqual(createPayload.generationContext.evaluationPolicy, {
+    id: WEEKLY_PLAN_EVALUATION_POLICY.id,
+    version: WEEKLY_PLAN_EVALUATION_POLICY.version,
+  });
+  assert.deepEqual(Object.keys(createPayload.generationContext.evaluationPolicy), [
+    'id',
+    'version',
+  ]);
   assert.equal(
     createPayload.generationContext.doctrineId,
     'bodybuilding_runtime_classic'
@@ -832,6 +844,15 @@ test('createAIWeeklyPlanDraft creates an AI draft from a valid mock generated do
   );
   assert.equal(createPayload.generationContext.validationSummary.analytics.status, 'complete');
   assert.equal(
+    createPayload.generationContext.validationSummary.analytics.schemaVersion,
+    2
+  );
+  assert.equal(
+    createPayload.generationContext.validationSummary.analytics.duration
+      .requestedDurationMinutesPerWorkout,
+    60
+  );
+  assert.equal(
     createPayload.generationContext.validationSummary.analytics.targetComparisons.volume
       .targetCount,
     0
@@ -845,6 +866,10 @@ test('createAIWeeklyPlanDraft creates an AI draft from a valid mock generated do
   assert.doesNotMatch(persistedAudit, /MOCK_CLASSIC_DOCTRINE_CONTENT_SENTINEL/);
   assert.doesNotMatch(persistedAudit, /MOCK_SYSTEM_MESSAGE_SENTINEL/);
   assert.doesNotMatch(persistedAudit, /MOCK_USER_MESSAGE_SENTINEL/);
+  assert.doesNotMatch(persistedAudit, /historical_weekly_plan_metrics_v1/);
+  assert.doesNotMatch(persistedAudit, /differenceOperation|ratioOperation|classificationRatio/);
+  assert.doesNotMatch(persistedAudit, /"workouts"|"muscleMetrics"|bodyPartDistribution/);
+  assert.equal(createPayload.generationContext.repairAttempts, 0);
   assert.equal(generatorCalled, false);
 });
 
@@ -1338,6 +1363,47 @@ test('createAIWeeklyPlanDraft does not persist when audit construction fails', a
   assert.equal(createCalled, false);
 });
 
+test('createAIWeeklyPlanDraft maps Audit V6 policy identity failures before persistence', async () => {
+  let createCalled = false;
+
+  await assert.rejects(
+    () =>
+      createAIWeeklyPlanDraft(
+        { userId: 'user_123' },
+        {
+          ...createPhase3Deps(),
+          env: enabledEnv(),
+          buildProgramGenerationContext: async () =>
+            createContext({
+              evaluationPolicy: {
+                ...WEEKLY_PLAN_EVALUATION_POLICY,
+                version: 999,
+              },
+            }),
+          generatedPlanDocument: createGeneratedPlanDocument(),
+          calculateWeeklyPlanAnalytics: async () => ({
+            schemaVersion: 2,
+            evaluationPolicy: {
+              id: WEEKLY_PLAN_EVALUATION_POLICY.id,
+              version: WEEKLY_PLAN_EVALUATION_POLICY.version,
+            },
+          }),
+          createWeeklyPlan: async () => {
+            createCalled = true;
+          },
+        }
+      ),
+    (error) => {
+      assert.equal(error.status, 500);
+      assert.equal(error.code, 'AI_WEEKLY_PLAN_ANALYTICS_FAILED');
+      assert.equal(error.message, 'AI weekly plan analytics could not be calculated');
+      return true;
+    }
+  );
+
+  assert.equal(createCalled, false);
+});
+
 test('createAIWeeklyPlanDraft persists below and above target analytics', async () => {
   const generatedAIOutput = createGeneratedAIOutput({
     volumeTargets: {
@@ -1385,7 +1451,7 @@ test('createAIWeeklyPlanDraft persists below and above target analytics', async 
   );
 
   assert.equal(response.source, 'ai');
-  assert.equal(createPayload.generationContext.schemaVersion, 5);
+  assert.equal(createPayload.generationContext.schemaVersion, 6);
   assert.equal(createPayload.generationContext.validationSummary.analytics.status, 'complete');
   assert.equal(
     createPayload.generationContext.validationSummary.analytics.targetComparisons.volume
@@ -1462,7 +1528,7 @@ test('createAIWeeklyPlanDraft persists a PASS review with informational repairab
       issueIndex: 2,
       category: 'SPLIT_DURATION_COHERENCE',
       severity: 'MEDIUM',
-      path: '/analytics/plan/estimatedDurationMinutesAverage',
+      path: '/analytics/plan/calculatedDurationMinutesAverage',
       message: 'PRIVATE_MEDIUM_REVIEW_MESSAGE',
       repairability: 'REPAIRABLE',
       suggestedAction: 'PRIVATE_MEDIUM_REVIEW_ACTION',
@@ -1511,7 +1577,7 @@ test('createAIWeeklyPlanDraft persists a PASS review with informational repairab
     schemaVersion: 1,
     contractVersion: 1,
     outputSchemaVersion: 1,
-    promptVersion: 'ai-program-review-prompt-v1.0.0',
+    promptVersion: 'ai-program-review-prompt-v1.1.0',
     decision: 'PASS',
     requiresRepair: false,
     issueCount: 2,

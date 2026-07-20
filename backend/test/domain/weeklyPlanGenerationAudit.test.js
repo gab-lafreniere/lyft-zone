@@ -6,11 +6,50 @@ const {
   buildAIReviewAuditMetadata,
   buildWeeklyPlanGenerationContext,
 } = require('../../src/domain/programGeneration/weeklyPlanGenerationAudit');
+const {
+  PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION,
+} = require('../../src/domain/programGeneration/programGenerationContextBuilder');
+const {
+  PROGRAM_GENERATION_PROMPT_VERSION,
+} = require('../../src/domain/programGeneration/prompts/programGenerationPrompt');
+const {
+  WeeklyPlanAnalyticsError,
+} = require('../../src/domain/programGeneration/weeklyPlanAnalytics');
+const {
+  DURATION_ALIGNMENT_STATUS,
+  WEEKLY_PLAN_EVALUATION_POLICY,
+  WEEKLY_PLAN_EVALUATION_POLICY_ID,
+  WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+} = require('../../src/domain/programGeneration/weeklyPlanEvaluationPolicy');
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function createContext(overrides = {}) {
+  return {
+    schemaVersion: 4,
+    generationMode: 'weekly_plan_draft',
+    createdAt: '2026-06-01T12:00:00.000Z',
+    evaluationPolicy: WEEKLY_PLAN_EVALUATION_POLICY,
+    coachInputs: {
+      doctrineId: 'bodybuilding_runtime_classic',
+      doctrineVersion: 'bodybuilding-hypertrophy-runtime-classic-v1.0.0',
+      derivedFromDoctrineVersion: 'bodybuilding-hypertrophy-v1.0.0',
+      promptVersion: PROGRAM_GENERATION_PROMPT_VERSION,
+    },
+    ...overrides,
+  };
+}
 
 function createAnalytics(overrides = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     status: 'partial',
+    evaluationPolicy: {
+      id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
+      version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+    },
     plan: {
       workoutCount: 1,
       blockCount: 1,
@@ -23,13 +62,29 @@ function createAnalytics(overrides = {}) {
       singleBlockCount: 1,
       supersetBlockCount: 0,
       cardioBlockCount: 0,
+      requestedDurationMinutesPerWorkout: 60,
+      requestedDurationMinutesTotal: 60,
+      calculatedDurationMinutesTotal: 42,
+      calculatedDurationMinutesAverage: 42,
       estimatedDurationMinutesTotal: 42,
       estimatedDurationMinutesAverage: 42,
       declaredEstimatedDurationMinutesTotal: 60,
       durationDifferenceMinutesTotal: -18,
+      declaredDurationDifferenceMinutesTotal: -18,
+      durationAlignmentStatusCounts: {
+        [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_UNDER_TARGET]: 1,
+        [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_UNDER_TARGET]: 0,
+        [DURATION_ALIGNMENT_STATUS.PREFERRED]: 0,
+        [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_OVER_TARGET]: 0,
+        [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_OVER_TARGET]: 0,
+        [DURATION_ALIGNMENT_STATUS.UNAVAILABLE]: 0,
+      },
+      correctionRequiredWorkoutCount: 1,
       minWorkoutDurationMinutes: 42,
       maxWorkoutDurationMinutes: 42,
       cardioDurationMinutes: 0,
+      bodyPartDistribution: [{ key: 'PRIVATE_BODY_PART_DISTRIBUTION_SENTINEL' }],
+      muscleDistribution: [{ key: 'PRIVATE_MUSCLE_DISTRIBUTION_SENTINEL' }],
     },
     workouts: [{ name: 'PRIVATE_WORKOUT_NAME_SENTINEL' }],
     muscleMetrics: [{ exerciseName: 'PRIVATE_EXERCISE_NAME_SENTINEL' }],
@@ -67,9 +122,7 @@ function createAnalytics(overrides = {}) {
 
 test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt metadata only', () => {
   const generationContext = buildWeeklyPlanGenerationContext({
-    context: {
-      generationMode: 'weekly_plan_draft',
-      createdAt: '2026-06-01T12:00:00.000Z',
+    context: createContext({
       profileSchemaVersion: 2,
       primaryGoal: 'HYPERTROPHY',
       experience: 'intermediate',
@@ -82,7 +135,7 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
         doctrineId: 'bodybuilding_runtime_classic',
         doctrineVersion: 'bodybuilding-hypertrophy-runtime-classic-v1.0.0',
         derivedFromDoctrineVersion: 'bodybuilding-hypertrophy-v1.0.0',
-        promptVersion: 'ai-weekly-plan-builder-prompt-v1.0.1',
+        promptVersion: PROGRAM_GENERATION_PROMPT_VERSION,
       },
       doctrineContent: 'FULL_DOCTRINE_CONTENT_SENTINEL',
       systemMessage: 'SYSTEM_MESSAGE_SENTINEL',
@@ -90,7 +143,7 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
       poolSnapshot: {
         checksum: 'checksum',
       },
-    },
+    }),
     generatedPlanDocument: {
       strategySummary: 'Static hypertrophy plan.',
     },
@@ -99,6 +152,7 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
       issues: [],
       uniqueExerciseIds: ['ex_db_bench'],
     },
+    analytics: createAnalytics(),
     generator: {
       type: 'mock',
       model: null,
@@ -107,8 +161,13 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
     },
   });
 
-  assert.equal(GENERATION_CONTEXT_SCHEMA_VERSION, 5);
-  assert.equal(generationContext.schemaVersion, 5);
+  assert.equal(GENERATION_CONTEXT_SCHEMA_VERSION, 6);
+  assert.equal(generationContext.schemaVersion, 6);
+  assert.deepEqual(generationContext.evaluationPolicy, {
+    id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
+    version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+  });
+  assert.deepEqual(Object.keys(generationContext.evaluationPolicy), ['id', 'version']);
   [
     'generator',
     'aiContractVersion',
@@ -138,7 +197,7 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
   );
   assert.equal(
     generationContext.promptVersion,
-    'ai-weekly-plan-builder-prompt-v1.0.1'
+    PROGRAM_GENERATION_PROMPT_VERSION
   );
   assert.equal(generationContext.profileSnapshotSummary.hasPhysicalNotes, true);
   assert.deepEqual(generationContext.generator, {
@@ -164,7 +223,8 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
   assert.equal(generationContext.userMessage, undefined);
   assert.equal(generationContext.validationSummary.poolValidation.uniqueExerciseCount, 1);
   assert.equal(generationContext.validationSummary.businessRulesValidation, null);
-  assert.equal(generationContext.validationSummary.analytics, null);
+  assert.equal(generationContext.validationSummary.analytics.schemaVersion, 2);
+  assert.equal(generationContext.repairAttempts, 0);
   assert.deepEqual(generationContext.aiReview, {
     enabled: false,
     outcome: 'BYPASSED',
@@ -181,17 +241,19 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
     reviewSummary: null,
     provider: null,
   });
+
+  assert.doesNotMatch(serialized, /historical_weekly_plan_metrics_v1/);
+  assert.doesNotMatch(serialized, /differenceOperation|ratioOperation|classificationRatio/);
+  assert.doesNotMatch(serialized, /minInclusive|maxInclusive|minExclusive|maxExclusive/);
 });
 
-test('buildWeeklyPlanGenerationContext retains V3 fields and adds allowlisted V4 analytics', () => {
+test('buildWeeklyPlanGenerationContext creates deterministic V6 audit with allowlisted Analytics V2', () => {
   const analytics = createAnalytics();
-  const generationContext = buildWeeklyPlanGenerationContext({
-    context: {
-      generationMode: 'weekly_plan_draft',
-      createdAt: '2026-06-01T12:00:00.000Z',
+  const input = {
+    context: createContext({
       coachInputs: {},
       poolSnapshot: { checksum: 'checksum' },
-    },
+    }),
     generatedAIOutput: {
       schemaVersion: 1,
       strategySummary: 'Provider strategy summary.',
@@ -222,9 +284,16 @@ test('buildWeeklyPlanGenerationContext retains V3 fields and adds allowlisted V4
       outputText: 'RAW_OUTPUT_TEXT_SENTINEL',
       requestId: 'req_http_private_456',
     },
-  });
+  };
+  const originalInput = clone(input);
+  const generationContext = buildWeeklyPlanGenerationContext(input);
+  const repeatedGenerationContext = buildWeeklyPlanGenerationContext(input);
 
-  assert.equal(generationContext.schemaVersion, 5);
+  assert.equal(generationContext.schemaVersion, 6);
+  assert.deepEqual(generationContext.evaluationPolicy, {
+    id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
+    version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+  });
   assert.deepEqual(generationContext.generator, {
     type: 'openai',
     model: 'gpt-program-model',
@@ -248,8 +317,12 @@ test('buildWeeklyPlanGenerationContext retains V3 fields and adds allowlisted V4
     issueCount: 0,
   });
   assert.deepEqual(generationContext.validationSummary.analytics, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     status: 'partial',
+    evaluationPolicy: {
+      id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
+      version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+    },
     counts: {
       workoutCount: 1,
       blockCount: 1,
@@ -264,13 +337,27 @@ test('buildWeeklyPlanGenerationContext retains V3 fields and adds allowlisted V4
       cardioBlockCount: 0,
     },
     duration: {
-      estimatedDurationMinutesTotal: 42,
-      estimatedDurationMinutesAverage: 42,
+      requestedDurationMinutesPerWorkout: 60,
+      requestedDurationMinutesTotal: 60,
+      calculatedDurationMinutesTotal: 42,
+      calculatedDurationMinutesAverage: 42,
       declaredEstimatedDurationMinutesTotal: 60,
       durationDifferenceMinutesTotal: -18,
+      declaredDurationDifferenceMinutesTotal: -18,
+      estimatedDurationMinutesTotal: 42,
+      estimatedDurationMinutesAverage: 42,
       minWorkoutDurationMinutes: 42,
       maxWorkoutDurationMinutes: 42,
       cardioDurationMinutes: 0,
+      durationAlignmentStatusCounts: {
+        [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_UNDER_TARGET]: 1,
+        [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_UNDER_TARGET]: 0,
+        [DURATION_ALIGNMENT_STATUS.PREFERRED]: 0,
+        [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_OVER_TARGET]: 0,
+        [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_OVER_TARGET]: 0,
+        [DURATION_ALIGNMENT_STATUS.UNAVAILABLE]: 0,
+      },
+      correctionRequiredWorkoutCount: 1,
     },
     muscleMetadata: {
       totalStrengthWorkingSets: 3,
@@ -297,6 +384,13 @@ test('buildWeeklyPlanGenerationContext retains V3 fields and adds allowlisted V4
   });
   assert.equal(generationContext.validationSummary.analytics.workouts, undefined);
   assert.equal(generationContext.validationSummary.analytics.muscleMetrics, undefined);
+  assert.equal(
+    generationContext.validationSummary.analytics.targetComparisons.volume.items,
+    undefined
+  );
+  assert.equal(generationContext.repairAttempts, 0);
+  assert.deepEqual(repeatedGenerationContext, generationContext);
+  assert.deepEqual(input, originalInput);
 
   const serialized = JSON.stringify(generationContext);
   assert.doesNotMatch(serialized, /RAW_USAGE_SENTINEL/);
@@ -307,13 +401,19 @@ test('buildWeeklyPlanGenerationContext retains V3 fields and adds allowlisted V4
   assert.doesNotMatch(serialized, /PRIVATE_EXERCISE_NAME_SENTINEL/);
   assert.doesNotMatch(serialized, /PRIVATE_UNRESOLVED_EXERCISE_ID_SENTINEL/);
   assert.doesNotMatch(serialized, /PRIVATE_TARGET_RATIONALE_SENTINEL/);
+  assert.doesNotMatch(serialized, /PRIVATE_BODY_PART_DISTRIBUTION_SENTINEL/);
+  assert.doesNotMatch(serialized, /PRIVATE_MUSCLE_DISTRIBUTION_SENTINEL/);
+  assert.doesNotMatch(serialized, /bodyPartDistribution|muscleDistribution/);
+  assert.doesNotMatch(serialized, /historical_weekly_plan_metrics_v1/);
+  assert.doesNotMatch(serialized, /differenceOperation|ratioOperation|classificationRatio/);
 });
 
 test('buildWeeklyPlanGenerationContext normalizes absent OpenAI metadata to null', () => {
   const generationContext = buildWeeklyPlanGenerationContext({
-    context: {},
+    context: createContext(),
     generatedPlanDocument: {},
     validation: { ok: true, issues: [] },
+    analytics: createAnalytics(),
     generator: {
       type: 'openai',
       model: ' ',
@@ -338,15 +438,131 @@ test('buildWeeklyPlanGenerationContext normalizes absent OpenAI metadata to null
     },
   });
   assert.equal(generationContext.validationSummary.businessRulesValidation, null);
-  assert.equal(generationContext.validationSummary.analytics, null);
+  assert.equal(generationContext.validationSummary.analytics.schemaVersion, 2);
+});
+
+test('buildWeeklyPlanGenerationContext requires canonical policy identity and Analytics V2', () => {
+  const baseInput = () => ({
+    context: createContext(),
+    generatedPlanDocument: {},
+    validation: { ok: true, issues: [] },
+    analytics: createAnalytics(),
+  });
+  const invalidInputs = [];
+
+  {
+    const input = baseInput();
+    input.context.evaluationPolicy = undefined;
+    invalidInputs.push(input);
+  }
+  {
+    const input = baseInput();
+    input.context.evaluationPolicy = {
+      ...WEEKLY_PLAN_EVALUATION_POLICY,
+      id: 'wrong_policy',
+    };
+    invalidInputs.push(input);
+  }
+  {
+    const input = baseInput();
+    input.context.evaluationPolicy = {
+      ...WEEKLY_PLAN_EVALUATION_POLICY,
+      version: 999,
+    };
+    invalidInputs.push(input);
+  }
+  {
+    const input = baseInput();
+    input.analytics = undefined;
+    invalidInputs.push(input);
+  }
+  {
+    const input = baseInput();
+    input.analytics.schemaVersion = 1;
+    invalidInputs.push(input);
+  }
+  {
+    const input = baseInput();
+    input.analytics.evaluationPolicy = undefined;
+    invalidInputs.push(input);
+  }
+  {
+    const input = baseInput();
+    input.analytics.evaluationPolicy = {
+      id: 'wrong_policy',
+      version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+    };
+    invalidInputs.push(input);
+  }
+  {
+    const input = baseInput();
+    input.analytics.evaluationPolicy = {
+      id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
+      version: 999,
+    };
+    invalidInputs.push(input);
+  }
+
+  invalidInputs.forEach((input) => {
+    assert.throws(
+      () => buildWeeklyPlanGenerationContext(input),
+      (error) => {
+        assert.equal(error instanceof WeeklyPlanAnalyticsError, true);
+        assert.equal(error.code, 'INVALID_WEEKLY_PLAN_ANALYTICS');
+        assert.equal(error.message, 'A valid weekly plan analytics result is required');
+        return true;
+      }
+    );
+  });
+});
+
+test('buildWeeklyPlanGenerationContext accepts only ProgramGenerationContext V4 without mutation', () => {
+  const createInput = (schemaVersion) => ({
+    context: createContext({ schemaVersion }),
+    generatedPlanDocument: {},
+    validation: { ok: true, issues: [] },
+    analytics: createAnalytics(),
+  });
+  const validInput = createInput(PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION);
+  const originalValidInput = clone(validInput);
+  const generationContext = buildWeeklyPlanGenerationContext(validInput);
+
+  assert.equal(PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION, 4);
+  assert.equal(validInput.context.schemaVersion, 4);
+  assert.equal(generationContext.schemaVersion, 6);
+  assert.deepEqual(validInput, originalValidInput);
+
+  [3, undefined, 5].forEach((schemaVersion) => {
+    const input = createInput(schemaVersion);
+    if (schemaVersion === undefined) {
+      delete input.context.schemaVersion;
+    }
+    const originalInput = clone(input);
+
+    assert.throws(
+      () => buildWeeklyPlanGenerationContext(input),
+      (error) => {
+        assert.equal(error instanceof WeeklyPlanAnalyticsError, true);
+        assert.equal(error.code, 'INVALID_WEEKLY_PLAN_ANALYTICS');
+        assert.equal(error.message, 'A valid weekly plan analytics result is required');
+        return true;
+      }
+    );
+    assert.deepEqual(input, originalInput);
+  });
 });
 
 test('buildAIReviewAuditMetadata persists only allowlisted PASS review data', () => {
   const metadata = buildAIReviewAuditMetadata({
     enabled: true,
-    promptVersion: 'ai-program-review-prompt-v1.0.0',
+    promptVersion: 'ai-program-review-prompt-v1.1.0',
     contractVersion: 1,
     outputSchemaVersion: 1,
+    reviewInput: {
+      schemaVersion: 2,
+      evaluationPolicy: WEEKLY_PLAN_EVALUATION_POLICY,
+      private: 'PRIVATE_REVIEW_INPUT_SENTINEL',
+    },
     provider: {
       type: 'openai',
       model: 'review-model',
@@ -359,6 +575,7 @@ test('buildAIReviewAuditMetadata persists only allowlisted PASS review data', ()
         rawUsage: 'RAW_REVIEW_USAGE_SENTINEL',
       },
       rawResponse: 'RAW_REVIEW_RESPONSE_SENTINEL',
+      rawProviderMetadata: 'RAW_REVIEW_PROVIDER_METADATA_SENTINEL',
     },
     review: {
       schemaVersion: 1,
@@ -384,7 +601,7 @@ test('buildAIReviewAuditMetadata persists only allowlisted PASS review data', ()
     schemaVersion: 1,
     contractVersion: 1,
     outputSchemaVersion: 1,
-    promptVersion: 'ai-program-review-prompt-v1.0.0',
+    promptVersion: 'ai-program-review-prompt-v1.1.0',
     decision: 'PASS',
     requiresRepair: false,
     issueCount: 1,
@@ -409,5 +626,8 @@ test('buildAIReviewAuditMetadata persists only allowlisted PASS review data', ()
   assert.doesNotMatch(serialized, /RAW_REVIEW_RESPONSE_SENTINEL/);
   assert.doesNotMatch(serialized, /PRIVATE_REVIEW_MESSAGE_SENTINEL/);
   assert.doesNotMatch(serialized, /PRIVATE_REVIEW_ACTION_SENTINEL/);
+  assert.doesNotMatch(serialized, /PRIVATE_REVIEW_INPUT_SENTINEL/);
+  assert.doesNotMatch(serialized, /RAW_REVIEW_PROVIDER_METADATA_SENTINEL/);
+  assert.doesNotMatch(serialized, /historical_weekly_plan_metrics_v1/);
   assert.doesNotMatch(serialized, /\/plan\/notesSummary/);
 });

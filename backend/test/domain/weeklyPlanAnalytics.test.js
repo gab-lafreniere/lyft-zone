@@ -7,6 +7,12 @@ const {
   buildWeeklyPlanAnalyticsAuditSummary,
   calculateWeeklyPlanAnalytics,
 } = require('../../src/domain/programGeneration/weeklyPlanAnalytics');
+const {
+  DURATION_ALIGNMENT_STATUS,
+  WEEKLY_PLAN_EVALUATION_POLICY,
+  WEEKLY_PLAN_EVALUATION_POLICY_ID,
+  WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+} = require('../../src/domain/programGeneration/weeklyPlanEvaluationPolicy');
 
 function createSetTemplate(index, overrides = {}) {
   return {
@@ -52,6 +58,11 @@ function createCardioExercise(overrides = {}) {
 
 function createContext(overrides = {}) {
   return {
+    availability: {
+      sessionsPerWeek: 2,
+      durationPerSession: 60,
+    },
+    evaluationPolicy: WEEKLY_PLAN_EVALUATION_POLICY,
     exercisePoolItems: [
       {
         exerciseId: 'ex_bench',
@@ -194,6 +205,45 @@ function createGeneratedAIOutput(overrides = {}) {
   };
 }
 
+function createCardioDurationDocument(
+  calculatedDurations,
+  declaredDurations = calculatedDurations
+) {
+  return {
+    name: 'Duration analytics fixture',
+    sessionsPerWeek: calculatedDurations.length,
+    workouts: calculatedDurations.map((durationMinutes, index) => ({
+      name: `Cardio ${index + 1}`,
+      orderIndex: index + 1,
+      estimatedDurationMinutes: declaredDurations[index],
+      blocks: [
+        {
+          orderIndex: 1,
+          blockType: 'CARDIO',
+          exercises: [
+            createCardioExercise({
+              exerciseId: `ex_cardio_${index + 1}`,
+              cardioPrescription: { durationMinutes },
+            }),
+          ],
+        },
+      ],
+    })),
+  };
+}
+
+function createDurationAlignmentStatusCounts(overrides = {}) {
+  return {
+    [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_UNDER_TARGET]: 0,
+    [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_UNDER_TARGET]: 0,
+    [DURATION_ALIGNMENT_STATUS.PREFERRED]: 0,
+    [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_OVER_TARGET]: 0,
+    [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_OVER_TARGET]: 0,
+    [DURATION_ALIGNMENT_STATUS.UNAVAILABLE]: 0,
+    ...overrides,
+  };
+}
+
 function calculate(overrides = {}) {
   return calculateWeeklyPlanAnalytics({
     generatedAIOutput: createGeneratedAIOutput(),
@@ -216,9 +266,13 @@ function comparisonByArea(comparison) {
 test('calculateWeeklyPlanAnalytics returns versioned plan and workout counters', () => {
   const analytics = calculate();
 
-  assert.equal(WEEKLY_PLAN_ANALYTICS_SCHEMA_VERSION, 1);
-  assert.equal(analytics.schemaVersion, 1);
+  assert.equal(WEEKLY_PLAN_ANALYTICS_SCHEMA_VERSION, 2);
+  assert.equal(analytics.schemaVersion, 2);
   assert.equal(analytics.status, 'complete');
+  assert.deepEqual(analytics.evaluationPolicy, {
+    id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
+    version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+  });
   assert.deepEqual(
     {
       workoutCount: analytics.plan.workoutCount,
@@ -283,24 +337,62 @@ test('calculateWeeklyPlanAnalytics returns versioned plan and workout counters',
   );
 });
 
-test('duration analytics reuse historical metrics and preserve declared duration separately', () => {
+test('duration analytics reuse historical metrics and separate requested from declared duration', () => {
   const analytics = calculate();
 
   assert.deepEqual(
     analytics.workouts.map((workout) => ({
-      calculated: workout.estimatedDurationMinutes,
+      requested: workout.requestedDurationMinutes,
+      calculated: workout.calculatedDurationMinutes,
+      calculatedAlias: workout.estimatedDurationMinutes,
       declared: workout.declaredEstimatedDurationMinutes,
-      difference: workout.durationDifferenceMinutes,
+      requestedDifference: workout.durationDifferenceMinutes,
+      declaredDifference: workout.declaredDurationDifferenceMinutes,
+      ratio: workout.durationUtilizationRatio,
+      status: workout.durationAlignmentStatus,
+      requiresCorrection: workout.durationRequiresCorrection,
     })),
     [
-      { calculated: 29, declared: 40, difference: -11 },
-      { calculated: 4, declared: 30, difference: -26 },
+      {
+        requested: 60,
+        calculated: 29,
+        calculatedAlias: 29,
+        declared: 40,
+        requestedDifference: -31,
+        declaredDifference: -11,
+        ratio: 0.4833,
+        status: DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_UNDER_TARGET,
+        requiresCorrection: true,
+      },
+      {
+        requested: 60,
+        calculated: 4,
+        calculatedAlias: 4,
+        declared: 30,
+        requestedDifference: -56,
+        declaredDifference: -26,
+        ratio: 0.0667,
+        status: DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_UNDER_TARGET,
+        requiresCorrection: true,
+      },
     ]
   );
+  assert.equal(analytics.plan.requestedDurationMinutesPerWorkout, 60);
+  assert.equal(analytics.plan.requestedDurationMinutesTotal, 120);
+  assert.equal(analytics.plan.calculatedDurationMinutesTotal, 33);
+  assert.equal(analytics.plan.calculatedDurationMinutesAverage, 17);
   assert.equal(analytics.plan.estimatedDurationMinutesTotal, 33);
   assert.equal(analytics.plan.estimatedDurationMinutesAverage, 17);
   assert.equal(analytics.plan.declaredEstimatedDurationMinutesTotal, 70);
-  assert.equal(analytics.plan.durationDifferenceMinutesTotal, -37);
+  assert.equal(analytics.plan.durationDifferenceMinutesTotal, -87);
+  assert.equal(analytics.plan.declaredDurationDifferenceMinutesTotal, -37);
+  assert.deepEqual(
+    analytics.plan.durationAlignmentStatusCounts,
+    createDurationAlignmentStatusCounts({
+      [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_UNDER_TARGET]: 2,
+    })
+  );
+  assert.equal(analytics.plan.correctionRequiredWorkoutCount, 2);
   assert.equal(analytics.plan.minWorkoutDurationMinutes, 4);
   assert.equal(analytics.plan.maxWorkoutDurationMinutes, 29);
   assert.equal(analytics.plan.cardioDurationMinutes, 15);
@@ -313,6 +405,165 @@ test('duration analytics reuse historical metrics and preserve declared duration
   assert.equal(bodyPartDistribution.chest, 4);
   assert.equal(bodyPartDistribution.back, 3);
   assert.equal(bodyPartDistribution.biceps, 2);
+});
+
+test('requested 60 and calculated 58 is preferred while declared duration stays independent', () => {
+  const analytics = calculateWeeklyPlanAnalytics({
+    generatedAIOutput: null,
+    generatedPlanDocument: createCardioDurationDocument([58], [45]),
+    context: createContext({
+      availability: { sessionsPerWeek: 1, durationPerSession: 60 },
+    }),
+  });
+  const workout = analytics.workouts[0];
+
+  assert.deepEqual(
+    {
+      requestedDurationMinutes: workout.requestedDurationMinutes,
+      calculatedDurationMinutes: workout.calculatedDurationMinutes,
+      durationDifferenceMinutes: workout.durationDifferenceMinutes,
+      durationUtilizationRatio: workout.durationUtilizationRatio,
+      durationAlignmentStatus: workout.durationAlignmentStatus,
+      durationRequiresCorrection: workout.durationRequiresCorrection,
+      declaredEstimatedDurationMinutes: workout.declaredEstimatedDurationMinutes,
+      declaredDurationDifferenceMinutes: workout.declaredDurationDifferenceMinutes,
+      estimatedDurationMinutes: workout.estimatedDurationMinutes,
+    },
+    {
+      requestedDurationMinutes: 60,
+      calculatedDurationMinutes: 58,
+      durationDifferenceMinutes: -2,
+      durationUtilizationRatio: 0.9667,
+      durationAlignmentStatus: DURATION_ALIGNMENT_STATUS.PREFERRED,
+      durationRequiresCorrection: false,
+      declaredEstimatedDurationMinutes: 45,
+      declaredDurationDifferenceMinutes: 13,
+      estimatedDurationMinutes: 58,
+    }
+  );
+  assert.equal(analytics.plan.requestedDurationMinutesTotal, 60);
+  assert.equal(analytics.plan.calculatedDurationMinutesTotal, 58);
+  assert.equal(analytics.plan.durationDifferenceMinutesTotal, -2);
+  assert.equal(analytics.plan.declaredEstimatedDurationMinutesTotal, 45);
+  assert.equal(analytics.plan.declaredDurationDifferenceMinutesTotal, 13);
+});
+
+test('duration alignment preserves exact boundaries and correction bands', () => {
+  const cases = [
+    [50, DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_UNDER_TARGET, true],
+    [51, DURATION_ALIGNMENT_STATUS.ACCEPTABLE_UNDER_TARGET, false],
+    [54, DURATION_ALIGNMENT_STATUS.PREFERRED, false],
+    [60, DURATION_ALIGNMENT_STATUS.PREFERRED, false],
+    [63, DURATION_ALIGNMENT_STATUS.ACCEPTABLE_OVER_TARGET, false],
+    [64, DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_OVER_TARGET, true],
+  ];
+
+  cases.forEach(([calculatedDurationMinutes, status, requiresCorrection]) => {
+    const analytics = calculateWeeklyPlanAnalytics({
+      generatedAIOutput: null,
+      generatedPlanDocument: createCardioDurationDocument([
+        calculatedDurationMinutes,
+      ]),
+      context: createContext({
+        availability: { sessionsPerWeek: 1, durationPerSession: 60 },
+      }),
+    });
+
+    assert.equal(analytics.workouts[0].durationAlignmentStatus, status);
+    assert.equal(
+      analytics.workouts[0].durationRequiresCorrection,
+      requiresCorrection
+    );
+  });
+});
+
+test('invalid requested duration is unavailable and never requires correction', () => {
+  const analytics = calculateWeeklyPlanAnalytics({
+    generatedAIOutput: null,
+    generatedPlanDocument: createCardioDurationDocument([20]),
+    context: createContext({
+      availability: { sessionsPerWeek: 1, durationPerSession: 0 },
+    }),
+  });
+
+  assert.equal(analytics.workouts[0].requestedDurationMinutes, 0);
+  assert.equal(
+    analytics.workouts[0].durationAlignmentStatus,
+    DURATION_ALIGNMENT_STATUS.UNAVAILABLE
+  );
+  assert.equal(analytics.workouts[0].durationRequiresCorrection, false);
+  assert.equal(analytics.workouts[0].durationDifferenceMinutes, null);
+  assert.equal(analytics.workouts[0].durationUtilizationRatio, null);
+  assert.equal(analytics.plan.requestedDurationMinutesTotal, null);
+  assert.equal(analytics.plan.durationDifferenceMinutesTotal, null);
+  assert.deepEqual(
+    analytics.plan.durationAlignmentStatusCounts,
+    createDurationAlignmentStatusCounts({
+      [DURATION_ALIGNMENT_STATUS.UNAVAILABLE]: 1,
+    })
+  );
+  assert.equal(analytics.plan.correctionRequiredWorkoutCount, 0);
+});
+
+test('missing declared duration nulls only declared totals and differences', () => {
+  const analytics = calculateWeeklyPlanAnalytics({
+    generatedAIOutput: null,
+    generatedPlanDocument: createCardioDurationDocument([58, 60], [58, undefined]),
+    context: createContext(),
+  });
+
+  assert.equal(analytics.workouts[1].declaredEstimatedDurationMinutes, null);
+  assert.equal(analytics.workouts[1].declaredDurationDifferenceMinutes, null);
+  assert.equal(analytics.plan.declaredEstimatedDurationMinutesTotal, null);
+  assert.equal(analytics.plan.declaredDurationDifferenceMinutesTotal, null);
+  assert.equal(analytics.plan.requestedDurationMinutesTotal, 120);
+  assert.equal(analytics.plan.calculatedDurationMinutesTotal, 118);
+  assert.equal(analytics.plan.durationDifferenceMinutesTotal, -2);
+});
+
+test('opposing correction workouts never cancel their per-workout failures', () => {
+  const analytics = calculateWeeklyPlanAnalytics({
+    generatedAIOutput: null,
+    generatedPlanDocument: createCardioDurationDocument([50, 64]),
+    context: createContext(),
+  });
+
+  assert.equal(analytics.plan.requestedDurationMinutesTotal, 120);
+  assert.equal(analytics.plan.calculatedDurationMinutesTotal, 114);
+  assert.equal(analytics.plan.durationDifferenceMinutesTotal, -6);
+  assert.equal(analytics.plan.correctionRequiredWorkoutCount, 2);
+  assert.deepEqual(
+    analytics.plan.durationAlignmentStatusCounts,
+    createDurationAlignmentStatusCounts({
+      [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_UNDER_TARGET]: 1,
+      [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_OVER_TARGET]: 1,
+    })
+  );
+});
+
+test('an empty plan returns zero duration totals and every status counter', () => {
+  const analytics = calculateWeeklyPlanAnalytics({
+    generatedAIOutput: null,
+    generatedPlanDocument: {
+      name: 'Empty analytics fixture',
+      sessionsPerWeek: 0,
+      workouts: [],
+    },
+    context: createContext(),
+  });
+
+  assert.equal(analytics.plan.requestedDurationMinutesPerWorkout, 60);
+  assert.equal(analytics.plan.requestedDurationMinutesTotal, 0);
+  assert.equal(analytics.plan.calculatedDurationMinutesTotal, 0);
+  assert.equal(analytics.plan.calculatedDurationMinutesAverage, 0);
+  assert.equal(analytics.plan.declaredEstimatedDurationMinutesTotal, 0);
+  assert.equal(analytics.plan.durationDifferenceMinutesTotal, 0);
+  assert.equal(analytics.plan.declaredDurationDifferenceMinutesTotal, 0);
+  assert.deepEqual(
+    analytics.plan.durationAlignmentStatusCounts,
+    createDurationAlignmentStatusCounts()
+  );
+  assert.equal(analytics.plan.correctionRequiredWorkoutCount, 0);
 });
 
 test('CARDIO is excluded from working sets and muscle projections but included in duration', () => {
@@ -346,7 +597,10 @@ test('CARDIO is excluded from working sets and muscle projections but included i
   assert.equal(analytics.plan.cardioExerciseCount, 1);
   assert.equal(analytics.plan.workingSetCount, 0);
   assert.equal(analytics.plan.totalSetTemplateCount, 0);
+  assert.equal(analytics.plan.requestedDurationMinutesTotal, 60);
+  assert.equal(analytics.plan.calculatedDurationMinutesTotal, 20);
   assert.equal(analytics.plan.estimatedDurationMinutesTotal, 20);
+  assert.equal(analytics.plan.correctionRequiredWorkoutCount, 1);
   assert.equal(analytics.plan.cardioDurationMinutes, 20);
   assert.deepEqual(analytics.muscleMetrics, []);
   assert.deepEqual(analytics.metadataCoverage, {
@@ -367,6 +621,8 @@ test('a plan without cardio keeps cardio counters and duration at zero', () => {
   assert.equal(analytics.plan.cardioBlockCount, 0);
   assert.equal(analytics.plan.cardioExerciseCount, 0);
   assert.equal(analytics.plan.cardioDurationMinutes, 0);
+  assert.equal(analytics.plan.calculatedDurationMinutesTotal, 4);
+  assert.equal(analytics.plan.estimatedDurationMinutesTotal, 4);
 });
 
 test('direct taxonomies remain separate and indirect contributions have no coefficient', () => {
@@ -535,6 +791,11 @@ test('missing or incomplete pool metadata produces partial analytics and dedupli
     generatedAIOutput: null,
     generatedPlanDocument: document,
     context: {
+      availability: {
+        sessionsPerWeek: 1,
+        durationPerSession: 60,
+      },
+      evaluationPolicy: WEEKLY_PLAN_EVALUATION_POLICY,
       exercisePoolItems: [
         {
           exerciseId: 'ex_secondary_only',
@@ -580,6 +841,8 @@ test('buildWeeklyPlanAnalyticsAuditSummary is strictly allowlisted', () => {
   analytics.workouts[0].privateSentinel = 'WORKOUT_DETAIL_SENTINEL';
   analytics.muscleMetrics[0].privateSentinel = 'MUSCLE_DETAIL_SENTINEL';
   analytics.metadataCoverage.unresolvedExerciseIds.push('UNRESOLVED_ID_SENTINEL');
+  analytics.plan.durationAlignmentStatusCounts.privateSentinel =
+    'DURATION_STATUS_SENTINEL';
   analytics.rawOutput = 'RAW_OUTPUT_SENTINEL';
 
   const summary = buildWeeklyPlanAnalyticsAuditSummary(analytics);
@@ -588,20 +851,83 @@ test('buildWeeklyPlanAnalyticsAuditSummary is strictly allowlisted', () => {
   assert.deepEqual(Object.keys(summary), [
     'schemaVersion',
     'status',
+    'evaluationPolicy',
     'counts',
     'duration',
     'muscleMetadata',
     'targetComparisons',
   ]);
-  assert.equal(summary.schemaVersion, 1);
+  assert.equal(summary.schemaVersion, 2);
+  assert.deepEqual(summary.evaluationPolicy, {
+    id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
+    version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+  });
   assert.equal(summary.counts.workingSetCount, 8);
+  assert.deepEqual(summary.duration, {
+    requestedDurationMinutesPerWorkout: 60,
+    requestedDurationMinutesTotal: 120,
+    calculatedDurationMinutesTotal: 33,
+    calculatedDurationMinutesAverage: 17,
+    declaredEstimatedDurationMinutesTotal: 70,
+    durationDifferenceMinutesTotal: -87,
+    declaredDurationDifferenceMinutesTotal: -37,
+    estimatedDurationMinutesTotal: 33,
+    estimatedDurationMinutesAverage: 17,
+    minWorkoutDurationMinutes: 4,
+    maxWorkoutDurationMinutes: 29,
+    cardioDurationMinutes: 15,
+    durationAlignmentStatusCounts: createDurationAlignmentStatusCounts({
+      [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_UNDER_TARGET]: 2,
+    }),
+    correctionRequiredWorkoutCount: 2,
+  });
   assert.equal(summary.muscleMetadata.unresolvedExerciseCount, 1);
   assert.equal(summary.workouts, undefined);
   assert.equal(summary.muscleMetrics, undefined);
   assert.doesNotMatch(serialized, /WORKOUT_DETAIL_SENTINEL/);
   assert.doesNotMatch(serialized, /MUSCLE_DETAIL_SENTINEL/);
   assert.doesNotMatch(serialized, /UNRESOLVED_ID_SENTINEL/);
+  assert.doesNotMatch(serialized, /DURATION_STATUS_SENTINEL/);
   assert.doesNotMatch(serialized, /RAW_OUTPUT_SENTINEL/);
+});
+
+test('Analytics V2 requires the canonical evaluation policy identity without reference equality', () => {
+  const clonedIdentity = {
+    id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
+    version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+  };
+  const analytics = calculate({
+    context: createContext({ evaluationPolicy: clonedIdentity }),
+  });
+
+  assert.notStrictEqual(clonedIdentity, WEEKLY_PLAN_EVALUATION_POLICY);
+  assert.deepEqual(analytics.evaluationPolicy, clonedIdentity);
+
+  const invalidPolicies = [
+    undefined,
+    {
+      id: 'wrong_policy',
+      version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+    },
+    {
+      id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
+      version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION + 1,
+    },
+  ];
+
+  invalidPolicies.forEach((evaluationPolicy) => {
+    assert.throws(
+      () =>
+        calculate({
+          context: createContext({ evaluationPolicy }),
+        }),
+      (error) => {
+        assert.equal(error instanceof WeeklyPlanAnalyticsError, true);
+        assert.equal(error.code, 'INVALID_WEEKLY_PLAN_EVALUATION_POLICY');
+        return true;
+      }
+    );
+  });
 });
 
 test('invalid generated plan documents raise WeeklyPlanAnalyticsError', () => {

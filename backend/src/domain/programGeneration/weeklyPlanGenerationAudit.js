@@ -2,10 +2,19 @@ const {
   buildWeeklyPlanAiGenerationMetadata,
 } = require('./weeklyPlanAiNormalizer');
 const {
+  PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION,
+} = require('./programGenerationContextBuilder');
+const {
+  WEEKLY_PLAN_ANALYTICS_SCHEMA_VERSION,
+  WeeklyPlanAnalyticsError,
   buildWeeklyPlanAnalyticsAuditSummary,
 } = require('./weeklyPlanAnalytics');
+const {
+  WEEKLY_PLAN_EVALUATION_POLICY_ID,
+  WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+} = require('./weeklyPlanEvaluationPolicy');
 
-const GENERATION_CONTEXT_SCHEMA_VERSION = 5;
+const GENERATION_CONTEXT_SCHEMA_VERSION = 6;
 const REVIEW_SEVERITIES = Object.freeze(['INFO', 'LOW', 'MEDIUM', 'HIGH']);
 
 function normalizeOptionalString(value) {
@@ -140,6 +149,33 @@ function buildProfileSnapshotSummary(context = {}) {
   };
 }
 
+function assertCanonicalEvaluationPolicyAuditInput(context, analytics) {
+  const contextPolicy = context?.evaluationPolicy;
+  const analyticsPolicy = analytics?.evaluationPolicy;
+  const hasCanonicalContextPolicy =
+    contextPolicy?.id === WEEKLY_PLAN_EVALUATION_POLICY_ID &&
+    contextPolicy?.version === WEEKLY_PLAN_EVALUATION_POLICY_VERSION;
+  const hasCanonicalAnalyticsPolicy =
+    analyticsPolicy?.id === WEEKLY_PLAN_EVALUATION_POLICY_ID &&
+    analyticsPolicy?.version === WEEKLY_PLAN_EVALUATION_POLICY_VERSION;
+  const hasMatchingPolicyIdentity =
+    contextPolicy?.id === analyticsPolicy?.id &&
+    contextPolicy?.version === analyticsPolicy?.version;
+
+  if (
+    context?.schemaVersion !== PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION ||
+    !hasCanonicalContextPolicy ||
+    analytics?.schemaVersion !== WEEKLY_PLAN_ANALYTICS_SCHEMA_VERSION ||
+    !hasCanonicalAnalyticsPolicy ||
+    !hasMatchingPolicyIdentity
+  ) {
+    throw new WeeklyPlanAnalyticsError(
+      'INVALID_WEEKLY_PLAN_ANALYTICS',
+      'A valid weekly plan analytics result is required'
+    );
+  }
+}
+
 function buildWeeklyPlanGenerationContext({
   context,
   generatedPlanDocument,
@@ -150,6 +186,8 @@ function buildWeeklyPlanGenerationContext({
   generator = {},
   aiReview = {},
 }) {
+  assertCanonicalEvaluationPolicyAuditInput(context, analytics);
+
   const poolValidation = validation?.poolValidation || validation || {};
   const uniqueExerciseIds = poolValidation?.uniqueExerciseIds || [];
   const aiMetadata = generatedAIOutput
@@ -158,9 +196,14 @@ function buildWeeklyPlanGenerationContext({
         strategySummary: generatedPlanDocument?.strategySummary || null,
       };
   const coachInputs = context?.coachInputs || {};
+  const analyticsAuditSummary = buildWeeklyPlanAnalyticsAuditSummary(analytics);
 
   return {
     schemaVersion: GENERATION_CONTEXT_SCHEMA_VERSION,
+    evaluationPolicy: {
+      id: context.evaluationPolicy.id,
+      version: context.evaluationPolicy.version,
+    },
     generationType: 'ai_weekly_plan_builder_v1',
     generationMode: context?.generationMode || 'weekly_plan_draft',
     createdAt: context?.createdAt || new Date().toISOString(),
@@ -215,7 +258,7 @@ function buildWeeklyPlanGenerationContext({
                 : 0,
           }
         : null,
-      analytics: analytics ? buildWeeklyPlanAnalyticsAuditSummary(analytics) : null,
+      analytics: analyticsAuditSummary,
     },
     repairAttempts: 0,
   };

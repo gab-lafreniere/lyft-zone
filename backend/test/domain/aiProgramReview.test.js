@@ -17,6 +17,12 @@ const {
 const {
   stableStringify,
 } = require('../../src/domain/programGeneration/prompts/programGenerationPrompt');
+const {
+  DURATION_ALIGNMENT_STATUS,
+  WEEKLY_PLAN_EVALUATION_POLICY,
+  WEEKLY_PLAN_EVALUATION_POLICY_ID,
+  WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+} = require('../../src/domain/programGeneration/weeklyPlanEvaluationPolicy');
 
 const MOCK_DOCTRINE = Object.freeze({
   id: 'bodybuilding_runtime_classic',
@@ -31,6 +37,7 @@ function clone(value) {
 
 function createContext(overrides = {}) {
   return {
+    evaluationPolicy: WEEKLY_PLAN_EVALUATION_POLICY,
     primaryGoal: 'HYPERTROPHY',
     experience: 'intermediate',
     availability: { sessionsPerWeek: 2, durationPerSession: 60 },
@@ -302,7 +309,12 @@ function createGeneratedAIOutput(overrides = {}) {
 
 function createAnalytics(overrides = {}) {
   return {
+    schemaVersion: 2,
     status: 'complete',
+    evaluationPolicy: {
+      id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
+      version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+    },
     plan: {
       workoutCount: 2,
       blockCount: 2,
@@ -312,10 +324,24 @@ function createAnalytics(overrides = {}) {
       uniqueExerciseCount: 2,
       workingSetCount: 3,
       totalSetTemplateCount: 3,
+      requestedDurationMinutesPerWorkout: 60,
+      requestedDurationMinutesTotal: 120,
+      calculatedDurationMinutesTotal: 118,
+      calculatedDurationMinutesAverage: 59,
+      declaredEstimatedDurationMinutesTotal: 118,
+      durationDifferenceMinutesTotal: -2,
+      declaredDurationDifferenceMinutesTotal: 0,
       estimatedDurationMinutesTotal: 118,
       estimatedDurationMinutesAverage: 59,
-      declaredEstimatedDurationMinutesTotal: 118,
-      durationDifferenceMinutesTotal: 0,
+      durationAlignmentStatusCounts: {
+        [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_UNDER_TARGET]: 0,
+        [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_UNDER_TARGET]: 0,
+        [DURATION_ALIGNMENT_STATUS.PREFERRED]: 2,
+        [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_OVER_TARGET]: 0,
+        [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_OVER_TARGET]: 0,
+        [DURATION_ALIGNMENT_STATUS.UNAVAILABLE]: 0,
+      },
+      correctionRequiredWorkoutCount: 0,
       minWorkoutDurationMinutes: 58,
       maxWorkoutDurationMinutes: 60,
       singleBlockCount: 1,
@@ -332,13 +358,41 @@ function createAnalytics(overrides = {}) {
         cardioExerciseCount: 0,
         workingSetCount: 2,
         totalSetTemplateCount: 2,
+        requestedDurationMinutes: 60,
+        calculatedDurationMinutes: 60,
+        durationDifferenceMinutes: 0,
+        durationUtilizationRatio: 1,
+        durationAlignmentStatus: DURATION_ALIGNMENT_STATUS.PREFERRED,
+        durationRequiresCorrection: false,
         estimatedDurationMinutes: 60,
         declaredEstimatedDurationMinutes: 60,
-        durationDifferenceMinutes: 0,
+        declaredDurationDifferenceMinutes: 0,
         supersetCount: 1,
         cardioDurationMinutes: 0,
         muscleProjections: [
           { taxonomy: 'muscle_focus', key: 'upper_chest', directWorkingSets: 2 },
+        ],
+      },
+      {
+        workoutOrderIndex: 2,
+        blockCount: 1,
+        strengthExerciseCount: 1,
+        cardioExerciseCount: 0,
+        workingSetCount: 1,
+        totalSetTemplateCount: 1,
+        requestedDurationMinutes: 60,
+        calculatedDurationMinutes: 58,
+        durationDifferenceMinutes: -2,
+        durationUtilizationRatio: 0.9667,
+        durationAlignmentStatus: DURATION_ALIGNMENT_STATUS.PREFERRED,
+        durationRequiresCorrection: false,
+        estimatedDurationMinutes: 58,
+        declaredEstimatedDurationMinutes: 58,
+        declaredDurationDifferenceMinutes: 0,
+        supersetCount: 0,
+        cardioDurationMinutes: 0,
+        muscleProjections: [
+          { taxonomy: 'muscle_focus', key: 'lats', directWorkingSets: 1 },
         ],
       },
     ],
@@ -600,10 +654,24 @@ function createHeavySixSessionReviewOptions() {
         uniqueExerciseCount: 60,
         workingSetCount: 177,
         totalSetTemplateCount: 177,
+        requestedDurationMinutesPerWorkout: 75,
+        requestedDurationMinutesTotal: 450,
+        calculatedDurationMinutesTotal: 450,
+        calculatedDurationMinutesAverage: 75,
         estimatedDurationMinutesTotal: 450,
         estimatedDurationMinutesAverage: 75,
         declaredEstimatedDurationMinutesTotal: 450,
         durationDifferenceMinutesTotal: 0,
+        declaredDurationDifferenceMinutesTotal: 0,
+        durationAlignmentStatusCounts: {
+          [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_UNDER_TARGET]: 0,
+          [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_UNDER_TARGET]: 0,
+          [DURATION_ALIGNMENT_STATUS.PREFERRED]: 6,
+          [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_OVER_TARGET]: 0,
+          [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_OVER_TARGET]: 0,
+          [DURATION_ALIGNMENT_STATUS.UNAVAILABLE]: 0,
+        },
+        correctionRequiredWorkoutCount: 0,
         minWorkoutDurationMinutes: 75,
         maxWorkoutDurationMinutes: 75,
         singleBlockCount: 11,
@@ -624,9 +692,15 @@ function createHeavySixSessionReviewOptions() {
         cardioExerciseCount: index === 5 ? 1 : 0,
         workingSetCount: index === 5 ? 27 : 30,
         totalSetTemplateCount: index === 5 ? 27 : 30,
+        requestedDurationMinutes: 75,
+        calculatedDurationMinutes: 75,
+        durationDifferenceMinutes: 0,
+        durationUtilizationRatio: 1,
+        durationAlignmentStatus: DURATION_ALIGNMENT_STATUS.PREFERRED,
+        durationRequiresCorrection: false,
         estimatedDurationMinutes: 75,
         declaredEstimatedDurationMinutes: 75,
-        durationDifferenceMinutes: 0,
+        declaredDurationDifferenceMinutes: 0,
         supersetCount: 4,
         cardioDurationMinutes: index === 5 ? 20 : 0,
         muscleProjections: projectionEntries.slice(index * 4, index * 4 + 4),
@@ -664,7 +738,81 @@ test('buildProgramReviewInput is deterministic, compact, and only projects selec
     },
   });
 
-  assert.equal(first.schemaVersion, PROGRAM_REVIEW_INPUT_SCHEMA_VERSION);
+  assert.equal(PROGRAM_REVIEW_INPUT_SCHEMA_VERSION, 2);
+  assert.equal(first.schemaVersion, 2);
+  assert.deepEqual(Object.keys(first), [
+    'schemaVersion',
+    'evaluationPolicy',
+    'profile',
+    'constraints',
+    'intent',
+    'plan',
+    'analytics',
+  ]);
+  assert.strictEqual(first.evaluationPolicy, options.context.evaluationPolicy);
+  assert.strictEqual(first.evaluationPolicy, WEEKLY_PLAN_EVALUATION_POLICY);
+  assert.equal(first.evaluationPolicy.id, WEEKLY_PLAN_EVALUATION_POLICY_ID);
+  assert.equal(first.evaluationPolicy.version, WEEKLY_PLAN_EVALUATION_POLICY_VERSION);
+  assert.deepEqual(first.analytics.evaluationPolicy, {
+    id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
+    version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+  });
+  assert.deepEqual(Object.keys(first.analytics.evaluationPolicy), ['id', 'version']);
+  assert.equal(first.analytics.schemaVersion, 2);
+  assert.deepEqual(Object.keys(first.analytics), [
+    'schemaVersion',
+    'status',
+    'evaluationPolicy',
+    'plan',
+    'workouts',
+    'muscleMetrics',
+    'targetComparisons',
+    'metadataCoverage',
+  ]);
+  assert.equal(first.analytics.plan.requestedDurationMinutesPerWorkout, 60);
+  assert.equal(first.analytics.plan.requestedDurationMinutesTotal, 120);
+  assert.equal(first.analytics.plan.calculatedDurationMinutesTotal, 118);
+  assert.equal(first.analytics.plan.calculatedDurationMinutesAverage, 59);
+  assert.equal(first.analytics.plan.durationDifferenceMinutesTotal, -2);
+  assert.equal(first.analytics.plan.correctionRequiredWorkoutCount, 0);
+  assert.equal(first.analytics.plan.durationAlignmentStatusCounts.preferred, 2);
+  assert.deepEqual(Object.keys(first.analytics.workouts[0]), [
+    'workoutOrderIndex',
+    'blockCount',
+    'strengthExerciseCount',
+    'cardioExerciseCount',
+    'workingSetCount',
+    'totalSetTemplateCount',
+    'requestedDurationMinutes',
+    'calculatedDurationMinutes',
+    'durationDifferenceMinutes',
+    'durationUtilizationRatio',
+    'durationAlignmentStatus',
+    'durationRequiresCorrection',
+    'supersetCount',
+    'cardioDurationMinutes',
+    'muscleProjections',
+  ]);
+  assert.deepEqual(
+    {
+      requestedDurationMinutes: first.analytics.workouts[1].requestedDurationMinutes,
+      calculatedDurationMinutes: first.analytics.workouts[1].calculatedDurationMinutes,
+      durationDifferenceMinutes: first.analytics.workouts[1].durationDifferenceMinutes,
+      durationUtilizationRatio: first.analytics.workouts[1].durationUtilizationRatio,
+      durationAlignmentStatus: first.analytics.workouts[1].durationAlignmentStatus,
+      durationRequiresCorrection: first.analytics.workouts[1].durationRequiresCorrection,
+    },
+    {
+      requestedDurationMinutes: 60,
+      calculatedDurationMinutes: 58,
+      durationDifferenceMinutes: -2,
+      durationUtilizationRatio: 0.9667,
+      durationAlignmentStatus: DURATION_ALIGNMENT_STATUS.PREFERRED,
+      durationRequiresCorrection: false,
+    }
+  );
+  assert.equal(first.plan.workouts[0].estimatedDurationMinutes, 60);
+  assert.equal(first.plan.workouts[1].estimatedDurationMinutes, 58);
   assert.deepEqual(collectSelectedExerciseIds(options.generatedPlanDocument), ['ex_bench', 'ex_row']);
   assert.deepEqual(
     first.plan.selectedExerciseMetadata.items.map((item) => item.exerciseId),
@@ -688,6 +836,13 @@ test('buildProgramReviewInput is deterministic, compact, and only projects selec
   assert.equal(first.analytics.metadataCoverage.unresolvedExerciseCount, 1);
 
   const serialized = JSON.stringify(first);
+  const serializedAnalytics = JSON.stringify(first.analytics);
+  const serializedPolicy = JSON.stringify(WEEKLY_PLAN_EVALUATION_POLICY);
+  assert.equal(serialized.split(serializedPolicy).length - 1, 1);
+  assert.doesNotMatch(serializedAnalytics, /bodyPartDistribution|muscleDistribution/);
+  assert.doesNotMatch(serializedAnalytics, /estimatedDurationMinutes/);
+  assert.doesNotMatch(serializedAnalytics, /declaredEstimatedDurationMinutes/);
+  assert.doesNotMatch(serializedAnalytics, /declaredDurationDifferenceMinutes/);
   assert.doesNotMatch(serialized, /PRIVATE_PROFILE_NOTE_SENTINEL/);
   assert.doesNotMatch(serialized, /PRIVATE_WORKOUT_NOTE_SENTINEL/);
   assert.doesNotMatch(serialized, /PRIVATE_EXERCISE_NOTE_SENTINEL/);
@@ -697,6 +852,66 @@ test('buildProgramReviewInput is deterministic, compact, and only projects selec
   assert.doesNotMatch(serialized, /PRIVATE_UNRESOLVED_ID_SENTINEL/);
   assert.deepEqual(options, before);
   assert.deepEqual(first, second);
+});
+
+test('buildProgramReviewInput requires coherent canonical policy identity and Analytics V2', () => {
+  const clonedContextPolicy = clone(WEEKLY_PLAN_EVALUATION_POLICY);
+  const validWithDistinctReferences = createReviewOptions({
+    context: createContext({ evaluationPolicy: clonedContextPolicy }),
+    analytics: createAnalytics({
+      evaluationPolicy: {
+        id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
+        version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+      },
+    }),
+  });
+  const validReviewInput = buildProgramReviewInput(validWithDistinctReferences);
+
+  assert.strictEqual(validReviewInput.evaluationPolicy, clonedContextPolicy);
+  assert.notStrictEqual(
+    validWithDistinctReferences.context.evaluationPolicy,
+    validWithDistinctReferences.analytics.evaluationPolicy
+  );
+
+  const invalidOptions = [
+    createReviewOptions({ context: createContext({ evaluationPolicy: undefined }) }),
+    createReviewOptions({
+      context: createContext({
+        evaluationPolicy: { id: 'wrong_policy', version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION },
+      }),
+    }),
+    createReviewOptions({
+      context: createContext({
+        evaluationPolicy: { id: WEEKLY_PLAN_EVALUATION_POLICY_ID, version: 999 },
+      }),
+    }),
+    createReviewOptions({ analytics: createAnalytics({ schemaVersion: 1 }) }),
+    createReviewOptions({ analytics: createAnalytics({ evaluationPolicy: undefined }) }),
+    createReviewOptions({
+      analytics: createAnalytics({
+        evaluationPolicy: { id: 'wrong_policy', version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION },
+      }),
+    }),
+    createReviewOptions({
+      analytics: createAnalytics({
+        evaluationPolicy: { id: WEEKLY_PLAN_EVALUATION_POLICY_ID, version: 999 },
+      }),
+    }),
+    createReviewOptions({ analytics: createAnalytics({ plan: undefined }) }),
+    createReviewOptions({ analytics: createAnalytics({ workouts: null }) }),
+  ];
+
+  invalidOptions.forEach((options) => {
+    assert.throws(
+      () => buildProgramReviewInput(options),
+      (error) => {
+        assert.equal(error instanceof AIProgramReviewError, true);
+        assert.equal(error.code, 'AI_WEEKLY_PLAN_REVIEW_INPUT_INCOMPLETE');
+        assert.equal(error.message, 'AI weekly plan review input is incomplete');
+        return true;
+      }
+    );
+  });
 });
 
 test('buildProgramReviewInput projects compact cardio data from the prepared document and selected metadata', () => {
@@ -900,6 +1115,11 @@ test('buildProgramReviewInput accepts a heavy valid six-session fixture without 
   assert.equal(serialized.length <= MAX_PROGRAM_REVIEW_INPUT_CHARACTERS, true);
   assert.match(serialized, /ex_heavy_strength_59/);
   assert.match(serialized, /ex_heavy_cardio/);
+  assert.equal(serialized.split('historical_weekly_plan_metrics_v1').length - 1, 1);
+  assert.equal(reviewInput.analytics.schemaVersion, 2);
+  assert.deepEqual(Object.keys(reviewInput.analytics.evaluationPolicy), ['id', 'version']);
+  assert.doesNotMatch(JSON.stringify(reviewInput.analytics), /estimatedDurationMinutes/);
+  assert.doesNotMatch(JSON.stringify(reviewInput.analytics), /bodyPartDistribution|muscleDistribution/);
   assert.doesNotMatch(serialized, /ex_heavy_unused|PRIVATE_HEAVY_UNUSED_EXERCISE_SENTINEL/);
   assert.doesNotMatch(serialized, /PRIVATE_HEAVY_(?:WORKOUT|EXERCISE|CARDIO|MACHINE|TARGET)_/);
   assert.equal(serialized.includes('machineSettings'), false);
@@ -936,7 +1156,7 @@ test('runAIProgramReview validates provider output and returns only compact doma
     },
   });
 
-  assert.equal(providerInput.promptDescriptor.promptVersion, 'ai-program-review-prompt-v1.0.0');
+  assert.equal(providerInput.promptDescriptor.promptVersion, 'ai-program-review-prompt-v1.1.0');
   assert.equal(providerInput.schema.additionalProperties, false);
   assert.equal(result.decision, 'PASS');
   assert.equal(result.requiresRepair, false);

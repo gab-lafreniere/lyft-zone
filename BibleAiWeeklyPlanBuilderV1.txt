@@ -49,7 +49,7 @@ Cela veut dire:
 * Le User Exercise Pool contraint les nouvelles sélections générées par l’AI Builder.
 * L’IA reçoit uniquement les exercices du pool.
 * Après génération, le backend vérifie que tous les exerciseIds générés sont dans le même pool snapshot.
-* Si un exerciseId généré est hors pool snapshot, le plan est réparé ou rejeté.
+* Si un exerciseId généré est hors pool snapshot, le plan est rejeté avant la review et le Repair Loop. Le Repair Loop V1 est déclenché uniquement après une review initiale REPAIR_REQUIRED d’un plan ayant déjà passé les validations Schema, sémantiques, pool et business rules.
 * Les plans existants ne sont pas revalidés contre le profil courant.
 * Les drafts existants ne sont pas invalidés parce que le profil a changé.
 * Les plans publiés ne sont pas invalidés parce que le profil a changé.
@@ -150,6 +150,10 @@ backend/src/domain/programGeneration/coachDoctrine/
 
 backend/src/domain/programGeneration/goldExamples/
 
+backend/src/domain/programGeneration/weeklyPlanEvaluationPolicy.js
+
+backend/src/domain/programGeneration/programRepairContextBuilder.js
+
 ### Frontend
 
 Créer une route dédiée au AI Builder.
@@ -177,6 +181,11 @@ Flow frontend cible:
 9. Il peut éditer, publier ou convertir plus tard selon les flows existants.
 
 ## 7. ProgramGenerationContext
+
+Version actuelle: ProgramGenerationContext V4
+schemaVersion: 4
+evaluationPolicy
+generationMode: weekly_plan_draft
 
 Le ProgramGenerationContext est l’objet que le backend donne à l’IA.
 
@@ -232,11 +241,10 @@ Il doit inclure:
 
 ### Coach inputs
 
+* doctrineId
 * doctrineVersion
+* derivedFromDoctrineVersion
 * promptVersion
-* model task
-* goldExampleIds utilisés plus tard
-* generationMode: weekly_plan_draft
 
 ## 8. Pool snapshot
 
@@ -271,6 +279,8 @@ Pour V1, generationContext est suffisant si le payload reste raisonnable.
 
 ## 9. generationContext
 
+Version actuelle: generationContext Audit V6
+
 Le champ generationContext doit servir d’audit minimal.
 
 Il peut contenir:
@@ -288,6 +298,10 @@ Il peut contenir:
 * aiReviewSummary
 * repairAttempts
 * createdAt
+* evaluationPolicy: { id, version }
+* analyticsSummary V2
+* aiReview compact et allowlisté
+* repairAttempts
 
 Il ne doit pas contenir de contenu inutilement massif.
 
@@ -558,14 +572,22 @@ Valide:
 
 ### Couche 6: Analytics
 
-Calcule:
+Version actuelle: Weekly Plan Analytics V2
 
-* exercise count
-* set count
-* duration estimate
-* muscle distribution
-* weekly volume
-* workout level metrics
+Calcule notamment:
+
+* durée demandée par workout
+* durée calculée par weeklyPlanMetrics
+* différence calculée moins demandée
+* ratio d’utilisation
+* statut d’alignement de durée
+* correctionRequiredWorkoutCount
+* volume direct
+* volume indirect séparé
+* fréquence directe
+* comparaison des volumeTargets
+* comparaison des frequencyTargets
+* couverture des metadata musculaires
 
 ### Couche 7: AI Program Review
 
@@ -631,7 +653,19 @@ Pipeline:
 6. Validate weekly plan business rules
 7. Calculate backend analytics
 8. Run AI Program Review
-9. If repairable issues exist, repair once
+9. If repairable issues exist, repair once:
+
+La réparation V1 est déclenchée uniquement par une review initiale
+REPAIR_REQUIRED.
+
+Toutes les issues HIGH + REPAIRABLE sont obligatoires.
+
+Les issues MEDIUM + REPAIRABLE sont recommandées et doivent être
+corrigées lorsque possible sans créer de nouveau conflit.
+
+Le résultat est un remplacement complet du Weekly Plan AI Output V1,
+jamais un patch ou un diff.
+
 10. Revalidate schema, semantics, normalization, pool, business rules and analytics
 11. Run the required final review or deterministic final checks
 12. Save only if every required layer passes
@@ -729,9 +763,9 @@ Ne jamais coder le système comme s’il dépendait d’un modèle unique.
 
 Variables recommandées:
 
-* AI_PROGRAM_MODEL
-* AI_REVIEW_MODEL
-* AI_REPAIR_MODEL
+* OPENAI_MODEL_PROGRAM_GENERATION
+* OPENAI_MODEL_PROGRAM_REVIEW
+* OPENAI_MODEL_PROGRAM_REPAIR
 
 Fallbacks possibles:
 
@@ -1193,12 +1227,16 @@ Implémentation:
 * aucune donnée provider brute persistée
 * aucun changement du Manual Builder
 
-Versions:
+Versions actuelles après Evaluation Policy V1:
 
-* ProgramGenerationContext V3
-* generationContext V5
+* ProgramGenerationContext V4
+* generation prompt ai-weekly-plan-builder-prompt-v1.1.0
+* Weekly Plan Analytics V2
+* Program Review Input V2
+* program review prompt ai-program-review-prompt-v1.1.0
 * review contract V1
 * review output schema V1
+* generationContext Audit V6
 
 Limite du review input:
 
@@ -1207,7 +1245,8 @@ Limite du review input:
 * 60 exercices sélectionnés
 * 177 séries
 * cardio inclus
-* 107618 caractères
+* 115988 caractères
+* 4012 caractères de marge sous la limite de 120000
 * aucune troncation
 * input pathologique supérieur à la limite rejeté
 
@@ -1312,8 +1351,18 @@ Aucun changement du résultat du Manual Builder ne doit être introduit.
 
 Statut:
 
-* à planifier
+* complété
 * prérequis avant l’implémentation de la Phase 7
+* weeklyPlanEvaluationPolicy V1 ajoutée
+* calcul historique de durée centralisé et décrit
+* ProgramGenerationContext V4
+* prompt de génération v1.1.0
+* Analytics V2
+* Review Input V2
+* prompt de review v1.1.0
+* validation fail-closed des corrections de durée
+* generationContext Audit V6
+* tests domaine: 402/402 PASS
 
 ### Phase 7: Repair loop V1
 
@@ -1343,10 +1392,19 @@ Permettre une réparation contrôlée du plan.
 
 Tests:
 
-* repair corrige un exerciseId hors pool
+* exerciseId hors pool rejeté avant le Repair Loop
 * repair corrige durée trop longue
 * repair échoue proprement
 * max 1 attempt respecté
+
+* PASS initial ne lance aucune réparation
+* FAIL initial ne lance aucune réparation
+* REPAIR_REQUIRED lance exactement une réparation
+* toutes les HIGH + REPAIRABLE sont transmises
+* les MEDIUM + REPAIRABLE sont transmises comme recommandations
+* le réparateur retourne un output complet, jamais un patch
+* review finale obligatoire
+* aucune deuxième réparation
 
 Critère de succès:
 Un plan imparfait peut être réparé une fois, sinon rejeté sans être sauvegardé.
@@ -1566,21 +1624,33 @@ Le AI Weekly Plan Builder V1 est considéré fonctionnel quand:
 
 Prochaine étape:
 
-1. planification seulement de Evaluation Policy V1
-2. validation du plan d’implantation
-3. implémentation et tests hors réseau
-4. planification de Phase 7 Repair Loop V1
-5. implémentation de Phase 7
-6. smoke test réel avec:
+1. Phase 7A:
+   * ProgramRepairContext V1
+   * Program Repair Prompt V1.0.0
+   * aucun appel OpenAI
+   * aucune intégration au pipeline principal
+
+2. Phase 7B:
+   * service OpenAI de réparation
+   * Structured Outputs avec Weekly Plan AI Output V1
+   * aucun branchement au pipeline principal
+
+3. Phase 7C:
+   * orchestration du Repair Loop
+   * maximum une réparation
+   * revalidation complète
+   * nouvelles Analytics V2
+   * review finale
+   * persistence seulement si PASS
+
+4. Smoke test réel:
    * génération initiale
-   * review
+   * review initiale
    * maximum une réparation
    * nouvelles validations
    * nouvelles analytics
    * review finale
    * aucune persistence sauf si la review finale retourne PASS
-
-Ne pas coder immédiatement la Phase 7 avant Evaluation Policy V1.
 
 ---
 

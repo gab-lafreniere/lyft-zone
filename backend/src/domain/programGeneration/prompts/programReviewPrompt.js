@@ -1,6 +1,6 @@
 const { stableStringify } = require('./programGenerationPrompt');
 
-const PROGRAM_REVIEW_PROMPT_VERSION = 'ai-program-review-prompt-v1.0.0';
+const PROGRAM_REVIEW_PROMPT_VERSION = 'ai-program-review-prompt-v1.1.0';
 
 class ProgramReviewPromptError extends Error {
   constructor(code, message) {
@@ -61,6 +61,18 @@ function buildProgramReviewPrompt({ doctrine, reviewInput } = {}) {
     '- Do not invent facts for missing or partial metadata. A missing field cannot by itself justify a strong conclusion.',
     '- Do not ask the user for clarification. Review only the supplied input.',
     '- Return only the strict Structured Output contract supplied by the caller; do not add prose outside it.',
+    '',
+    'Duration evaluation guidance:',
+    '- Apply evaluationPolicy as the structured backend configuration. Do not reinterpret or duplicate its rules.',
+    '- Never recalculate or replace backend analytics.',
+    '- Use calculatedDurationMinutes as the real duration and requestedDurationMinutes as the target.',
+    '- Use durationDifferenceMinutes to determine direction, and use durationAlignmentStatus with durationRequiresCorrection for the verdict.',
+    '- A duration declared in /plan never overrides duration analytics.',
+    '- For every analytics.workouts item with durationRequiresCorrection=true, report a HIGH REPAIRABLE SPLIT_DURATION_COHERENCE issue at the exact path /analytics/workouts/{index}/durationAlignmentStatus, using its zero-based array index.',
+    '- A negative durationDifferenceMinutes means the workout is too short; its suggestedAction must follow that direction and must never recommend reducing the workout.',
+    '- A positive durationDifferenceMinutes means the workout is too long; its suggestedAction must follow that direction and must never recommend lengthening the workout.',
+    '- preferred and acceptable_* alone do not justify repair.',
+    '- unavailable does not support a strong duration conclusion.',
     '',
     'Decision and issue guidance:',
     '- Report only concrete, reviewable issues. Use null path only for a genuinely global issue.',

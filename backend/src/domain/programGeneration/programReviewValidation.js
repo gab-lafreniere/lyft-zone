@@ -9,6 +9,12 @@ const PROGRAM_REVIEW_ALLOWED_POINTER_ROOTS = Object.freeze([
   'intent',
 ]);
 
+const MANDATORY_DURATION_ISSUE = Object.freeze({
+  category: 'SPLIT_DURATION_COHERENCE',
+  severity: 'HIGH',
+  repairability: 'REPAIRABLE',
+});
+
 const FORBIDDEN_TEXT_PATTERNS = [
   /\bnot a diagnosis\b/i,
   /\bnot medical advice\b/i,
@@ -260,6 +266,65 @@ function validateIssueRepairability(issue, path, issues) {
   }
 }
 
+function isMandatoryDurationIssue(issue, expectedPath) {
+  return (
+    issue?.category === MANDATORY_DURATION_ISSUE.category &&
+    issue?.severity === MANDATORY_DURATION_ISSUE.severity &&
+    issue?.repairability === MANDATORY_DURATION_ISSUE.repairability &&
+    issue?.path === expectedPath
+  );
+}
+
+function validateMandatoryDurationIssues(reviewIssues, reviewInput, issues) {
+  const workouts = reviewInput?.analytics?.workouts;
+
+  if (!Array.isArray(workouts)) {
+    return;
+  }
+
+  workouts.forEach((workout, workoutIndex) => {
+    const expectedPath =
+      `/analytics/workouts/${workoutIndex}/durationAlignmentStatus`;
+    const issuesAtExpectedPath = reviewIssues
+      .map((issue, issueIndex) => ({ issue, issueIndex }))
+      .filter(({ issue }) => issue?.path === expectedPath);
+    const matchingIssues = issuesAtExpectedPath.filter(({ issue }) =>
+      isMandatoryDurationIssue(issue, expectedPath)
+    );
+
+    if (workout?.durationRequiresCorrection === true) {
+      if (issuesAtExpectedPath.length !== 1 || matchingIssues.length !== 1) {
+        pushIssue(
+          issues,
+          'issues',
+          'MANDATORY_DURATION_CORRECTION_ISSUE_MISSING_OR_INVALID',
+          'A workout requiring duration correction must have exactly one canonical duration issue',
+          {
+            workoutIndex,
+            expectedPath,
+          }
+        );
+      }
+      return;
+    }
+
+    if (workout?.durationRequiresCorrection === false) {
+      matchingIssues.forEach(({ issueIndex }) => {
+        pushIssue(
+          issues,
+          `issues[${issueIndex}]`,
+          'UNJUSTIFIED_DURATION_CORRECTION_ISSUE',
+          'A workout not requiring duration correction cannot have a canonical blocking duration issue',
+          {
+            workoutIndex,
+            expectedPath,
+          }
+        );
+      });
+    }
+  });
+}
+
 function validateProgramReviewSemantics(review = {}, reviewInput) {
   const source = isObjectLike(review) && !Array.isArray(review) ? review : {};
   const reviewIssues = toIssues(source);
@@ -347,6 +412,8 @@ function validateProgramReviewSemantics(review = {}, reviewInput) {
       }
     }
   });
+
+  validateMandatoryDurationIssues(reviewIssues, reviewInput, issues);
 
   if (source.decision !== canonical.decision) {
     pushIssue(

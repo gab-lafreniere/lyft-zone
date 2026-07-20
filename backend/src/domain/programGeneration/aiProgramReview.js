@@ -17,8 +17,16 @@ const {
 const {
   stableStringify,
 } = require('./prompts/programGenerationPrompt');
+const {
+  DURATION_ALIGNMENT_STATUS,
+  WEEKLY_PLAN_EVALUATION_POLICY_ID,
+  WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+} = require('./weeklyPlanEvaluationPolicy');
+const {
+  WEEKLY_PLAN_ANALYTICS_SCHEMA_VERSION,
+} = require('./weeklyPlanAnalytics');
 
-const PROGRAM_REVIEW_INPUT_SCHEMA_VERSION = 1;
+const PROGRAM_REVIEW_INPUT_SCHEMA_VERSION = 2;
 const MAX_PROGRAM_REVIEW_INPUT_CHARACTERS = 120000;
 
 class AIProgramReviewError extends Error {
@@ -439,12 +447,56 @@ function buildTargetComparisonReviewInput(group = {}) {
   };
 }
 
+function buildDurationAlignmentStatusCounts(counts = {}) {
+  return Object.values(DURATION_ALIGNMENT_STATUS).reduce((result, status) => {
+    result[status] = normalizeInteger(counts?.[status]);
+    return result;
+  }, {});
+}
+
+function assertProgramReviewInputDependencies(context, analytics) {
+  const contextPolicy = context?.evaluationPolicy;
+  const analyticsPolicy = analytics?.evaluationPolicy;
+  const hasValidContextPolicy =
+    contextPolicy?.id === WEEKLY_PLAN_EVALUATION_POLICY_ID &&
+    contextPolicy?.version === WEEKLY_PLAN_EVALUATION_POLICY_VERSION;
+  const hasValidAnalyticsPolicy =
+    analyticsPolicy?.id === WEEKLY_PLAN_EVALUATION_POLICY_ID &&
+    analyticsPolicy?.version === WEEKLY_PLAN_EVALUATION_POLICY_VERSION;
+  const hasMatchingPolicyIdentity =
+    contextPolicy?.id === analyticsPolicy?.id &&
+    contextPolicy?.version === analyticsPolicy?.version;
+  const hasAnalyticsPlan =
+    analytics?.plan &&
+    typeof analytics.plan === 'object' &&
+    !Array.isArray(analytics.plan);
+
+  if (
+    !hasValidContextPolicy ||
+    analytics?.schemaVersion !== WEEKLY_PLAN_ANALYTICS_SCHEMA_VERSION ||
+    !hasValidAnalyticsPolicy ||
+    !hasMatchingPolicyIdentity ||
+    !hasAnalyticsPlan ||
+    !Array.isArray(analytics?.workouts)
+  ) {
+    throw new AIProgramReviewError(
+      'AI_WEEKLY_PLAN_REVIEW_INPUT_INCOMPLETE',
+      'AI weekly plan review input is incomplete'
+    );
+  }
+}
+
 function buildAnalyticsReviewInput(analytics = {}) {
   const plan = analytics?.plan || {};
   const metadataCoverage = analytics?.metadataCoverage || {};
 
   return {
+    schemaVersion: normalizeInteger(analytics?.schemaVersion),
     status: normalizeOptionalString(analytics?.status),
+    evaluationPolicy: {
+      id: normalizeOptionalString(analytics?.evaluationPolicy?.id),
+      version: normalizeInteger(analytics?.evaluationPolicy?.version),
+    },
     plan: {
       workoutCount: normalizeInteger(plan.workoutCount),
       blockCount: normalizeInteger(plan.blockCount),
@@ -454,24 +506,27 @@ function buildAnalyticsReviewInput(analytics = {}) {
       uniqueExerciseCount: normalizeInteger(plan.uniqueExerciseCount),
       workingSetCount: normalizeInteger(plan.workingSetCount),
       totalSetTemplateCount: normalizeInteger(plan.totalSetTemplateCount),
-      estimatedDurationMinutesTotal: normalizeNumber(plan.estimatedDurationMinutesTotal),
-      estimatedDurationMinutesAverage: normalizeNumber(plan.estimatedDurationMinutesAverage),
-      declaredEstimatedDurationMinutesTotal: normalizeNumber(
-        plan.declaredEstimatedDurationMinutesTotal
+      requestedDurationMinutesPerWorkout: normalizeNumber(
+        plan.requestedDurationMinutesPerWorkout
+      ),
+      requestedDurationMinutesTotal: normalizeNumber(plan.requestedDurationMinutesTotal),
+      calculatedDurationMinutesTotal: normalizeNumber(plan.calculatedDurationMinutesTotal),
+      calculatedDurationMinutesAverage: normalizeNumber(
+        plan.calculatedDurationMinutesAverage
       ),
       durationDifferenceMinutesTotal: normalizeNumber(plan.durationDifferenceMinutesTotal),
+      durationAlignmentStatusCounts: buildDurationAlignmentStatusCounts(
+        plan.durationAlignmentStatusCounts
+      ),
+      correctionRequiredWorkoutCount: normalizeInteger(
+        plan.correctionRequiredWorkoutCount
+      ),
       minWorkoutDurationMinutes: normalizeNumber(plan.minWorkoutDurationMinutes),
       maxWorkoutDurationMinutes: normalizeNumber(plan.maxWorkoutDurationMinutes),
       singleBlockCount: normalizeInteger(plan.singleBlockCount),
       supersetBlockCount: normalizeInteger(plan.supersetBlockCount),
       cardioBlockCount: normalizeInteger(plan.cardioBlockCount),
       cardioDurationMinutes: normalizeNumber(plan.cardioDurationMinutes),
-      bodyPartDistribution: toArray(plan.bodyPartDistribution).map((entry) => ({
-        key: normalizeOptionalString(entry?.key),
-        rawSets: normalizeNumber(entry?.rawSets),
-        normalizedShare: normalizeNumber(entry?.normalizedShare),
-        percentageOfWorkout: normalizeNumber(entry?.percentageOfWorkout),
-      })),
     },
     workouts: toArray(analytics?.workouts)
       .map((workout, index) => ({
@@ -481,9 +536,14 @@ function buildAnalyticsReviewInput(analytics = {}) {
         cardioExerciseCount: normalizeInteger(workout?.cardioExerciseCount),
         workingSetCount: normalizeInteger(workout?.workingSetCount),
         totalSetTemplateCount: normalizeInteger(workout?.totalSetTemplateCount),
-        estimatedDurationMinutes: normalizeNumber(workout?.estimatedDurationMinutes),
-        declaredEstimatedDurationMinutes: normalizeNumber(workout?.declaredEstimatedDurationMinutes),
+        requestedDurationMinutes: normalizeNumber(workout?.requestedDurationMinutes),
+        calculatedDurationMinutes: normalizeNumber(workout?.calculatedDurationMinutes),
         durationDifferenceMinutes: normalizeNumber(workout?.durationDifferenceMinutes),
+        durationUtilizationRatio: normalizeNumber(workout?.durationUtilizationRatio),
+        durationAlignmentStatus: normalizeOptionalString(
+          workout?.durationAlignmentStatus
+        ),
+        durationRequiresCorrection: Boolean(workout?.durationRequiresCorrection),
         supersetCount: normalizeInteger(workout?.supersetCount),
         cardioDurationMinutes: normalizeNumber(workout?.cardioDurationMinutes),
         muscleProjections: buildProjectionEntries(workout?.muscleProjections),
@@ -518,6 +578,8 @@ function buildProgramReviewInput({
   generatedPlanDocument = {},
   analytics = {},
 } = {}) {
+  assertProgramReviewInputDependencies(context, analytics);
+
   const plan = buildPlanReviewInput(generatedPlanDocument);
   plan.selectedExerciseMetadata = buildSelectedExerciseMetadata(
     generatedPlanDocument,
@@ -526,6 +588,7 @@ function buildProgramReviewInput({
 
   const reviewInput = {
     schemaVersion: PROGRAM_REVIEW_INPUT_SCHEMA_VERSION,
+    evaluationPolicy: context.evaluationPolicy,
     profile: buildProfileReviewInput(context),
     constraints: buildConstraintsReviewInput(context),
     intent: buildIntentReviewInput(generatedAIOutput, generatedPlanDocument),

@@ -8,13 +8,20 @@ const {
   validateProgramReviewSemantics,
   validateReviewJsonPointer,
 } = require('../../src/domain/programGeneration/programReviewValidation');
+const {
+  WEEKLY_PLAN_EVALUATION_POLICY,
+  WEEKLY_PLAN_EVALUATION_POLICY_ID,
+  WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+} = require('../../src/domain/programGeneration/weeklyPlanEvaluationPolicy');
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function createReviewInput() {
+function createReviewInput({ workouts = [] } = {}) {
   return {
+    schemaVersion: 2,
+    evaluationPolicy: WEEKLY_PLAN_EVALUATION_POLICY,
     plan: {
       workouts: [
         {
@@ -30,6 +37,16 @@ function createReviewInput() {
       },
     },
     analytics: {
+      schemaVersion: 2,
+      status: 'complete',
+      evaluationPolicy: {
+        id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
+        version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+      },
+      plan: {
+        durationDifferenceMinutesTotal: 0,
+      },
+      workouts,
       targetComparisons: {
         volume: {
           items: [{ area: 'chest' }],
@@ -69,6 +86,31 @@ function createReview(issues = [], overrides = {}) {
     issues,
     ...overrides,
   };
+}
+
+function createDurationWorkout(overrides = {}) {
+  return {
+    workoutOrderIndex: 10,
+    requestedDurationMinutes: 60,
+    calculatedDurationMinutes: 45,
+    durationDifferenceMinutes: -15,
+    durationUtilizationRatio: 0.75,
+    durationAlignmentStatus: 'correction_required_under_target',
+    durationRequiresCorrection: true,
+    ...overrides,
+  };
+}
+
+function createDurationIssue(workoutIndex, overrides = {}) {
+  return createIssue({
+    category: 'SPLIT_DURATION_COHERENCE',
+    severity: 'HIGH',
+    path: `/analytics/workouts/${workoutIndex}/durationAlignmentStatus`,
+    message: 'The calculated workout duration requires correction.',
+    repairability: 'REPAIRABLE',
+    suggestedAction: 'Adjust the workout duration using the supplied analytics.',
+    ...overrides,
+  });
 }
 
 function expectIssueCode(result, code) {
@@ -169,6 +211,257 @@ test('validateProgramReviewSemantics accepts canonical REPAIR_REQUIRED and FAIL 
   assert.equal(failResult.ok, true);
   assert.equal(failResult.decision, 'FAIL');
   assert.equal(failResult.requiresRepair, false);
+});
+
+test('mandatory under-target and over-target duration issues validate as REPAIR_REQUIRED', async (t) => {
+  const cases = [
+    {
+      name: 'under target',
+      workout: createDurationWorkout(),
+    },
+    {
+      name: 'over target',
+      workout: createDurationWorkout({
+        calculatedDurationMinutes: 75,
+        durationDifferenceMinutes: 15,
+        durationUtilizationRatio: 1.25,
+        durationAlignmentStatus: 'correction_required_over_target',
+      }),
+    },
+  ];
+
+  for (const entry of cases) {
+    await t.test(entry.name, () => {
+      const reviewInput = createReviewInput({ workouts: [entry.workout] });
+      const review = createReview([createDurationIssue(0)]);
+      const result = validateProgramReviewSemantics(review, reviewInput);
+
+      assert.equal(result.ok, true);
+      assert.equal(result.value, review);
+      assert.equal(result.decision, 'REPAIR_REQUIRED');
+      assert.equal(result.requiresRepair, true);
+    });
+  }
+});
+
+test('a missing mandatory duration issue fails closed without fabricating review content', () => {
+  const reviewInput = createReviewInput({ workouts: [createDurationWorkout()] });
+  const review = createReview([]);
+  const originalReviewInput = clone(reviewInput);
+  const originalReview = clone(review);
+
+  const result = validateProgramReviewSemantics(review, reviewInput);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.value, null);
+  assert.equal(result.decision, 'PASS');
+  assert.equal(result.requiresRepair, false);
+  expectIssueCode(result, 'MANDATORY_DURATION_CORRECTION_ISSUE_MISSING_OR_INVALID');
+  assert.deepEqual(reviewInput, originalReviewInput);
+  assert.deepEqual(review, originalReview);
+  assert.deepEqual(review.issues, []);
+  assert.equal(review.decision, 'PASS');
+  assert.equal(review.requiresRepair, false);
+});
+
+test('every workout requiring duration correction needs its own array-indexed issue', () => {
+  const reviewInput = createReviewInput({
+    workouts: [
+      createDurationWorkout({ workoutOrderIndex: 4 }),
+      createDurationWorkout({ workoutOrderIndex: 8 }),
+    ],
+  });
+  const review = createReview([createDurationIssue(0)]);
+  const result = validateProgramReviewSemantics(review, reviewInput);
+
+  assert.equal(result.ok, false);
+  expectIssueCode(result, 'MANDATORY_DURATION_CORRECTION_ISSUE_MISSING_OR_INVALID');
+  assert.equal(
+    result.issues.some(
+      (issue) => issue.workoutIndex === 1 &&
+        issue.expectedPath === '/analytics/workouts/1/durationAlignmentStatus'
+    ),
+    true
+  );
+});
+
+test('mandatory duration paths use the zero-based array index, not another workout index', () => {
+  const wrongArrayIndexInput = createReviewInput({
+    workouts: [
+      createDurationWorkout({ workoutOrderIndex: 7 }),
+      createDurationWorkout({
+        workoutOrderIndex: 1,
+        durationAlignmentStatus: 'preferred',
+        durationRequiresCorrection: false,
+      }),
+    ],
+  });
+  const wrongArrayIndex = validateProgramReviewSemantics(
+    createReview([createDurationIssue(1)]),
+    wrongArrayIndexInput
+  );
+
+  assert.equal(wrongArrayIndex.ok, false);
+  expectIssueCode(wrongArrayIndex, 'MANDATORY_DURATION_CORRECTION_ISSUE_MISSING_OR_INVALID');
+
+  const workoutOrderIndexInput = createReviewInput({
+    workouts: [
+      createDurationWorkout({ workoutOrderIndex: 2 }),
+      createDurationWorkout({
+        workoutOrderIndex: 1,
+        durationAlignmentStatus: 'preferred',
+        durationRequiresCorrection: false,
+      }),
+      createDurationWorkout({
+        workoutOrderIndex: 3,
+        durationAlignmentStatus: 'preferred',
+        durationRequiresCorrection: false,
+      }),
+    ],
+  });
+  const workoutOrderIndexPath = validateProgramReviewSemantics(
+    createReview([createDurationIssue(2)]),
+    workoutOrderIndexInput
+  );
+
+  assert.equal(workoutOrderIndexPath.ok, false);
+  expectIssueCode(workoutOrderIndexPath, 'MANDATORY_DURATION_CORRECTION_ISSUE_MISSING_OR_INVALID');
+});
+
+test('mandatory duration issues require the exact path, category, severity, and repairability', async (t) => {
+  const cases = [
+    {
+      name: 'wrong field path',
+      overrides: { path: '/analytics/workouts/0/calculatedDurationMinutes' },
+    },
+    {
+      name: 'wrong category',
+      overrides: { category: 'VOLUME_FREQUENCY_ALIGNMENT' },
+    },
+    {
+      name: 'medium severity',
+      overrides: { severity: 'MEDIUM' },
+    },
+    {
+      name: 'non-repairable',
+      overrides: { repairability: 'NON_REPAIRABLE', suggestedAction: null },
+    },
+    {
+      name: 'not applicable',
+      overrides: { repairability: 'NOT_APPLICABLE', suggestedAction: null },
+    },
+  ];
+
+  for (const entry of cases) {
+    await t.test(entry.name, () => {
+      const reviewInput = createReviewInput({ workouts: [createDurationWorkout()] });
+      const review = createReview([createDurationIssue(0, entry.overrides)]);
+      const result = validateProgramReviewSemantics(review, reviewInput);
+
+      assert.equal(result.ok, false);
+      expectIssueCode(result, 'MANDATORY_DURATION_CORRECTION_ISSUE_MISSING_OR_INVALID');
+    });
+  }
+});
+
+test('a workout requiring correction rejects multiple issues at its canonical duration path', () => {
+  const reviewInput = createReviewInput({ workouts: [createDurationWorkout()] });
+  const review = createReview([
+    createDurationIssue(0),
+    createDurationIssue(0, {
+      issueIndex: 2,
+      message: 'A second duration issue must not be emitted for the same workout.',
+    }),
+  ]);
+  const result = validateProgramReviewSemantics(review, reviewInput);
+
+  assert.equal(result.ok, false);
+  expectIssueCode(result, 'MANDATORY_DURATION_CORRECTION_ISSUE_MISSING_OR_INVALID');
+});
+
+test('non-correction duration statuses allow PASS without a duration issue', async (t) => {
+  const statuses = [
+    'preferred',
+    'acceptable_under_target',
+    'acceptable_over_target',
+    'unavailable',
+  ];
+
+  for (const status of statuses) {
+    await t.test(status, () => {
+      const reviewInput = createReviewInput({
+        workouts: [
+          createDurationWorkout({
+            durationAlignmentStatus: status,
+            durationRequiresCorrection: false,
+          }),
+        ],
+      });
+      const result = validateProgramReviewSemantics(createReview([]), reviewInput);
+
+      assert.equal(result.ok, true);
+      assert.equal(result.decision, 'PASS');
+      assert.equal(result.requiresRepair, false);
+    });
+  }
+});
+
+test('a false canonical blocking duration issue is rejected for a non-correction workout', () => {
+  const reviewInput = createReviewInput({
+    workouts: [
+      createDurationWorkout({
+        durationAlignmentStatus: 'preferred',
+        durationRequiresCorrection: false,
+      }),
+    ],
+  });
+  const review = createReview([createDurationIssue(0)]);
+  const originalReview = clone(review);
+  const result = validateProgramReviewSemantics(review, reviewInput);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.decision, 'REPAIR_REQUIRED');
+  assert.equal(result.requiresRepair, true);
+  expectIssueCode(result, 'UNJUSTIFIED_DURATION_CORRECTION_ISSUE');
+  assert.deepEqual(review, originalReview);
+});
+
+test('a distinct global duration coherence issue at another valid path keeps existing behavior', () => {
+  const reviewInput = createReviewInput({
+    workouts: [
+      createDurationWorkout({
+        durationAlignmentStatus: 'acceptable_under_target',
+        durationRequiresCorrection: false,
+      }),
+    ],
+  });
+  const review = createReview([
+    createDurationIssue(0, {
+      path: '/analytics/plan/durationDifferenceMinutesTotal',
+      message: 'The aggregate duration distribution requires a distinct review.',
+    }),
+  ]);
+  const result = validateProgramReviewSemantics(review, reviewInput);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.decision, 'REPAIR_REQUIRED');
+  assert.equal(result.requiresRepair, true);
+});
+
+test('missing or invalid analytics workouts retain controlled JSON Pointer validation', () => {
+  const invalidInputs = [createReviewInput(), createReviewInput()];
+  delete invalidInputs[0].analytics.workouts;
+  invalidInputs[1].analytics.workouts = null;
+
+  invalidInputs.forEach((reviewInput) => {
+    const review = createReview([
+      createIssue({ path: '/analytics/workouts/0/durationAlignmentStatus' }),
+    ]);
+    const result = validateProgramReviewSemantics(review, reviewInput);
+
+    assert.equal(result.ok, false);
+    expectIssueCode(result, 'JSON_POINTER_NOT_FOUND');
+  });
 });
 
 test('validateProgramReviewSemantics rejects mismatched model decision and requiresRepair values', () => {
