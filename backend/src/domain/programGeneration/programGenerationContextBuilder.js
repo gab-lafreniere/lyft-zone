@@ -8,8 +8,11 @@ const {
   createPoolSnapshot,
   createPoolSummary,
 } = require('./poolSnapshot');
+const {
+  WEEKLY_PLAN_EVALUATION_POLICY,
+} = require('./weeklyPlanEvaluationPolicy');
 
-const PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION = 3;
+const PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION = 4;
 
 function attachCoachInputsToProgramGenerationContext(
   context,
@@ -17,7 +20,6 @@ function attachCoachInputsToProgramGenerationContext(
 ) {
   return {
     ...context,
-    schemaVersion: PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION,
     coachInputs: {
       doctrineId: doctrine?.id || null,
       doctrineVersion: doctrine?.version || null,
@@ -62,6 +64,7 @@ async function buildProgramGenerationContext(userId, options = {}, deps = {}) {
       sessionsPerWeek: profile.availability?.sessionsPerWeek ?? null,
       durationPerSession: profile.availability?.durationPerSession ?? null,
     },
+    evaluationPolicy: WEEKLY_PLAN_EVALUATION_POLICY,
     musclePriorityProfile: poolResult.context?.musclePriorityProfile || {},
     equipmentContext: poolResult.context?.equipmentContext || {},
     movementConstraints: poolResult.context?.movementConstraints || {},

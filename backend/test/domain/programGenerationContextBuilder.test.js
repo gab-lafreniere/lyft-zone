@@ -9,6 +9,11 @@ const {
   attachCoachInputsToProgramGenerationContext,
   buildProgramGenerationContext,
 } = require('../../src/domain/programGeneration/programGenerationContextBuilder');
+const {
+  WEEKLY_PLAN_EVALUATION_POLICY,
+  WEEKLY_PLAN_EVALUATION_POLICY_ID,
+  WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
+} = require('../../src/domain/programGeneration/weeklyPlanEvaluationPolicy');
 
 function createProfile(overrides = {}) {
   return {
@@ -137,26 +142,34 @@ test('buildProgramGenerationContext throws UNSUPPORTED_PROFILE_SCHEMA_VERSION fo
 });
 
 test('buildProgramGenerationContext builds profile context, compact pool items, and pool snapshot', async () => {
+  let profileQueryCount = 0;
+  let exerciseQueryCount = 0;
   const prisma = {
     userProfile: {
-      findUnique: async () => ({
-        onboardingSnapshot: {
-          schemaVersion: 2,
-          profile: createProfile(),
-        },
-      }),
+      findUnique: async () => {
+        profileQueryCount += 1;
+        return {
+          onboardingSnapshot: {
+            schemaVersion: 2,
+            profile: createProfile(),
+          },
+        };
+      },
     },
     exercise: {
-      findMany: async () => [
-        createEligibleExercise({
-          jointStressTags: ['shoulder_load', 'elbow_load', 'shoulder_load', ' '],
-        }),
-        createEligibleExercise({
-          exerciseId: 'ex_advanced_press',
-          name: 'Advanced Press',
-          difficulty: 'advanced',
-        }),
-      ],
+      findMany: async () => {
+        exerciseQueryCount += 1;
+        return [
+          createEligibleExercise({
+            jointStressTags: ['shoulder_load', 'elbow_load', 'shoulder_load', ' '],
+          }),
+          createEligibleExercise({
+            exerciseId: 'ex_advanced_press',
+            name: 'Advanced Press',
+            difficulty: 'advanced',
+          }),
+        ];
+      },
     },
   };
 
@@ -169,8 +182,8 @@ test('buildProgramGenerationContext builds profile context, compact pool items, 
     }
   );
 
-  assert.equal(PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION, 3);
-  assert.equal(context.schemaVersion, 3);
+  assert.equal(PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION, 4);
+  assert.equal(context.schemaVersion, 4);
   assert.equal(context.generationMode, 'weekly_plan_draft');
   assert.equal(context.coachInputs, null);
   assert.equal(context.userId, 'user_123');
@@ -180,6 +193,12 @@ test('buildProgramGenerationContext builds profile context, compact pool items, 
     sessionsPerWeek: 4,
     durationPerSession: 75,
   });
+  assert.strictEqual(context.evaluationPolicy, WEEKLY_PLAN_EVALUATION_POLICY);
+  assert.equal(context.evaluationPolicy.id, WEEKLY_PLAN_EVALUATION_POLICY_ID);
+  assert.equal(
+    context.evaluationPolicy.version,
+    WEEKLY_PLAN_EVALUATION_POLICY_VERSION
+  );
   assert.equal(context.primaryGoal, 'HYPERTROPHY');
   assert.equal(context.experience, 'intermediate');
   assert.equal(context.physicalNotes, 'Keep setup changes simple.');
@@ -197,15 +216,56 @@ test('buildProgramGenerationContext builds profile context, compact pool items, 
     'shoulder_load',
   ]);
   assert.equal(context.exercisePoolItems[0].softSignals.equipmentBias.value, 'no_preference');
+  assert.deepEqual(Object.keys(context).sort(), [
+    'availability',
+    'cardioProfile',
+    'coachInputs',
+    'createdAt',
+    'equipmentContext',
+    'evaluationPolicy',
+    'exercisePoolItems',
+    'experience',
+    'generationMode',
+    'movementConstraints',
+    'musclePriorityProfile',
+    'physicalNotes',
+    'poolSnapshot',
+    'poolSummary',
+    'primaryGoal',
+    'profileSchemaVersion',
+    'schemaVersion',
+    'userId',
+  ]);
+  assert.equal(
+    JSON.stringify(context).split(WEEKLY_PLAN_EVALUATION_POLICY_ID).length - 1,
+    1
+  );
+  assert.equal(profileQueryCount, 1);
+  assert.equal(exerciseQueryCount, 1);
+
+  const secondContext = await buildProgramGenerationContext(
+    'user_123',
+    {},
+    {
+      prisma,
+      now: new Date('2026-06-01T12:00:00.000Z'),
+    }
+  );
+
+  assert.deepEqual(secondContext, context);
+  assert.strictEqual(secondContext.evaluationPolicy, WEEKLY_PLAN_EVALUATION_POLICY);
+  assert.equal(profileQueryCount, 2);
+  assert.equal(exerciseQueryCount, 2);
 });
 
 test('attachCoachInputsToProgramGenerationContext adds compact metadata without doctrine content', () => {
-  const baseContext = {
-    schemaVersion: 3,
+  const baseContext = Object.freeze({
+    schemaVersion: 4,
     generationMode: 'weekly_plan_draft',
     primaryGoal: 'HYPERTROPHY',
+    evaluationPolicy: WEEKLY_PLAN_EVALUATION_POLICY,
     coachInputs: null,
-  };
+  });
   const context = attachCoachInputsToProgramGenerationContext(baseContext, {
     doctrine: {
       id: 'bodybuilding_runtime_classic',
@@ -213,16 +273,55 @@ test('attachCoachInputsToProgramGenerationContext adds compact metadata without 
       derivedFromDoctrineVersion: 'bodybuilding-hypertrophy-v1.0.0',
       content: 'DOCTRINE_CONTENT_MUST_NOT_BE_COPIED',
     },
-    promptVersion: 'ai-weekly-plan-builder-prompt-v1.0.1',
+    promptVersion: 'ai-weekly-plan-builder-prompt-v1.1.0',
   });
 
   assert.equal(baseContext.coachInputs, null);
-  assert.equal(context.schemaVersion, 3);
+  assert.equal(baseContext.schemaVersion, 4);
+  assert.strictEqual(
+    baseContext.evaluationPolicy,
+    WEEKLY_PLAN_EVALUATION_POLICY
+  );
+  assert.equal(context.schemaVersion, 4);
+  assert.strictEqual(context.evaluationPolicy, WEEKLY_PLAN_EVALUATION_POLICY);
+  assert.notStrictEqual(context, baseContext);
   assert.deepEqual(context.coachInputs, {
     doctrineId: 'bodybuilding_runtime_classic',
     doctrineVersion: 'bodybuilding-hypertrophy-runtime-classic-v1.0.0',
     derivedFromDoctrineVersion: 'bodybuilding-hypertrophy-v1.0.0',
-    promptVersion: 'ai-weekly-plan-builder-prompt-v1.0.1',
+    promptVersion: 'ai-weekly-plan-builder-prompt-v1.1.0',
+  });
+  assert.doesNotMatch(JSON.stringify(context), /DOCTRINE_CONTENT_MUST_NOT_BE_COPIED/);
+});
+
+test('attachCoachInputsToProgramGenerationContext never disguises a legacy V3 context as V4', () => {
+  const baseContext = Object.freeze({
+    schemaVersion: 3,
+    generationMode: 'weekly_plan_draft',
+    primaryGoal: 'HYPERTROPHY',
+    coachInputs: null,
+  });
+  const context = attachCoachInputsToProgramGenerationContext(baseContext, {
+    doctrine: {
+      id: 'bodybuilding_runtime_classic',
+      version: 'bodybuilding-hypertrophy-runtime-classic-v1.0.0',
+      derivedFromDoctrineVersion: 'bodybuilding-hypertrophy-v1.0.0',
+      content: 'DOCTRINE_CONTENT_MUST_NOT_BE_COPIED',
+    },
+    promptVersion: 'ai-weekly-plan-builder-prompt-v1.1.0',
+  });
+
+  assert.equal(baseContext.schemaVersion, 3);
+  assert.equal(Object.hasOwn(baseContext, 'evaluationPolicy'), false);
+  assert.equal(baseContext.coachInputs, null);
+  assert.notStrictEqual(context, baseContext);
+  assert.equal(context.schemaVersion, 3);
+  assert.equal(Object.hasOwn(context, 'evaluationPolicy'), false);
+  assert.deepEqual(context.coachInputs, {
+    doctrineId: 'bodybuilding_runtime_classic',
+    doctrineVersion: 'bodybuilding-hypertrophy-runtime-classic-v1.0.0',
+    derivedFromDoctrineVersion: 'bodybuilding-hypertrophy-v1.0.0',
+    promptVersion: 'ai-weekly-plan-builder-prompt-v1.1.0',
   });
   assert.doesNotMatch(JSON.stringify(context), /DOCTRINE_CONTENT_MUST_NOT_BE_COPIED/);
 });
