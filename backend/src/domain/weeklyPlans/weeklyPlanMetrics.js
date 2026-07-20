@@ -1,3 +1,111 @@
+const WEEKLY_PLAN_DURATION_METHOD_ID = 'historical_weekly_plan_metrics_v1';
+const DURATION_SECONDS_PER_MINUTE = 60;
+const DURATION_REST_INTERVAL_MULTIPLIER = 1.15;
+const DURATION_FIXED_BLOCK_SECONDS = 90;
+const DURATION_TEMPO_MAX_DIGITS = 4;
+const DURATION_TEMPO_THREE_DIGIT_LENGTH = 3;
+const DURATION_BLOCK_TYPE = Object.freeze({
+  SINGLE: 'SINGLE',
+  SUPERSET: 'SUPERSET',
+  CARDIO: 'CARDIO',
+});
+
+function deepFreeze(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) {
+    return value;
+  }
+
+  Object.values(value).forEach(deepFreeze);
+  return Object.freeze(value);
+}
+
+const WEEKLY_PLAN_DURATION_METHOD_DESCRIPTOR = deepFreeze({
+  id: WEEKLY_PLAN_DURATION_METHOD_ID,
+  output: {
+    field: 'estimatedDurationMinutes',
+    unit: 'minutes',
+    rounding: 'nearest_integer_half_up_after_workout_total',
+    nonPositiveTotalBehavior: 'zero',
+  },
+  tempo: {
+    digitExtraction: 'first_four_decimal_digits',
+    maxDigits: DURATION_TEMPO_MAX_DIGITS,
+    threeDigitBehavior: 'append_zero',
+    otherShortLengthBehavior: 'right_pad_zero',
+    missingBehavior: 'zero_seconds_per_rep',
+    secondsPerRepOperation: 'sum_normalized_digits',
+  },
+  repetitions: {
+    valuePrecedence: ['targetReps', 'maxReps', 'minReps', 'zero'],
+    selectionOperation: 'nullish_precedence_then_number_conversion',
+    nonPositiveOrNonFiniteBehavior: 'zero',
+  },
+  blocks: {
+    [DURATION_BLOCK_TYPE.SINGLE]: {
+      exerciseSelection: 'first_exercise',
+      includeWhen: [
+        'exercise_id_present',
+        'exercise_name_non_empty',
+        'set_template_count_positive',
+      ],
+      setCountSource: 'all_set_templates',
+      tempoSourcePrecedence: ['exercise.defaultTempo', 'firstSet.tempo'],
+      tempoSourceOperation: 'nullish_precedence',
+      tutOperation: 'sum_selected_reps_times_tempo_seconds',
+      restSourcePrecedence: [
+        'block.restSeconds',
+        'exercise.defaultRestSeconds',
+        'firstSet.restSeconds',
+        'zero',
+      ],
+      restSourceOperation: 'nullish_precedence_then_finite_number_truncate',
+      restOccurrences: 'max_set_count_minus_one_zero',
+      restIntervalMultiplier: DURATION_REST_INTERVAL_MULTIPLIER,
+      fixedBlockSeconds: DURATION_FIXED_BLOCK_SECONDS,
+    },
+    [DURATION_BLOCK_TYPE.SUPERSET]: {
+      exerciseSelection: 'all_populated_exercises',
+      populatedExerciseRequires: ['exercise_id_present', 'exercise_name_non_empty'],
+      roundCountSourcePrecedence: [
+        'block.roundCount',
+        'firstPopulatedExercise.setTemplates.length',
+        'zero',
+      ],
+      roundCountSourceOperation: 'truthy_precedence_then_clamp_min_zero',
+      laneSetWindow: 'first_round_count_set_templates',
+      tempoSourcePrecedence: ['exercise.defaultTempo', 'laneFirstSet.tempo'],
+      tempoSourceOperation: 'nullish_precedence',
+      tutOperation: 'sum_all_populated_lane_tut_seconds',
+      setCountOperation: 'round_count_times_populated_lane_count',
+      restSource: 'block.restSeconds',
+      restSourceOperation: 'finite_number_truncate_else_zero',
+      restOccurrences: 'max_round_count_minus_one_zero',
+      restIntervalMultiplier: DURATION_REST_INTERVAL_MULTIPLIER,
+      fixedBlockSeconds: DURATION_FIXED_BLOCK_SECONDS,
+      betweenLaneRest: false,
+    },
+    [DURATION_BLOCK_TYPE.CARDIO]: {
+      exerciseSelection: 'first_exercise',
+      includeWhen: [
+        'exercise_id_present',
+        'exercise_name_non_empty',
+        'positive_duration_minutes',
+      ],
+      durationSource: 'cardioPrescription.durationMinutes',
+      durationSourceOperation: 'finite_number_truncate_else_zero',
+      durationOperation: 'truncated_minutes_times_seconds_per_minute',
+      secondsPerMinute: DURATION_SECONDS_PER_MINUTE,
+      fixedBlockSeconds: 0,
+      setCountContribution: 0,
+      tutSecondsContribution: 0,
+    },
+  },
+  unsupportedBlocks: {
+    definition: 'block_type_other_than_single_superset_or_cardio',
+    behavior: 'ignored',
+  },
+});
+
 const SUPPORTED_BODY_PARTS = [
   { key: 'chest', label: 'Chest' },
   { key: 'back', label: 'Back' },
@@ -35,17 +143,22 @@ function roundDisplayMinutes(totalSeconds) {
     return 0;
   }
 
-  return Math.round(totalSeconds / 60);
+  return Math.round(totalSeconds / DURATION_SECONDS_PER_MINUTE);
 }
 
 function parseTempoToSecondsPerRep(value) {
-  const digits = String(value || '').replace(/\D/g, '').slice(0, 4);
+  const digits = String(value || '')
+    .replace(/\D/g, '')
+    .slice(0, DURATION_TEMPO_MAX_DIGITS);
 
   if (!digits) {
     return 0;
   }
 
-  const normalized = digits.length === 3 ? `${digits}0` : digits.padEnd(4, '0');
+  const normalized =
+    digits.length === DURATION_TEMPO_THREE_DIGIT_LENGTH
+      ? `${digits}0`
+      : digits.padEnd(DURATION_TEMPO_MAX_DIGITS, '0');
 
   return normalized
     .split('')
@@ -134,7 +247,7 @@ function computeWeeklyPlanWorkoutMetrics(workout) {
   workout.blocks.forEach((block) => {
     const exercises = normalizeArray(block.exercises);
 
-    if (block.blockType === 'CARDIO') {
+    if (block.blockType === DURATION_BLOCK_TYPE.CARDIO) {
       const cardioExercise = exercises[0];
       const durationMinutes = normalizeInt(
         cardioExercise?.cardioPrescription?.durationMinutes,
@@ -150,11 +263,11 @@ function computeWeeklyPlanWorkoutMetrics(workout) {
       }
 
       exerciseCount += 1;
-      totalDurationSeconds += durationMinutes * 60;
+      totalDurationSeconds += durationMinutes * DURATION_SECONDS_PER_MINUTE;
       return;
     }
 
-    if (block.blockType === 'SINGLE') {
+    if (block.blockType === DURATION_BLOCK_TYPE.SINGLE) {
       const primaryExercise = exercises[0];
       if (!primaryExercise?.exerciseId || !String(primaryExercise.exerciseName || '').trim()) {
         return;
@@ -189,14 +302,14 @@ function computeWeeklyPlanWorkoutMetrics(workout) {
           0
         ) *
           Math.max(0, blockSetCount - 1) *
-          1.15) +
-        90;
+          DURATION_REST_INTERVAL_MULTIPLIER) +
+        DURATION_FIXED_BLOCK_SECONDS;
 
       addDistributionContribution(distribution, primaryExercise.bodyParts, blockSetCount);
       return;
     }
 
-    if (block.blockType !== 'SUPERSET') {
+    if (block.blockType !== DURATION_BLOCK_TYPE.SUPERSET) {
       return;
     }
 
@@ -238,8 +351,10 @@ function computeWeeklyPlanWorkoutMetrics(workout) {
     totalTUTSeconds += blockTUTSeconds;
     totalDurationSeconds +=
       blockTUTSeconds +
-      (normalizeInt(block.restSeconds, 0) * Math.max(0, supersetSetCount - 1) * 1.15) +
-      90;
+      (normalizeInt(block.restSeconds, 0) *
+        Math.max(0, supersetSetCount - 1) *
+        DURATION_REST_INTERVAL_MULTIPLIER) +
+      DURATION_FIXED_BLOCK_SECONDS;
 
     populatedExercises.forEach((exercise) => {
       addDistributionContribution(distribution, exercise.bodyParts, supersetSetCount);
@@ -295,6 +410,8 @@ function aggregateWeeklyPlanMetrics(workouts = []) {
 }
 
 module.exports = {
+  WEEKLY_PLAN_DURATION_METHOD_DESCRIPTOR,
+  WEEKLY_PLAN_DURATION_METHOD_ID,
   aggregateWeeklyPlanMetrics,
   computeWeeklyPlanWorkoutMetrics,
 };
