@@ -10,6 +10,11 @@ const STATUS_APPROVED = 'approved';
 const STATUS_DRAFT = 'draft';
 const TRAINING_TYPE_STRENGTH = 'strength';
 const TRAINING_TYPE_CARDIO = 'cardio';
+const CARDIO_ENABLED_ROLES = new Set([
+  'warm_up_only',
+  'cardio_sessions',
+  'warm_up_and_cardio',
+]);
 const EXCLUDED_TRAINING_TYPES = ['warmup', 'mobility', 'plyometric'];
 const DIFFICULTY_BY_EXPERIENCE = Object.freeze({
   beginner: ['beginner'],
@@ -90,7 +95,7 @@ function normalizeMovementConstraints(movementConstraints = {}) {
 function buildAllowedTrainingTypes(cardioRole) {
   const allowedTrainingTypes = [TRAINING_TYPE_STRENGTH];
 
-  if (cardioRole && cardioRole !== 'none') {
+  if (CARDIO_ENABLED_ROLES.has(normalizeValue(cardioRole))) {
     allowedTrainingTypes.push(TRAINING_TYPE_CARDIO);
   }
 
@@ -256,6 +261,12 @@ function createItem(exercise = {}, poolContext = {}) {
       muscleFocus,
       targetMuscles: normalizeArray(exercise.targetMuscles),
       secondaryMuscles: normalizeArray(exercise.secondaryMuscles),
+      muscleActivation:
+        exercise.muscleActivation &&
+        typeof exercise.muscleActivation === 'object' &&
+        !Array.isArray(exercise.muscleActivation)
+          ? { ...exercise.muscleActivation }
+          : exercise.muscleActivation ?? null,
       jointStressTags: normalizeArray(exercise.jointStressTags),
       equipmentCategory: normalizeValue(exercise.equipmentCategory) || null,
       equipmentNeeded: normalizeArray(exercise.equipmentNeeded),

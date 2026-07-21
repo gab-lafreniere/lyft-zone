@@ -17,6 +17,14 @@ function normalizeJointStressTags(value) {
   ).sort();
 }
 
+function copyMuscleActivation(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value ?? null;
+  }
+
+  return { ...value };
+}
+
 function stableStringify(value) {
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(',')}]`;
@@ -89,6 +97,8 @@ function createExercisePoolItems(poolResult = {}) {
       muscleFocus: toArray(attributes.muscleFocus),
       targetMuscles: toArray(attributes.targetMuscles),
       secondaryMuscles: toArray(attributes.secondaryMuscles),
+      // Coaching-only source metadata. Analytics V2 remains authoritative and unchanged.
+      muscleActivation: copyMuscleActivation(attributes.muscleActivation),
       equipmentCategory: attributes.equipmentCategory || null,
       equipmentNeeded: toArray(attributes.equipmentNeeded),
       difficulty: attributes.difficulty || null,

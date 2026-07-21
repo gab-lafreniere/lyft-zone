@@ -42,7 +42,7 @@ function createPoolContext(overrides = {}) {
       blockedExerciseIds: ['ex_blocked_id'],
     },
     cardioProfile: {
-      cardioRole: 'finisher',
+      cardioRole: 'cardio_sessions',
       preferredModalities: ['treadmill_walk'],
     },
     ...overrides,
@@ -64,6 +64,10 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
       muscleFocus: ['upper_chest'],
       targetMuscles: ['pectoralis_major'],
       secondaryMuscles: ['triceps_long_head'],
+      muscleActivation: {
+        pectoralis_major: 1,
+        triceps_long_head: 0.5,
+      },
       fatigueScore: 4,
       overview: 'Press variation',
     },
@@ -249,6 +253,14 @@ test('buildExercisePool applies explicit hard filters, preserves soft signals, a
   assert.equal(result.pool.stats.excludedByReason.blocked_joint_stress_tag, 1);
   assert.equal(result.pool.stats.excludedByReason.blocked_movement_pattern, 1);
   assert.equal(result.pool.items[0].softSignals.musclePriority.primaryFocusMatch, true);
+  assert.deepEqual(result.pool.items[0].attributes.muscleActivation, {
+    pectoralis_major: 1,
+    triceps_long_head: 0.5,
+  });
+  assert.notStrictEqual(
+    result.pool.items[0].attributes.muscleActivation,
+    exercises[0].muscleActivation
+  );
   assert.equal(result.pool.items[0].softSignals.musclePriority.weightHint, 1);
   assert.equal(result.pool.items[0].softSignals.equipmentBias.preferred, false);
   assert.equal(result.pool.items[1].softSignals.movementContext.cautionPatternMatch, true);
@@ -342,7 +354,47 @@ test('buildExercisePool excludes cardio exercises when the profile does not allo
   assert.deepEqual(result.pool.excluded[0].reasons, ['training_type_not_allowed']);
 });
 
-test('buildExercisePool excludes cardio exercises when cardio role is null', () => {
+test('buildExercisePool allows cardio for exactly the three canonical active roles', () => {
+  const exercises = [
+    {
+      exerciseId: 'ex_cardio',
+      name: 'Treadmill Walk',
+      status: 'approved',
+      trainingType: 'cardio',
+      difficulty: 'beginner',
+      equipmentCategory: 'cardio_machine',
+      equipmentNeeded: ['treadmill'],
+      movementPattern: 'gait',
+      bodyParts: ['quadriceps'],
+      muscleFocus: [],
+      cardioModality: 'treadmill_walk',
+    },
+  ];
+
+  ['warm_up_only', 'cardio_sessions', 'warm_up_and_cardio'].forEach((cardioRole) => {
+    const result = buildExercisePool(
+      exercises,
+      createPoolContext({
+        cardioProfile: {
+          cardioRole,
+          preferredModalities: ['treadmill_walk'],
+        },
+      }),
+      {
+        generatedAt: '2026-05-12T10:00:00.000Z',
+      }
+    );
+
+    assert.deepEqual(result.meta.trainingTypePolicy.allowedTrainingTypes, [
+      'strength',
+      'cardio',
+    ]);
+    assert.deepEqual(result.pool.items.map((item) => item.exerciseId), ['ex_cardio']);
+    assert.deepEqual(result.pool.excluded, []);
+  });
+});
+
+test('buildExercisePool keeps cardio disabled for absent, empty, and unknown roles', () => {
   const exercises = [
     {
       exerciseId: 'ex_cardio',
@@ -358,22 +410,24 @@ test('buildExercisePool excludes cardio exercises when cardio role is null', () 
     },
   ];
 
-  const result = buildExercisePool(
-    exercises,
-    createPoolContext({
-      cardioProfile: {
-        cardioRole: null,
-        preferredModalities: [],
-      },
-    }),
-    {
-      generatedAt: '2026-05-12T10:00:00.000Z',
-    }
-  );
+  [null, undefined, '', 'future_cardio_role'].forEach((cardioRole) => {
+    const result = buildExercisePool(
+      exercises,
+      createPoolContext({
+        cardioProfile: {
+          cardioRole,
+          preferredModalities: [],
+        },
+      }),
+      {
+        generatedAt: '2026-05-12T10:00:00.000Z',
+      }
+    );
 
-  assert.deepEqual(result.meta.trainingTypePolicy.allowedTrainingTypes, ['strength']);
-  assert.deepEqual(result.pool.items, []);
-  assert.deepEqual(result.pool.excluded[0].reasons, ['training_type_not_allowed']);
+    assert.deepEqual(result.meta.trainingTypePolicy.allowedTrainingTypes, ['strength']);
+    assert.deepEqual(result.pool.items, []);
+    assert.deepEqual(result.pool.excluded[0].reasons, ['training_type_not_allowed']);
+  });
 });
 
 test('buildExercisePool applies strict difficulty policy from experience', () => {

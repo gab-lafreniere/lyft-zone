@@ -26,6 +26,7 @@ const EXERCISE_POOL_SELECT = Object.freeze({
   muscleFocus: true,
   targetMuscles: true,
   secondaryMuscles: true,
+  muscleActivation: true,
   mechanicType: true,
   unilateralType: true,
   difficulty: true,
@@ -236,6 +237,23 @@ function filterPoolItems(items = [], query = {}) {
   });
 }
 
+function sanitizePublicPoolItem(item = {}) {
+  const attributes = item.attributes;
+
+  if (!attributes || typeof attributes !== 'object' || Array.isArray(attributes)) {
+    return { ...item };
+  }
+
+  const publicAttributes = Object.fromEntries(
+    Object.entries(attributes).filter(([key]) => key !== 'muscleActivation')
+  );
+
+  return {
+    ...item,
+    attributes: publicAttributes,
+  };
+}
+
 function buildExercisePoolSearchResponse(poolResult, query = {}) {
   const limit = parseLimit(query.limit);
   const cursor = parseCursor(query.cursor);
@@ -244,7 +262,7 @@ function buildExercisePoolSearchResponse(poolResult, query = {}) {
   const nextCursor =
     cursor + pageItems.length < filteredItems.length ? String(cursor + pageItems.length) : null;
   const response = {
-    items: pageItems,
+    items: pageItems.map(sanitizePublicPoolItem),
     nextCursor,
     total: filteredItems.length,
     poolSummary: {

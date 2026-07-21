@@ -31,6 +31,10 @@ function createPoolResult() {
             muscleFocus: ['lats'],
             targetMuscles: ['latissimus_dorsi'],
             secondaryMuscles: ['biceps'],
+            muscleActivation: {
+              latissimus_dorsi: 1,
+              biceps: 0.5,
+            },
             equipmentCategory: 'dumbbell',
             equipmentNeeded: ['dumbbells'],
             difficulty: 'beginner',
@@ -123,6 +127,10 @@ test('createPoolSummary and createExercisePoolItems keep generation payload comp
     muscleFocus: ['lats'],
     targetMuscles: ['latissimus_dorsi'],
     secondaryMuscles: ['biceps'],
+    muscleActivation: {
+      latissimus_dorsi: 1,
+      biceps: 0.5,
+    },
     equipmentCategory: 'dumbbell',
     equipmentNeeded: ['dumbbells'],
     difficulty: 'beginner',
@@ -139,6 +147,10 @@ test('createPoolSummary and createExercisePoolItems keep generation payload comp
     },
   });
   assert.deepEqual(exercisePoolItems[1].jointStressTags, []);
+  assert.notStrictEqual(
+    exercisePoolItems[0].muscleActivation,
+    poolResult.pool.items[0].attributes.muscleActivation
+  );
 });
 
 test('createExercisePoolItems normalizes joint stress tags deterministically without mutating source metadata', () => {
@@ -172,6 +184,7 @@ test('createExercisePoolItems normalizes joint stress tags deterministically wit
     'jointStressTags',
     'mechanicType',
     'movementPattern',
+    'muscleActivation',
     'muscleFocus',
     'name',
     'secondaryMuscles',

@@ -47,7 +47,7 @@ function createProfile(overrides = {}) {
       equipmentBias: 'machines',
     },
     cardioProfile: {
-      cardioRole: 'finisher',
+      cardioRole: 'cardio_sessions',
       preferredModalities: ['treadmill_walk'],
     },
     physicalNotes: null,
@@ -58,12 +58,15 @@ function createProfile(overrides = {}) {
 test('buildExercisePoolForUser builds a pool from onboardingSnapshot and reconstructs derived context when needed', async () => {
   const calls = {
     profileQuery: null,
+    profileQueryCount: 0,
     exerciseQuery: null,
+    exerciseQueryCount: 0,
   };
   const prisma = {
     userProfile: {
       findUnique: async (args) => {
         calls.profileQuery = args;
+        calls.profileQueryCount += 1;
         return {
           onboardingSnapshot: {
             schemaVersion: 2,
@@ -75,6 +78,7 @@ test('buildExercisePoolForUser builds a pool from onboardingSnapshot and reconst
     exercise: {
       findMany: async (args) => {
         calls.exerciseQuery = args;
+        calls.exerciseQueryCount += 1;
         return [
           {
             exerciseId: 'ex_draft_strength',
@@ -89,6 +93,10 @@ test('buildExercisePoolForUser builds a pool from onboardingSnapshot and reconst
             muscleFocus: ['upper_chest'],
             targetMuscles: ['pectoralis_major'],
             secondaryMuscles: ['triceps_long_head'],
+            muscleActivation: {
+              pectoralis_major: 1,
+              triceps_long_head: 0.5,
+            },
             overview: 'draft example',
           },
         ];
@@ -111,14 +119,21 @@ test('buildExercisePoolForUser builds a pool from onboardingSnapshot and reconst
     where: { userId: 'user_123' },
     select: { onboardingSnapshot: true },
   });
+  assert.equal(calls.profileQueryCount, 1);
   assert.deepEqual(calls.exerciseQuery, {
     select: EXERCISE_POOL_SELECT,
     orderBy: EXERCISE_POOL_ORDER_BY,
   });
+  assert.equal(calls.exerciseQueryCount, 1);
   assert.equal(result.meta.generatedAt, '2026-05-12T10:00:00.000Z');
   assert.equal(result.meta.statusPolicy.allowDraftFallback, true);
   assert.equal(result.meta.statusPolicy.draftFallbackApplied, true);
   assert.deepEqual(result.pool.items.map((item) => item.exerciseId), ['ex_draft_strength']);
+  assert.equal(EXERCISE_POOL_SELECT.muscleActivation, true);
+  assert.deepEqual(result.pool.items[0].attributes.muscleActivation, {
+    pectoralis_major: 1,
+    triceps_long_head: 0.5,
+  });
   assert.equal(result.context.musclePriorityProfile.primaryFocus, 'chest');
   assert.equal(result.context.experience, 'intermediate');
   assert.deepEqual(result.hardConstraints.allowedDifficulties, ['beginner', 'intermediate']);
@@ -319,6 +334,10 @@ test('buildExercisePoolSearchResponse filters and paginates after hard pool elig
             muscleFocus: ['upper_chest'],
             targetMuscles: ['pectoralis_major'],
             secondaryMuscles: ['triceps'],
+            muscleActivation: {
+              pectoralis_major: 1,
+              triceps_long_head: 0.5,
+            },
             equipmentCategory: 'dumbbell',
             equipmentNeeded: ['dumbbells', 'bench'],
             difficulty: 'intermediate',
@@ -354,6 +373,8 @@ test('buildExercisePoolSearchResponse filters and paginates after hard pool elig
       },
     },
   };
+  const internalItem = poolResult.pool.items[1];
+  const internalItemBefore = structuredClone(internalItem);
 
   const response = buildExercisePoolSearchResponse(poolResult, {
     q: 'press',
@@ -371,6 +392,25 @@ test('buildExercisePoolSearchResponse filters and paginates after hard pool elig
     response.items.map((item) => item.exerciseId),
     ['ex_push_2']
   );
+  assert.notStrictEqual(response.items[0], internalItem);
+  assert.notStrictEqual(response.items[0].attributes, internalItem.attributes);
+  assert.equal('muscleActivation' in response.items[0].attributes, false);
+  assert.deepEqual(
+    response.items[0].attributes,
+    Object.fromEntries(
+      Object.entries(internalItem.attributes).filter(
+        ([key]) => key !== 'muscleActivation'
+      )
+    )
+  );
+  assert.equal(JSON.stringify(response.items).includes('"muscleActivation"'), false);
+  assert.equal(JSON.stringify(response.items).includes('"pectoralis_major":1'), false);
+  assert.equal(JSON.stringify(response.items).includes('"triceps_long_head":0.5'), false);
+  assert.deepEqual(internalItem, internalItemBefore);
+  assert.deepEqual(internalItem.attributes.muscleActivation, {
+    pectoralis_major: 1,
+    triceps_long_head: 0.5,
+  });
   assert.equal(response.nextCursor, null);
   assert.equal(response.total, 2);
   assert.deepEqual(response.poolSummary, {
