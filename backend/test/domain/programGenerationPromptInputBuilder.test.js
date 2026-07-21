@@ -12,6 +12,8 @@ const {
 } = require('../../src/domain/programGeneration/weeklyPlanEvaluationPolicy');
 const {
   buildProgramGenerationPrompt,
+  serializeEligibleExercisePool,
+  serializeEligibleExercisePoolPretty,
   stableStringify,
 } = require('../../src/domain/programGeneration/prompts/programGenerationPrompt');
 
@@ -270,6 +272,15 @@ test('muscle contributions use canonical activation weights, primary precedence,
     { muscle: 'gluteus_maximus', role: 'secondary', activationWeight: null },
   ]);
   assert.equal('muscleContributions' in input.eligibleExercisePool[3], false);
+  input.eligibleExercisePool
+    .flatMap((item) => item.muscleContributions || [])
+    .forEach((contribution) => {
+      assert.deepEqual(Object.keys(contribution), [
+        'muscle',
+        'role',
+        'activationWeight',
+      ]);
+    });
   assert.deepEqual(diagnostics, {
     activationMusclesNotClassifiedCount: 1,
     primaryMusclesMissingActivationCount: 2,
@@ -286,35 +297,54 @@ test('strength and cardio projections use closed allowlists and preserve every e
   const projectedIds = input.eligibleExercisePool.map((item) => item.exerciseId);
 
   assert.deepEqual(projectedIds, sourceIds);
-  assert.deepEqual(Object.keys(input.eligibleExercisePool[0]).sort(), [
-    'bodyParts',
-    'cautionMatches',
-    'difficulty',
-    'equipmentCategory',
+  input.eligibleExercisePool
+    .filter((item) => item.trainingType === 'strength')
+    .forEach((item) => {
+      assert.deepEqual(Object.keys(item).slice(0, 3), [
+        'name',
+        'exerciseId',
+        'trainingType',
+      ]);
+    });
+  assert.deepEqual(Object.keys(input.eligibleExercisePool[0]), [
+    'name',
     'exerciseId',
+    'trainingType',
+    'equipmentCategory',
+    'difficulty',
     'fatigueScore',
     'isSupersetFriendly',
     'mechanicType',
     'movementPattern',
-    'muscleContributions',
+    'bodyParts',
     'muscleFocus',
-    'name',
-    'trainingType',
+    'muscleContributions',
     'unilateralType',
+    'cautionMatches',
   ]);
   assert.deepEqual(input.eligibleExercisePool[0].cautionMatches, [
     'horizontal_push',
     'shoulder_load',
   ]);
+  assert.equal('cautionMatches' in input.eligibleExercisePool[1], false);
   assert.deepEqual(input.eligibleExercisePool[3], {
-    exerciseId: 'ex_bike',
     name: 'Stationary Bike',
+    exerciseId: 'ex_bike',
     trainingType: 'cardio',
     cardioModality: 'stationary_bike',
     cardioFatigueScore: 2,
     lowerBodyFatigueBias: 'moderate',
     cardioImpactLevel: 'low',
   });
+  assert.deepEqual(Object.keys(input.eligibleExercisePool[3]), [
+    'name',
+    'exerciseId',
+    'trainingType',
+    'cardioModality',
+    'cardioFatigueScore',
+    'lowerBodyFatigueBias',
+    'cardioImpactLevel',
+  ]);
 });
 
 test('projection removes internal context, raw muscle, equipment, blocked, and soft-signal fields', () => {
@@ -519,6 +549,8 @@ test('representative fixture reports prompt reduction, ID preservation, contribu
   const contributions = input.eligibleExercisePool.flatMap(
     (item) => item.muscleContributions || []
   );
+  const compactPool = serializeEligibleExercisePool(input.eligibleExercisePool);
+  const prettyPool = serializeEligibleExercisePoolPretty(input.eligibleExercisePool);
   const metrics = {
     legacyUserMessageCharacters: legacyUserMessage.length,
     projectedUserMessageCharacters: prompt.userMessage.length,
@@ -535,10 +567,18 @@ test('representative fixture reports prompt reduction, ID preservation, contribu
     contributionsWithNullActivationWeight: contributions.filter(
       (entry) => entry.activationWeight == null
     ).length,
+    compactPoolCharacters: compactPool.length,
+    prettyPoolCharacters: prettyPool.length,
+    compactPoolReductionCharacters: prettyPool.length - compactPool.length,
+    compactPoolReductionPercentage: Number(
+      ((1 - compactPool.length / prettyPool.length) * 100).toFixed(2)
+    ),
     diagnostics,
   };
 
   assert.ok(metrics.projectedUserMessageCharacters < metrics.legacyUserMessageCharacters);
+  assert.ok(metrics.compactPoolCharacters < metrics.prettyPoolCharacters);
+  assert.deepEqual(JSON.parse(compactPool), JSON.parse(prettyPool));
   assert.equal(metrics.exercisesBefore, metrics.exercisesAfter);
   assert.equal(metrics.allExerciseIdsPreserved, true);
   assert.deepEqual(metrics.diagnostics, {

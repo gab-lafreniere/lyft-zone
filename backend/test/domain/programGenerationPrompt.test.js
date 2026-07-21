@@ -8,8 +8,13 @@ const {
   PROGRAM_GENERATION_PROMPT_VERSION,
   ProgramGenerationPromptError,
   buildProgramGenerationPrompt,
+  serializeEligibleExercisePool,
+  serializeEligibleExercisePoolPretty,
   stableStringify,
 } = require('../../src/domain/programGeneration/prompts/programGenerationPrompt');
+const {
+  buildProgramGenerationPromptInput,
+} = require('../../src/domain/programGeneration/programGenerationPromptInputBuilder');
 const {
   WEEKLY_PLAN_EVALUATION_POLICY,
 } = require('../../src/domain/programGeneration/weeklyPlanEvaluationPolicy');
@@ -130,12 +135,12 @@ function parseEligiblePool(userMessage) {
   return JSON.parse(userMessage.slice(start + marker.length));
 }
 
-test('buildProgramGenerationPrompt preserves the V1.2 coach role and injects the exact classic runtime once', () => {
+test('buildProgramGenerationPrompt preserves the V1.2.1 coach role and injects the exact classic runtime once', () => {
   const doctrine = loadWeeklyPlanBuilderDoctrine();
   const context = createContext();
   const prompt = buildProgramGenerationPrompt({ doctrine, context });
 
-  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.2.0');
+  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.2.1');
   assert.match(prompt.systemMessage, /lead bodybuilding and hypertrophy coach/);
   assert.match(prompt.systemMessage, /IFBB-caliber programming expertise/);
   assert.match(prompt.systemMessage, /natural lifters/);
@@ -167,7 +172,7 @@ test('system instructions retain approximate-duration coaching and output consis
     context: createContext(),
   });
 
-  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.2.0');
+  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.2.1');
   assert.match(prompt.systemMessage, /Evaluation policy behavior:/);
   assert.match(prompt.systemMessage, /compact duration guidance derived from evaluationPolicy/);
   assert.match(prompt.systemMessage, /approximate session capacity, not an exact minute requirement/);
@@ -225,10 +230,101 @@ test('user message is a readable hybrid brief with derived duration ranges and o
 
   assert.deepEqual(pool.map((item) => item.exerciseId), ['ex_machine_press', 'ex_bike']);
   assert.deepEqual(pool[0].muscleContributions, [
-    { activationWeight: 1, muscle: 'pectoralis_major', role: 'primary' },
-    { activationWeight: 0.5, muscle: 'triceps_long_head', role: 'secondary' },
+    { muscle: 'pectoralis_major', role: 'primary', activationWeight: 1 },
+    { muscle: 'triceps_long_head', role: 'secondary', activationWeight: 0.5 },
   ]);
   assert.equal('muscleContributions' in pool[1], false);
+});
+
+test('production uses canonical compact pool JSON while human debugging stays pretty and equivalent', (t) => {
+  const context = createContext();
+  const before = structuredClone(context);
+  const promptInput = buildProgramGenerationPromptInput(context);
+  const poolBefore = structuredClone(promptInput.eligibleExercisePool);
+  const compact = serializeEligibleExercisePool(promptInput.eligibleExercisePool);
+  const pretty = serializeEligibleExercisePoolPretty(promptInput.eligibleExercisePool);
+  const prompt = buildProgramGenerationPrompt({ doctrine: MOCK_DOCTRINE, context });
+  const marker = 'Eligible exercise pool:\n';
+  const markerIndex = prompt.userMessage.indexOf(marker);
+  const serializedProductionPool = prompt.userMessage.slice(
+    markerIndex + marker.length
+  );
+
+  assert.notEqual(markerIndex, -1);
+  assert.equal(serializedProductionPool, compact);
+  assert.equal(compact, JSON.stringify(promptInput.eligibleExercisePool));
+  assert.equal(pretty, JSON.stringify(promptInput.eligibleExercisePool, null, 2));
+  assert.doesNotMatch(compact, /\n/);
+  assert.match(pretty, /\n  \{/);
+  assert.deepEqual(JSON.parse(compact), promptInput.eligibleExercisePool);
+  assert.deepEqual(JSON.parse(pretty), JSON.parse(compact));
+  assert.deepEqual(Object.keys(JSON.parse(compact)[0]).slice(0, 3), [
+    'name',
+    'exerciseId',
+    'trainingType',
+  ]);
+  assert.deepEqual(Object.keys(JSON.parse(compact)[1]).slice(0, 3), [
+    'name',
+    'exerciseId',
+    'trainingType',
+  ]);
+  assert.deepEqual(
+    Object.keys(JSON.parse(compact)[0].muscleContributions[0]),
+    ['muscle', 'role', 'activationWeight']
+  );
+  assert.deepEqual(
+    JSON.parse(compact).map((item) => item.exerciseId),
+    context.exercisePoolItems.map((item) => item.exerciseId)
+  );
+  assert.ok(compact.length < pretty.length);
+  assert.equal(serializeEligibleExercisePool(promptInput.eligibleExercisePool), compact);
+  assert.deepEqual(promptInput.eligibleExercisePool, poolBefore);
+  assert.deepEqual(context, before);
+  assert.match(prompt.userMessage.slice(0, markerIndex), /Primary goal:\nHypertrophy\./);
+  assert.match(prompt.userMessage.slice(0, markerIndex), /\n\nTraining schedule:\n/);
+  assert.match(prompt.systemMessage, /\n/);
+
+  const reductionCharacters = pretty.length - compact.length;
+  const reductionPercentage = Number(
+    ((1 - compact.length / pretty.length) * 100).toFixed(2)
+  );
+  t.diagnostic(
+    `pool serialization metrics: ${JSON.stringify({ compactCharacters: compact.length, prettyCharacters: pretty.length, reductionCharacters, reductionPercentage })}`
+  );
+});
+
+test('pool serializers require arrays and stableStringify keeps its sorted pretty contract', () => {
+  [null, {}, 'pool'].forEach((pool) => {
+    assert.throws(
+      () => serializeEligibleExercisePool(pool),
+      (error) => {
+        assert.equal(error instanceof ProgramGenerationPromptError, true);
+        assert.equal(error.code, 'INVALID_ELIGIBLE_EXERCISE_POOL');
+        return true;
+      }
+    );
+    assert.throws(
+      () => serializeEligibleExercisePoolPretty(pool),
+      (error) => {
+        assert.equal(error instanceof ProgramGenerationPromptError, true);
+        assert.equal(error.code, 'INVALID_ELIGIBLE_EXERCISE_POOL');
+        return true;
+      }
+    );
+  });
+
+  assert.equal(
+    stableStringify({ zeta: 1, alpha: { zeta: 2, alpha: 3 } }),
+    [
+      '{',
+      '  "alpha": {',
+      '    "alpha": 3,',
+      '    "zeta": 2',
+      '  },',
+      '  "zeta": 1',
+      '}',
+    ].join('\n')
+  );
 });
 
 test('user message excludes the complete V4 context and all listed internal fields', () => {

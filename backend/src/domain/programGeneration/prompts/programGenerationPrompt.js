@@ -11,7 +11,7 @@ const {
 } = require('../programGenerationPromptInputBuilder');
 
 const PROGRAM_GENERATION_PROMPT_VERSION =
-  'ai-weekly-plan-builder-prompt-v1.2.0';
+  'ai-weekly-plan-builder-prompt-v1.2.1';
 
 class ProgramGenerationPromptError extends Error {
   constructor(code, message) {
@@ -40,6 +40,25 @@ function sortForStableSerialization(value) {
 
 function stableStringify(value) {
   return JSON.stringify(sortForStableSerialization(value), null, 2);
+}
+
+function assertEligibleExercisePool(pool) {
+  if (!Array.isArray(pool)) {
+    throw new ProgramGenerationPromptError(
+      'INVALID_ELIGIBLE_EXERCISE_POOL',
+      'Eligible exercise pool must be an array'
+    );
+  }
+}
+
+function serializeEligibleExercisePool(pool) {
+  assertEligibleExercisePool(pool);
+  return JSON.stringify(pool);
+}
+
+function serializeEligibleExercisePoolPretty(pool) {
+  assertEligibleExercisePool(pool);
+  return JSON.stringify(pool, null, 2);
 }
 
 function assertDoctrineDescriptor(doctrine) {
@@ -286,7 +305,7 @@ function buildUserMessage(promptInput) {
     '- Use exerciseIds exactly as supplied.',
     '',
     'Eligible exercise pool:',
-    stableStringify(promptInput.eligibleExercisePool)
+    serializeEligibleExercisePool(promptInput.eligibleExercisePool)
   );
 
   return lines.join('\n');
@@ -375,5 +394,7 @@ module.exports = {
   PROGRAM_GENERATION_PROMPT_VERSION,
   ProgramGenerationPromptError,
   buildProgramGenerationPrompt,
+  serializeEligibleExercisePool,
+  serializeEligibleExercisePoolPretty,
   stableStringify,
 };

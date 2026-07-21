@@ -397,8 +397,8 @@ function projectCautionMatches(item = {}) {
 
 function projectStrengthExercise(item, diagnostics) {
   const result = {
-    exerciseId: item.exerciseId,
     name: item.name,
+    exerciseId: item.exerciseId,
     trainingType: item.trainingType,
   };
   const muscleProjection = projectMuscleContributions(item);
@@ -426,8 +426,8 @@ function projectStrengthExercise(item, diagnostics) {
 
 function projectCardioExercise(item) {
   const result = {
-    exerciseId: item.exerciseId,
     name: item.name,
+    exerciseId: item.exerciseId,
     trainingType: item.trainingType,
   };
   const fatigue = item.softSignals?.fatigue || {};
