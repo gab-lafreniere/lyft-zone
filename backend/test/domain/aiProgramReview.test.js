@@ -290,7 +290,8 @@ function createGeneratedAIOutput(overrides = {}) {
     splitType: 'upper_lower',
     strategySummary: 'Provider strategy summary.',
     volumeTargets: {
-      perMuscle: [
+      bodyParts: [],
+      muscleFocuses: [
         {
           area: 'upper_chest',
           targetSetsPerWeek: 10,
@@ -300,7 +301,10 @@ function createGeneratedAIOutput(overrides = {}) {
       ],
     },
     frequencyTargets: {
-      perMuscle: [{ area: 'upper_chest', targetSessionsPerWeek: 2 }],
+      bodyParts: [],
+      muscleFocuses: [
+        { area: 'upper_chest', targetSessionsPerWeek: 2 },
+      ],
     },
     progressionModel: { type: 'double_progression' },
     ...overrides,
@@ -414,12 +418,26 @@ function createAnalytics(overrides = {}) {
     },
     targetComparisons: {
       volume: {
-        summary: { targetCount: 1, belowTargetCount: 1, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
-        items: [{ targetIndex: 0, area: 'upper_chest', resolvedTaxonomy: 'muscle_focus', targetValue: 10, generatedDirectValue: 2, difference: -8, absoluteDifference: 8, relativeDifference: -0.8, status: 'below_target' }],
+        bodyParts: {
+          summary: { targetCount: 0, belowTargetCount: 0, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
+          items: [],
+        },
+        muscleFocuses: {
+          summary: { targetCount: 1, belowTargetCount: 1, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
+          items: [{ targetIndex: 0, area: 'upper_chest', resolvedTaxonomy: 'muscle_focus', targetValue: 10, generatedDirectValue: 2, difference: -8, absoluteDifference: 8, relativeDifference: -0.8, status: 'below_target' }],
+        },
+        overallSummary: { targetCount: 1, belowTargetCount: 1, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
       },
       frequency: {
-        summary: { targetCount: 1, belowTargetCount: 1, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
-        items: [{ targetIndex: 0, area: 'upper_chest', resolvedTaxonomy: 'muscle_focus', targetValue: 2, generatedDirectValue: 1, difference: -1, absoluteDifference: 1, relativeDifference: -0.5, status: 'below_target' }],
+        bodyParts: {
+          summary: { targetCount: 0, belowTargetCount: 0, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
+          items: [],
+        },
+        muscleFocuses: {
+          summary: { targetCount: 1, belowTargetCount: 1, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
+          items: [{ targetIndex: 0, area: 'upper_chest', resolvedTaxonomy: 'muscle_focus', targetValue: 2, generatedDirectValue: 1, difference: -1, absoluteDifference: 1, relativeDifference: -0.5, status: 'below_target' }],
+        },
+        overallSummary: { targetCount: 1, belowTargetCount: 1, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
       },
     },
     ...overrides,
@@ -604,7 +622,7 @@ function createHeavySixSessionReviewOptions() {
   }));
   const targetItems = Array.from({ length: 6 }, (_value, index) => ({
     targetIndex: index,
-    area: `heavy_target_${String(index + 1).padStart(2, '0')}`,
+    area: ['upper_chest', 'mid_chest', 'lower_chest', 'lats', 'upper_back', 'mid_back'][index],
     resolvedTaxonomy: 'muscle_focus',
     targetValue: 10,
     generatedDirectValue: 8 + (index % 3),
@@ -624,16 +642,18 @@ function createHeavySixSessionReviewOptions() {
     generatedAIOutput: createGeneratedAIOutput({
       splitType: 'push_pull_legs',
       volumeTargets: {
-        perMuscle: targetItems.map((item, index) => ({
-          area: item.area,
+        bodyParts: [],
+        muscleFocuses: targetItems.map((item, index) => ({
+          area: ['upper_chest', 'mid_chest', 'lower_chest', 'lats', 'upper_back', 'mid_back'][index],
           targetSetsPerWeek: item.targetValue,
           priority: index === 0 ? 'primary' : 'secondary',
           rationale: 'PRIVATE_HEAVY_TARGET_RATIONALE_SENTINEL',
         })),
       },
       frequencyTargets: {
-        perMuscle: targetItems.map((item) => ({
-          area: item.area,
+        bodyParts: [],
+        muscleFocuses: targetItems.map((_item, index) => ({
+          area: ['upper_chest', 'mid_chest', 'lower_chest', 'lats', 'upper_back', 'mid_back'][index],
           targetSessionsPerWeek: 2,
         })),
       },
@@ -714,12 +734,26 @@ function createHeavySixSessionReviewOptions() {
       },
       targetComparisons: {
         volume: {
-          summary: { targetCount: 6, belowTargetCount: 2, withinTargetCount: 4, aboveTargetCount: 0, unavailableCount: 0 },
-          items: targetItems,
+          bodyParts: {
+            summary: { targetCount: 0, belowTargetCount: 0, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
+            items: [],
+          },
+          muscleFocuses: {
+            summary: { targetCount: 6, belowTargetCount: 2, withinTargetCount: 4, aboveTargetCount: 0, unavailableCount: 0 },
+            items: targetItems,
+          },
+          overallSummary: { targetCount: 6, belowTargetCount: 2, withinTargetCount: 4, aboveTargetCount: 0, unavailableCount: 0 },
         },
         frequency: {
-          summary: { targetCount: 6, belowTargetCount: 1, withinTargetCount: 5, aboveTargetCount: 0, unavailableCount: 0 },
-          items: targetItems.map((item) => ({ ...item, targetValue: 2, generatedDirectValue: 2, difference: 0, absoluteDifference: 0, relativeDifference: 0, status: 'within_target' })),
+          bodyParts: {
+            summary: { targetCount: 0, belowTargetCount: 0, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
+            items: [],
+          },
+          muscleFocuses: {
+            summary: { targetCount: 6, belowTargetCount: 0, withinTargetCount: 6, aboveTargetCount: 0, unavailableCount: 0 },
+            items: targetItems.map((item) => ({ ...item, targetValue: 2, generatedDirectValue: 2, difference: 0, absoluteDifference: 0, relativeDifference: 0, status: 'within_target' })),
+          },
+          overallSummary: { targetCount: 6, belowTargetCount: 0, withinTargetCount: 6, aboveTargetCount: 0, unavailableCount: 0 },
         },
       },
     }),
@@ -832,7 +866,7 @@ test('buildProgramReviewInput is deterministic, compact, and only projects selec
   assert.equal(first.plan.workouts[0].blocks[0].exercises[0].hasNote, false);
   assert.equal(first.plan.workouts[0].blocks[0].exercises[1].hasNote, true);
   assert.deepEqual(first.plan.workouts[0].blocks[0].exercises[0].repTargets, ['8']);
-  assert.equal(first.intent.volumeTargets[0].rationale, undefined);
+  assert.equal(first.intent.volumeTargets.muscleFocuses[0].rationale, undefined);
   assert.equal(first.analytics.metadataCoverage.unresolvedExerciseCount, 1);
 
   const serialized = JSON.stringify(first);
@@ -982,10 +1016,11 @@ test('buildProgramReviewInput uses lexical ordering independent of input orderin
   const options = createReviewOptions({
     generatedAIOutput: createGeneratedAIOutput({
       volumeTargets: {
-        perMuscle: [
-          { area: 'zeta', targetSetsPerWeek: 8, priority: 'secondary' },
-          { area: 'Alpha', targetSetsPerWeek: 10, priority: 'primary' },
-          { area: 'beta', targetSetsPerWeek: 9, priority: 'secondary' },
+        bodyParts: [],
+        muscleFocuses: [
+          { area: 'rear_delts', targetSetsPerWeek: 8, priority: 'secondary' },
+          { area: 'upper_chest', targetSetsPerWeek: 10, priority: 'primary' },
+          { area: 'lats', targetSetsPerWeek: 9, priority: 'secondary' },
         ],
       },
     }),
@@ -998,7 +1033,7 @@ test('buildProgramReviewInput uses lexical ordering independent of input orderin
     }),
   });
   const reordered = clone(options);
-  reordered.generatedAIOutput.volumeTargets.perMuscle.reverse();
+  reordered.generatedAIOutput.volumeTargets.muscleFocuses.reverse();
   reordered.analytics.muscleMetrics.reverse();
 
   const first = buildProgramReviewInput(options);
@@ -1006,8 +1041,8 @@ test('buildProgramReviewInput uses lexical ordering independent of input orderin
 
   assert.deepEqual(first, second);
   assert.deepEqual(
-    first.intent.volumeTargets.map((target) => target.area),
-    ['Alpha', 'beta', 'zeta']
+    first.intent.volumeTargets.muscleFocuses.map((target) => target.area),
+    ['lats', 'rear_delts', 'upper_chest']
   );
   assert.deepEqual(
     first.analytics.muscleMetrics.map((metric) => [metric.taxonomy, metric.key]),

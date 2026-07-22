@@ -1,7 +1,16 @@
 const { normalizeCardioPrescription } = require('../../../services/cardioPrescription');
 const {
   AI_WEEKLY_PLAN_BLOCK_TYPES,
+  AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS,
+  AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS,
 } = require('./weeklyPlanAiSchema');
+
+const BODY_PART_TARGET_AREA_SET = new Set(
+  AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS
+);
+const MUSCLE_FOCUS_TARGET_AREA_SET = new Set(
+  AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS
+);
 
 function toArray(value) {
   return Array.isArray(value) ? value : [];
@@ -170,7 +179,7 @@ function validateStrengthExercise(exercise = {}, path, issues) {
         issues,
         `${setPath}.setType`,
         'INVALID_SET_TYPE',
-        'setType must be WORKING in AI Weekly Plan Output V1',
+        'setType must be WORKING in AI Weekly Plan Output V2',
         {
           expected: 'WORKING',
           actual: setTemplate.setType,
@@ -230,7 +239,7 @@ function validateBlockExercises(block = {}, blockPath, issues, notesStats) {
       issues,
       `${blockPath}.blockType`,
       'UNSUPPORTED_BLOCK_TYPE',
-      'Block type is not supported in AI Weekly Plan Output V1',
+      'Block type is not supported in AI Weekly Plan Output V2',
       {
         expected: AI_WEEKLY_PLAN_BLOCK_TYPES,
         actual: block.blockType,
@@ -330,7 +339,7 @@ function validateNotesPolicy(notesStats, issues) {
       issues,
       'notesPolicy',
       'NOTES_POLICY_VIOLATION',
-      'Too many strength exercise notes for AI Weekly Plan Output V1',
+      'Too many strength exercise notes for AI Weekly Plan Output V2',
       {
         expected: {
           allowedExerciseNotes,
@@ -346,6 +355,119 @@ function validateNotesPolicy(notesStats, issues) {
     ...notesStats,
     allowedExerciseNotes,
   };
+}
+
+function validateTargetArray({
+  targets,
+  path,
+  canonicalAreas,
+  valueKey,
+  sessionsPerWeek,
+  issues,
+}) {
+  const seenAreas = new Set();
+
+  toArray(targets).forEach((target, index) => {
+    const targetPath = `${path}[${index}]`;
+    const area = normalizeOptionalString(target?.area);
+    const value = target?.[valueKey];
+
+    if (!area || !canonicalAreas.has(area)) {
+      pushIssue(
+        issues,
+        `${targetPath}.area`,
+        'INVALID_TARGET_AREA',
+        `area must be a canonical ${path.includes('bodyParts') ? 'bodyParts' : 'muscleFocus'} key`,
+        { actual: target?.area }
+      );
+    } else if (seenAreas.has(area)) {
+      pushIssue(
+        issues,
+        `${targetPath}.area`,
+        'DUPLICATE_TARGET_AREA',
+        'Target areas must be unique within their explicit taxonomy',
+        { actual: area }
+      );
+    }
+
+    if (area) {
+      seenAreas.add(area);
+    }
+
+    if (!Number.isSafeInteger(value) || value < 0) {
+      pushIssue(
+        issues,
+        `${targetPath}.${valueKey}`,
+        'INVALID_TARGET_VALUE',
+        `${valueKey} must be a non-negative integer`,
+        { actual: value }
+      );
+    }
+
+    if (
+      valueKey === 'targetSessionsPerWeek' &&
+      Number.isSafeInteger(value) &&
+      Number.isSafeInteger(sessionsPerWeek) &&
+      value > sessionsPerWeek
+    ) {
+      pushIssue(
+        issues,
+        `${targetPath}.${valueKey}`,
+        'TARGET_FREQUENCY_EXCEEDS_SESSIONS',
+        'targetSessionsPerWeek must not exceed sessionsPerWeek',
+        { expected: sessionsPerWeek, actual: value }
+      );
+    }
+  });
+}
+
+function validateTargetContract(aiOutput, issues) {
+  const targetGroups = [
+    {
+      targets: aiOutput?.volumeTargets?.bodyParts,
+      path: 'volumeTargets.bodyParts',
+      canonicalAreas: BODY_PART_TARGET_AREA_SET,
+      valueKey: 'targetSetsPerWeek',
+    },
+    {
+      targets: aiOutput?.volumeTargets?.muscleFocuses,
+      path: 'volumeTargets.muscleFocuses',
+      canonicalAreas: MUSCLE_FOCUS_TARGET_AREA_SET,
+      valueKey: 'targetSetsPerWeek',
+    },
+    {
+      targets: aiOutput?.frequencyTargets?.bodyParts,
+      path: 'frequencyTargets.bodyParts',
+      canonicalAreas: BODY_PART_TARGET_AREA_SET,
+      valueKey: 'targetSessionsPerWeek',
+    },
+    {
+      targets: aiOutput?.frequencyTargets?.muscleFocuses,
+      path: 'frequencyTargets.muscleFocuses',
+      canonicalAreas: MUSCLE_FOCUS_TARGET_AREA_SET,
+      valueKey: 'targetSessionsPerWeek',
+    },
+  ];
+
+  if (
+    Object.prototype.hasOwnProperty.call(aiOutput?.volumeTargets || {}, 'perMuscle') ||
+    Object.prototype.hasOwnProperty.call(aiOutput?.frequencyTargets || {}, 'perMuscle')
+  ) {
+    pushIssue(
+      issues,
+      'volumeTargets',
+      'LEGACY_TARGET_SHAPE_UNSUPPORTED',
+      'perMuscle is not supported by AI Weekly Plan Output V2'
+    );
+  }
+
+  targetGroups.forEach((group) =>
+    validateTargetArray({
+      ...group,
+      sessionsPerWeek: aiOutput?.sessionsPerWeek,
+      issues,
+    })
+  );
 }
 
 function validateWeeklyPlanAiOutputSemantics(aiOutput = {}) {
@@ -368,6 +490,8 @@ function validateWeeklyPlanAiOutputSemantics(aiOutput = {}) {
       }
     );
   }
+
+  validateTargetContract(aiOutput, issues);
 
   validateSequentialOrderIndexes(workouts, 'workouts', issues);
 

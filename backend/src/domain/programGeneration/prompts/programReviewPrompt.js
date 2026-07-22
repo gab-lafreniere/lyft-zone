@@ -61,6 +61,8 @@ function buildProgramReviewPrompt({ doctrine, reviewInput } = {}) {
     '- Do not invent facts for missing or partial metadata. A missing field cannot by itself justify a strong conclusion.',
     '- Do not ask the user for clarification. Review only the supplied input.',
     '- Return only the strict Structured Output contract supplied by the caller; do not add prose outside it.',
+    '- Review volume target comparisons separately for bodyParts and muscleFocuses; never merge or infer a taxonomy from area.',
+    '- Review frequency target comparisons separately for bodyParts and muscleFocuses; target_muscle and secondary_muscle analytics are diagnostic only and never target comparison sources.',
     '',
     'Duration evaluation guidance:',
     '- Apply evaluationPolicy as the structured backend configuration. Do not reinterpret or duplicate its rules.',

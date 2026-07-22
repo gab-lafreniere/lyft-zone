@@ -184,21 +184,24 @@ function createGeneratedAIOutput(overrides = {}) {
   return {
     splitType: 'upper_lower',
     volumeTargets: {
-      perMuscle: [
-        { area: 'upper_chest', targetSetsPerWeek: 3 },
+      bodyParts: [
         { area: 'chest', targetSetsPerWeek: 5 },
-        { area: 'pectoralis_major', targetSetsPerWeek: 2 },
+        { area: 'shoulders', targetSetsPerWeek: 4 },
+      ],
+      muscleFocuses: [
+        { area: 'upper_chest', targetSetsPerWeek: 3 },
         { area: 'lats', targetSetsPerWeek: 0 },
-        { area: 'missing_area', targetSetsPerWeek: 4 },
+        { area: 'rear_delts', targetSetsPerWeek: 4 },
       ],
     },
     frequencyTargets: {
-      perMuscle: [
-        { area: 'upper_chest', targetSessionsPerWeek: 1 },
+      bodyParts: [
         { area: 'back', targetSessionsPerWeek: 2 },
-        { area: 'latissimus_dorsi', targetSessionsPerWeek: 3 },
         { area: 'biceps', targetSessionsPerWeek: 2 },
-        { area: 'missing_area', targetSessionsPerWeek: 1 },
+      ],
+      muscleFocuses: [
+        { area: 'upper_chest', targetSessionsPerWeek: 1 },
+        { area: 'rear_delts', targetSessionsPerWeek: 1 },
       ],
     },
     ...overrides,
@@ -674,11 +677,163 @@ test('muscle projection keys are deduplicated per exercise without multiplying c
   });
 });
 
+test('canonical target fixture counts full direct sets per lane and deduplicates frequency by workout', () => {
+  const context = createContext({
+    availability: { sessionsPerWeek: 2, durationPerSession: 60 },
+    exercisePoolItems: [
+      {
+        exerciseId: 'ex_chest',
+        bodyParts: ['chest'],
+        muscleFocus: ['upper_chest'],
+        targetMuscles: ['pectoralis_major'],
+        secondaryMuscles: [],
+      },
+      {
+        exerciseId: 'ex_back',
+        bodyParts: ['back'],
+        muscleFocus: ['lats'],
+        targetMuscles: ['latissimus_dorsi'],
+        secondaryMuscles: ['biceps_brachii'],
+      },
+      {
+        exerciseId: 'ex_rear',
+        bodyParts: ['shoulders', 'back'],
+        muscleFocus: ['rear_delts'],
+        targetMuscles: ['posterior_deltoid'],
+        secondaryMuscles: ['trapezius_middle'],
+      },
+      {
+        exerciseId: 'ex_abs',
+        bodyParts: ['abs'],
+        muscleFocus: ['upper_abs'],
+        targetMuscles: ['rectus_abdominis'],
+        secondaryMuscles: [],
+      },
+    ],
+  });
+  const threeSets = [
+    createSetTemplate(1),
+    createSetTemplate(2),
+    createSetTemplate(3),
+  ];
+  const twoSets = [createSetTemplate(1), createSetTemplate(2)];
+  const generatedPlanDocument = {
+    name: 'Canonical target fixture',
+    sessionsPerWeek: 2,
+    workouts: [
+      {
+        name: 'Upper',
+        orderIndex: 1,
+        estimatedDurationMinutes: 60,
+        blocks: [
+          {
+            orderIndex: 1,
+            blockType: 'SINGLE',
+            exercises: [
+              createStrengthExercise('ex_chest', 1, {
+                setTemplates: threeSets,
+              }),
+            ],
+          },
+          {
+            orderIndex: 2,
+            blockType: 'SUPERSET',
+            roundCount: 2,
+            exercises: [
+              createStrengthExercise('ex_back', 1, {
+                setTemplates: twoSets,
+              }),
+              createStrengthExercise('ex_rear', 2, {
+                setTemplates: twoSets,
+              }),
+            ],
+          },
+        ],
+      },
+      {
+        name: 'Core',
+        orderIndex: 2,
+        estimatedDurationMinutes: 30,
+        blocks: [
+          {
+            orderIndex: 1,
+            blockType: 'SINGLE',
+            exercises: [createStrengthExercise('ex_abs', 1)],
+          },
+        ],
+      },
+    ],
+  };
+  const generatedAIOutput = {
+    volumeTargets: {
+      bodyParts: [
+        { area: 'chest', targetSetsPerWeek: 3 },
+        { area: 'back', targetSetsPerWeek: 4 },
+        { area: 'shoulders', targetSetsPerWeek: 2 },
+      ],
+      muscleFocuses: [
+        { area: 'upper_chest', targetSetsPerWeek: 3 },
+        { area: 'lats', targetSetsPerWeek: 2 },
+        { area: 'rear_delts', targetSetsPerWeek: 2 },
+      ],
+    },
+    frequencyTargets: {
+      bodyParts: [
+        { area: 'chest', targetSessionsPerWeek: 1 },
+        { area: 'back', targetSessionsPerWeek: 1 },
+        { area: 'shoulders', targetSessionsPerWeek: 1 },
+      ],
+      muscleFocuses: [
+        { area: 'upper_chest', targetSessionsPerWeek: 1 },
+        { area: 'lats', targetSessionsPerWeek: 1 },
+        { area: 'rear_delts', targetSessionsPerWeek: 1 },
+      ],
+    },
+  };
+  const analytics = calculateWeeklyPlanAnalytics({
+    generatedAIOutput,
+    generatedPlanDocument,
+    context,
+  });
+
+  assert.equal(findMetric(analytics, 'body_part', 'chest').directWorkingSets, 3);
+  assert.equal(findMetric(analytics, 'body_part', 'back').directWorkingSets, 4);
+  assert.equal(findMetric(analytics, 'body_part', 'shoulders').directWorkingSets, 2);
+  assert.equal(findMetric(analytics, 'muscle_focus', 'rear_delts').directWorkingSets, 2);
+  assert.equal(findMetric(analytics, 'body_part', 'back').directWorkoutCount, 1);
+  assert.equal(findMetric(analytics, 'target_muscle', 'posterior_deltoid').directWorkingSets, 2);
+  assert.equal(findMetric(analytics, 'secondary_muscle', 'trapezius_middle').indirectWorkingSets, 2);
+  assert.deepEqual(analytics.targetComparisons.volume.overallSummary, {
+    targetCount: 6,
+    belowTargetCount: 0,
+    withinTargetCount: 6,
+    aboveTargetCount: 0,
+    unavailableCount: 0,
+  });
+  assert.deepEqual(analytics.targetComparisons.frequency.overallSummary, {
+    targetCount: 6,
+    belowTargetCount: 0,
+    withinTargetCount: 6,
+    aboveTargetCount: 0,
+    unavailableCount: 0,
+  });
+  assert.equal(
+    JSON.stringify(analytics.targetComparisons).includes('target_muscle'),
+    false
+  );
+  assert.equal(
+    JSON.stringify(analytics.targetComparisons).includes('secondary_muscle'),
+    false
+  );
+});
+
 test('frequency is deduplicated by workout and secondary exposure does not drive targets', () => {
   const analytics = calculate();
   const bicepsDirect = findMetric(analytics, 'body_part', 'biceps');
   const bicepsIndirect = findMetric(analytics, 'secondary_muscle', 'biceps');
-  const frequency = comparisonByArea(analytics.targetComparisons.frequency);
+  const frequency = comparisonByArea(
+    analytics.targetComparisons.frequency.bodyParts
+  );
 
   assert.equal(findMetric(analytics, 'target_muscle', 'pectoralis_major').directWorkoutCount, 2);
   assert.equal(bicepsDirect.directWorkoutCount, 1);
@@ -688,35 +843,42 @@ test('frequency is deduplicated by workout and secondary exposure does not drive
   assert.equal(frequency.biceps.status, 'below_target');
 });
 
-test('target comparisons use locked resolution order and all informative statuses', () => {
+test('target comparisons use explicit parent taxonomies and all informative statuses', () => {
   const analytics = calculate();
-  const volume = comparisonByArea(analytics.targetComparisons.volume);
-  const frequency = comparisonByArea(analytics.targetComparisons.frequency);
+  const volumeBodyParts = comparisonByArea(
+    analytics.targetComparisons.volume.bodyParts
+  );
+  const volumeMuscleFocuses = comparisonByArea(
+    analytics.targetComparisons.volume.muscleFocuses
+  );
+  const frequencyBodyParts = comparisonByArea(
+    analytics.targetComparisons.frequency.bodyParts
+  );
+  const frequencyMuscleFocuses = comparisonByArea(
+    analytics.targetComparisons.frequency.muscleFocuses
+  );
 
   assert.deepEqual(
     {
-      taxonomy: volume.upper_chest.resolvedTaxonomy,
-      value: volume.upper_chest.generatedDirectValue,
-      status: volume.upper_chest.status,
-      difference: volume.upper_chest.difference,
+      taxonomy: volumeMuscleFocuses.upper_chest.resolvedTaxonomy,
+      value: volumeMuscleFocuses.upper_chest.generatedDirectValue,
+      status: volumeMuscleFocuses.upper_chest.status,
+      difference: volumeMuscleFocuses.upper_chest.difference,
     },
     { taxonomy: 'muscle_focus', value: 3, status: 'within_target', difference: 0 }
   );
-  assert.equal(volume.chest.resolvedTaxonomy, 'body_part');
-  assert.equal(volume.chest.status, 'below_target');
-  assert.equal(volume.chest.difference, -2);
-  assert.equal(volume.chest.absoluteDifference, 2);
-  assert.equal(volume.chest.relativeDifference, -0.4);
-  assert.equal(volume.pectoralis_major.resolvedTaxonomy, 'target_muscle');
-  assert.equal(volume.pectoralis_major.status, 'above_target');
-  assert.equal(volume.pectoralis_major.relativeDifference, 0.5);
-  assert.equal(volume.lats.status, 'above_target');
-  assert.equal(volume.lats.targetValue, 0);
-  assert.equal(volume.lats.relativeDifference, null);
-  assert.deepEqual(volume.missing_area, {
-    targetIndex: 4,
-    area: 'missing_area',
-    resolvedTaxonomy: null,
+  assert.equal(volumeBodyParts.chest.resolvedTaxonomy, 'body_part');
+  assert.equal(volumeBodyParts.chest.status, 'below_target');
+  assert.equal(volumeBodyParts.chest.difference, -2);
+  assert.equal(volumeBodyParts.chest.absoluteDifference, 2);
+  assert.equal(volumeBodyParts.chest.relativeDifference, -0.4);
+  assert.equal(volumeMuscleFocuses.lats.status, 'above_target');
+  assert.equal(volumeMuscleFocuses.lats.targetValue, 0);
+  assert.equal(volumeMuscleFocuses.lats.relativeDifference, null);
+  assert.deepEqual(volumeBodyParts.shoulders, {
+    targetIndex: 1,
+    area: 'shoulders',
+    resolvedTaxonomy: 'body_part',
     targetValue: 4,
     generatedDirectValue: null,
     difference: null,
@@ -725,33 +887,47 @@ test('target comparisons use locked resolution order and all informative statuse
     status: 'unavailable',
   });
 
-  assert.equal(frequency.upper_chest.status, 'above_target');
-  assert.equal(frequency.back.status, 'within_target');
-  assert.equal(frequency.latissimus_dorsi.status, 'below_target');
-  assert.equal(frequency.latissimus_dorsi.relativeDifference, -0.3333);
-  assert.equal(frequency.missing_area.status, 'unavailable');
-  assert.deepEqual(analytics.targetComparisons.volume.summary, {
+  assert.equal(frequencyMuscleFocuses.upper_chest.status, 'above_target');
+  assert.equal(frequencyBodyParts.back.status, 'within_target');
+  assert.equal(frequencyBodyParts.biceps.status, 'below_target');
+  assert.equal(frequencyBodyParts.biceps.relativeDifference, -0.5);
+  assert.equal(frequencyMuscleFocuses.rear_delts.status, 'unavailable');
+  assert.deepEqual(analytics.targetComparisons.volume.overallSummary, {
     targetCount: 5,
     belowTargetCount: 1,
     withinTargetCount: 1,
-    aboveTargetCount: 2,
-    unavailableCount: 1,
+    aboveTargetCount: 1,
+    unavailableCount: 2,
   });
 });
 
-test('muscle_focus wins target resolution when the same key exists in multiple taxonomies', () => {
+test('target comparisons never resolve through target_muscle or secondary_muscle', () => {
   const analytics = calculate({
     generatedAIOutput: createGeneratedAIOutput({
       volumeTargets: {
-        perMuscle: [{ area: 'shared_key', targetSetsPerWeek: 3 }],
+        bodyParts: [{ area: 'chest', targetSetsPerWeek: 3 }],
+        muscleFocuses: [{ area: 'upper_chest', targetSetsPerWeek: 3 }],
       },
-      frequencyTargets: { perMuscle: [] },
+      frequencyTargets: {
+        bodyParts: [],
+        muscleFocuses: [],
+      },
     }),
   });
 
+  const items = [
+    ...analytics.targetComparisons.volume.bodyParts.items,
+    ...analytics.targetComparisons.volume.muscleFocuses.items,
+  ];
+  assert.deepEqual(
+    items.map((item) => item.resolvedTaxonomy),
+    ['body_part', 'muscle_focus']
+  );
   assert.equal(
-    analytics.targetComparisons.volume.items[0].resolvedTaxonomy,
-    'muscle_focus'
+    items.some((item) =>
+      ['target_muscle', 'secondary_muscle'].includes(item.resolvedTaxonomy)
+    ),
+    false
   );
 });
 
@@ -759,10 +935,12 @@ test('absent targets and null generatedAIOutput produce empty comparisons', () =
   for (const generatedAIOutput of [null, {}, { volumeTargets: {}, frequencyTargets: {} }]) {
     const analytics = calculate({ generatedAIOutput });
 
-    assert.deepEqual(analytics.targetComparisons.volume.items, []);
-    assert.deepEqual(analytics.targetComparisons.frequency.items, []);
-    assert.equal(analytics.targetComparisons.volume.summary.targetCount, 0);
-    assert.equal(analytics.targetComparisons.frequency.summary.targetCount, 0);
+    assert.deepEqual(analytics.targetComparisons.volume.bodyParts.items, []);
+    assert.deepEqual(analytics.targetComparisons.volume.muscleFocuses.items, []);
+    assert.deepEqual(analytics.targetComparisons.frequency.bodyParts.items, []);
+    assert.deepEqual(analytics.targetComparisons.frequency.muscleFocuses.items, []);
+    assert.equal(analytics.targetComparisons.volume.overallSummary.targetCount, 0);
+    assert.equal(analytics.targetComparisons.frequency.overallSummary.targetCount, 0);
   }
 });
 

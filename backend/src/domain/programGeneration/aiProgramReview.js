@@ -378,8 +378,8 @@ function buildConstraintsReviewInput(context = {}) {
   };
 }
 
-function buildTargetIntent(values, targetKey, includePriority = false) {
-  return toArray(values?.perMuscle)
+function buildTargetIntent(targets, targetKey, includePriority = false) {
+  return toArray(targets)
     .map((target) => ({
       area: normalizeOptionalString(target?.area),
       [targetKey]: normalizeNumber(target?.[targetKey]),
@@ -388,18 +388,33 @@ function buildTargetIntent(values, targetKey, includePriority = false) {
     .sort((left, right) => compareStableStrings(left.area, right.area));
 }
 
+function buildExplicitTargetIntent(values, targetKey, includePriority = false) {
+  return {
+    bodyParts: buildTargetIntent(
+      values?.bodyParts,
+      targetKey,
+      includePriority
+    ),
+    muscleFocuses: buildTargetIntent(
+      values?.muscleFocuses,
+      targetKey,
+      includePriority
+    ),
+  };
+}
+
 function buildIntentReviewInput(generatedAIOutput, generatedPlanDocument = {}) {
   return {
     splitType: normalizeOptionalString(generatedAIOutput?.splitType),
     strategySummary:
       normalizeOptionalString(generatedAIOutput?.strategySummary) ||
       normalizeOptionalString(generatedPlanDocument?.strategySummary),
-    volumeTargets: buildTargetIntent(
+    volumeTargets: buildExplicitTargetIntent(
       generatedAIOutput?.volumeTargets,
       'targetSetsPerWeek',
       true
     ),
-    frequencyTargets: buildTargetIntent(
+    frequencyTargets: buildExplicitTargetIntent(
       generatedAIOutput?.frequencyTargets,
       'targetSessionsPerWeek'
     ),
@@ -424,15 +439,19 @@ function buildProjectionEntries(entries = []) {
     );
 }
 
+function buildTargetComparisonSummaryReviewInput(summary = {}) {
+  return {
+    targetCount: normalizeInteger(summary?.targetCount),
+    belowTargetCount: normalizeInteger(summary?.belowTargetCount),
+    withinTargetCount: normalizeInteger(summary?.withinTargetCount),
+    aboveTargetCount: normalizeInteger(summary?.aboveTargetCount),
+    unavailableCount: normalizeInteger(summary?.unavailableCount),
+  };
+}
+
 function buildTargetComparisonReviewInput(group = {}) {
   return {
-    summary: {
-      targetCount: normalizeInteger(group?.summary?.targetCount),
-      belowTargetCount: normalizeInteger(group?.summary?.belowTargetCount),
-      withinTargetCount: normalizeInteger(group?.summary?.withinTargetCount),
-      aboveTargetCount: normalizeInteger(group?.summary?.aboveTargetCount),
-      unavailableCount: normalizeInteger(group?.summary?.unavailableCount),
-    },
+    summary: buildTargetComparisonSummaryReviewInput(group?.summary),
     items: toArray(group?.items).map((item, index) => ({
       targetIndex: normalizeInteger(item?.targetIndex) ?? index,
       area: normalizeOptionalString(item?.area),
@@ -444,6 +463,16 @@ function buildTargetComparisonReviewInput(group = {}) {
       relativeDifference: normalizeNumber(item?.relativeDifference),
       status: normalizeOptionalString(item?.status),
     })),
+  };
+}
+
+function buildExplicitTargetComparisonsReviewInput(group = {}) {
+  return {
+    bodyParts: buildTargetComparisonReviewInput(group?.bodyParts),
+    muscleFocuses: buildTargetComparisonReviewInput(group?.muscleFocuses),
+    overallSummary: buildTargetComparisonSummaryReviewInput(
+      group?.overallSummary
+    ),
   };
 }
 
@@ -551,8 +580,12 @@ function buildAnalyticsReviewInput(analytics = {}) {
       .sort((left, right) => left.workoutOrderIndex - right.workoutOrderIndex),
     muscleMetrics: buildProjectionEntries(analytics?.muscleMetrics),
     targetComparisons: {
-      volume: buildTargetComparisonReviewInput(analytics?.targetComparisons?.volume),
-      frequency: buildTargetComparisonReviewInput(analytics?.targetComparisons?.frequency),
+      volume: buildExplicitTargetComparisonsReviewInput(
+        analytics?.targetComparisons?.volume
+      ),
+      frequency: buildExplicitTargetComparisonsReviewInput(
+        analytics?.targetComparisons?.frequency
+      ),
     },
     metadataCoverage: {
       totalStrengthWorkingSets: normalizeInteger(metadataCoverage.totalStrengthWorkingSets),

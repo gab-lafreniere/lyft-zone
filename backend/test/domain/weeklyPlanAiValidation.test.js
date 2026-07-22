@@ -82,17 +82,19 @@ function createAiWorkout(index = 1, blockOverrides = {}) {
 
 function createAiOutput(overrides = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     planName: 'AI Draft',
     sessionsPerWeek: 1,
     strategySummary: 'Simple full body plan.',
     splitType: 'full_body',
     workouts: [createAiWorkout()],
     volumeTargets: {
-      perMuscle: [],
+      bodyParts: [],
+      muscleFocuses: [],
     },
     frequencyTargets: {
-      perMuscle: [],
+      bodyParts: [],
+      muscleFocuses: [],
     },
     progressionModel: {
       type: 'double_progression',
@@ -156,6 +158,44 @@ test('validateWeeklyPlanAiOutputSemantics rejects sessionsPerWeek mismatch', () 
 
   assert.equal(result.ok, false);
   assert.equal(result.issues.some((issue) => issue.code === 'SESSIONS_PER_WEEK_MISMATCH'), true);
+});
+
+test('validateWeeklyPlanAiOutputSemantics rejects duplicate explicit targets and frequency above sessions', () => {
+  const output = createAiOutput({
+    volumeTargets: {
+      bodyParts: [
+        { area: 'chest', targetSetsPerWeek: 3 },
+        { area: 'chest', targetSetsPerWeek: 2 },
+      ],
+      muscleFocuses: [],
+    },
+    frequencyTargets: {
+      bodyParts: [{ area: 'chest', targetSessionsPerWeek: 2 }],
+      muscleFocuses: [],
+    },
+  });
+  const result = validateWeeklyPlanAiOutputSemantics(output);
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    result.issues.map((issue) => issue.code),
+    ['DUPLICATE_TARGET_AREA', 'TARGET_FREQUENCY_EXCEEDS_SESSIONS']
+  );
+});
+
+test('validateWeeklyPlanAiOutputSemantics rejects legacy perMuscle directly', () => {
+  const output = createAiOutput({
+    volumeTargets: { perMuscle: [] },
+  });
+  const result = validateWeeklyPlanAiOutputSemantics(output);
+
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.issues.some(
+      (issue) => issue.code === 'LEGACY_TARGET_SHAPE_UNSUPPORTED'
+    ),
+    true
+  );
 });
 
 test('validateWeeklyPlanAiOutputSemantics rejects non-sequential orderIndex values', () => {

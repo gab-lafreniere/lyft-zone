@@ -25,6 +25,7 @@ const {
   buildProgramRepairPrompt,
 } = require('../../src/domain/programGeneration/prompts/programRepairPrompt');
 const {
+  AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS,
   AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION,
   AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION,
   buildWeeklyPlanAiJsonSchema,
@@ -143,7 +144,7 @@ function createRepairOptions(overrides = {}) {
 function createProviderResult(overrides = {}) {
   return {
     repairedAIOutput: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       planName: 'Repaired plan',
       workouts: [],
     },
@@ -162,7 +163,7 @@ function createProviderResult(overrides = {}) {
   };
 }
 
-test('runAIProgramRepair builds context, prompt, and Weekly Plan AI Schema V1 before one provider call', async () => {
+test('runAIProgramRepair builds context, prompt, and Weekly Plan AI Schema V2 before one provider call', async () => {
   const options = createRepairOptions();
   const capture = {
     contextBuildCount: 0,
@@ -607,23 +608,29 @@ function createHeavyRepairOptions() {
   );
   const workouts = createHeavyWorkouts();
   const generatedAIOutput = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     planName: 'HEAVY_SOURCE_OUTPUT_SENTINEL',
     sessionsPerWeek: 6,
     strategySummary: 'Six-session realistic heavy repair source fixture.',
     splitType: 'custom',
     workouts,
     volumeTargets: {
-      perMuscle: Array.from({ length: 20 }, (_, index) => ({
-        area: `muscle_focus_${index}`,
+      bodyParts: [],
+      muscleFocuses: AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS
+        .slice(0, 20)
+        .map((area, index) => ({
+        area,
         targetSetsPerWeek: 9,
         priority: index < 2 ? 'primary' : 'maintenance',
         rationale: `Target rationale ${index}.`,
       })),
     },
     frequencyTargets: {
-      perMuscle: Array.from({ length: 20 }, (_, index) => ({
-        area: `muscle_focus_${index}`,
+      bodyParts: [],
+      muscleFocuses: AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS
+        .slice(0, 20)
+        .map((area) => ({
+        area,
         targetSessionsPerWeek: 2,
       })),
     },

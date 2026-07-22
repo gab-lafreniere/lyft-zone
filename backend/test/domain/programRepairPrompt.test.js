@@ -156,7 +156,7 @@ test('system instructions require a full replacement and the bounded repair sema
     repairContext: createRepairContext(),
   });
 
-  assert.match(prompt.systemMessage, /full replacement: one complete Weekly Plan AI Output V1/i);
+  assert.match(prompt.systemMessage, /full replacement: one complete Weekly Plan AI Output V2/i);
   assert.match(prompt.systemMessage, /Never return a JSON patch, diff, partial object, or list of changes/i);
   assert.match(prompt.systemMessage, /Correct all mandatoryIssues/i);
   assert.match(prompt.systemMessage, /recommendedIssues when possible without creating a new conflict/i);
@@ -182,23 +182,24 @@ test('duration direction, final strategy, targets, and pool rules are explicit',
   assert.match(prompt.systemMessage, /Never lengthen a workout that is already too long/i);
   assert.match(prompt.systemMessage, /only exerciseIds from the User Exercise Pool/i);
   assert.match(prompt.systemMessage, /Every new or replacement exercise must come from that pool/i);
-  assert.match(prompt.systemMessage, /volumeTargets and frequencyTargets.*must match the repaired program/i);
+  assert.match(prompt.systemMessage, /volumeTargets\.bodyParts and frequencyTargets\.bodyParts.*match direct sets and distinct direct workout exposures/i);
+  assert.match(prompt.systemMessage, /volumeTargets\.muscleFocuses and frequencyTargets\.muscleFocuses.*match direct sets and distinct direct workout exposures/i);
   assert.match(prompt.systemMessage, /Regenerate strategySummary/i);
   assert.match(prompt.systemMessage, /brief and factual/i);
   assert.match(prompt.systemMessage, /never include hidden reasoning or chain-of-thought/i);
 });
 
-test('the repair prompt reuses Weekly Plan AI Output V1 invariants without copying its schema or policy formulas', () => {
+test('the repair prompt reuses Weekly Plan AI Output V2 invariants without copying its schema or policy formulas', () => {
   const prompt = buildProgramRepairPrompt({
     doctrine: createDoctrine(),
     repairContext: createRepairContext(),
   });
   const combinedPrompt = `${prompt.systemMessage}\n${prompt.userMessage}`;
 
-  assert.equal(AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION, 1);
-  assert.equal(AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION, 1);
-  assert.match(prompt.systemMessage, /Output contract version: 1/);
-  assert.match(prompt.systemMessage, /Output schema version: 1/);
+  assert.equal(AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION, 2);
+  assert.equal(AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION, 2);
+  assert.match(prompt.systemMessage, /Output contract version: 2/);
+  assert.match(prompt.systemMessage, /Output schema version: 2/);
   assert.match(prompt.systemMessage, /sessionsPerWeek must equal workouts\.length/);
   assert.match(prompt.systemMessage, /orderIndex and setIndex start at 1/);
   assert.match(prompt.systemMessage, /SINGLE and CARDIO blocks contain exactly one exercise/);

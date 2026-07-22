@@ -97,24 +97,62 @@ function createAnalytics(overrides = {}) {
     },
     targetComparisons: {
       volume: {
-        summary: {
+        bodyParts: {
+          summary: {
+            targetCount: 1,
+            belowTargetCount: 1,
+            withinTargetCount: 0,
+            aboveTargetCount: 0,
+            unavailableCount: 0,
+          },
+          items: [{ rationale: 'PRIVATE_TARGET_RATIONALE_SENTINEL' }],
+        },
+        muscleFocuses: {
+          summary: {
+            targetCount: 1,
+            belowTargetCount: 0,
+            withinTargetCount: 0,
+            aboveTargetCount: 1,
+            unavailableCount: 0,
+          },
+          items: [],
+        },
+        overallSummary: {
           targetCount: 2,
           belowTargetCount: 1,
           withinTargetCount: 0,
           aboveTargetCount: 1,
           unavailableCount: 0,
         },
-        items: [{ rationale: 'PRIVATE_TARGET_RATIONALE_SENTINEL' }],
       },
       frequency: {
-        summary: {
+        bodyParts: {
+          summary: {
+            targetCount: 1,
+            belowTargetCount: 0,
+            withinTargetCount: 1,
+            aboveTargetCount: 0,
+            unavailableCount: 0,
+          },
+          items: [],
+        },
+        muscleFocuses: {
+          summary: {
+            targetCount: 0,
+            belowTargetCount: 0,
+            withinTargetCount: 0,
+            aboveTargetCount: 0,
+            unavailableCount: 0,
+          },
+          items: [],
+        },
+        overallSummary: {
           targetCount: 1,
           belowTargetCount: 0,
           withinTargetCount: 1,
           aboveTargetCount: 0,
           unavailableCount: 0,
         },
-        items: [],
       },
     },
     ...overrides,
@@ -233,8 +271,8 @@ test('buildWeeklyPlanGenerationContext persists compact doctrine and prompt meta
     attempts: 0,
     maxAttempts: 1,
     promptVersion: null,
-    contractVersion: 1,
-    outputSchemaVersion: 1,
+    contractVersion: 2,
+    outputSchemaVersion: 2,
     initialReviewSummary: null,
     provider: null,
   });
@@ -268,7 +306,7 @@ test('buildWeeklyPlanGenerationContext creates deterministic V7 audit with allow
       poolSnapshot: { checksum: 'checksum' },
     }),
     generatedAIOutput: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       strategySummary: 'Provider strategy summary.',
     },
     validation: {
@@ -380,25 +418,57 @@ test('buildWeeklyPlanGenerationContext creates deterministic V7 audit with allow
     },
     targetComparisons: {
       volume: {
-        targetCount: 2,
-        belowTargetCount: 1,
-        withinTargetCount: 0,
-        aboveTargetCount: 1,
-        unavailableCount: 0,
+        bodyParts: {
+          targetCount: 1,
+          belowTargetCount: 1,
+          withinTargetCount: 0,
+          aboveTargetCount: 0,
+          unavailableCount: 0,
+        },
+        muscleFocuses: {
+          targetCount: 1,
+          belowTargetCount: 0,
+          withinTargetCount: 0,
+          aboveTargetCount: 1,
+          unavailableCount: 0,
+        },
+        overallSummary: {
+          targetCount: 2,
+          belowTargetCount: 1,
+          withinTargetCount: 0,
+          aboveTargetCount: 1,
+          unavailableCount: 0,
+        },
       },
       frequency: {
-        targetCount: 1,
-        belowTargetCount: 0,
-        withinTargetCount: 1,
-        aboveTargetCount: 0,
-        unavailableCount: 0,
+        bodyParts: {
+          targetCount: 1,
+          belowTargetCount: 0,
+          withinTargetCount: 1,
+          aboveTargetCount: 0,
+          unavailableCount: 0,
+        },
+        muscleFocuses: {
+          targetCount: 0,
+          belowTargetCount: 0,
+          withinTargetCount: 0,
+          aboveTargetCount: 0,
+          unavailableCount: 0,
+        },
+        overallSummary: {
+          targetCount: 1,
+          belowTargetCount: 0,
+          withinTargetCount: 1,
+          aboveTargetCount: 0,
+          unavailableCount: 0,
+        },
       },
     },
   });
   assert.equal(generationContext.validationSummary.analytics.workouts, undefined);
   assert.equal(generationContext.validationSummary.analytics.muscleMetrics, undefined);
   assert.equal(
-    generationContext.validationSummary.analytics.targetComparisons.volume.items,
+    generationContext.validationSummary.analytics.targetComparisons.volume.bodyParts.items,
     undefined
   );
   assert.equal(generationContext.repairAttempts, 0);
@@ -649,7 +719,7 @@ test('Audit V7 persists exact NOT_REQUIRED repair metadata and one review attemp
   const input = {
     context: createContext(),
     generatedAIOutput: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       strategySummary: 'Initial strategy.',
     },
     generatedPlanDocument: { name: 'Initial plan' },
@@ -680,8 +750,8 @@ test('Audit V7 persists exact NOT_REQUIRED repair metadata and one review attemp
       attempts: 0,
       maxAttempts: 1,
       promptVersion: null,
-      contractVersion: 1,
-      outputSchemaVersion: 1,
+      contractVersion: 2,
+      outputSchemaVersion: 2,
       initialReviewSummary: {
         decision: 'PASS',
         issueCount: 1,
@@ -702,8 +772,8 @@ test('Audit V7 persists exact NOT_REQUIRED repair metadata and one review attemp
     attempts: 0,
     maxAttempts: 1,
     promptVersion: null,
-    contractVersion: 1,
-    outputSchemaVersion: 1,
+    contractVersion: 2,
+    outputSchemaVersion: 2,
     initialReviewSummary: {
       decision: 'PASS',
       issueCount: 1,
@@ -725,7 +795,7 @@ test('Audit V7 persists only final repaired summaries with distinct repair metad
       privateDoctrine: 'PRIVATE_DOCTRINE_SENTINEL',
     }),
     generatedAIOutput: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       strategySummary: 'Final repaired strategy.',
       splitType: 'upper_lower',
       repairedAIOutput: 'PRIVATE_REPAIRED_OUTPUT_SENTINEL',
@@ -803,8 +873,8 @@ test('Audit V7 persists only final repaired summaries with distinct repair metad
       attempts: 1,
       maxAttempts: 1,
       promptVersion: 'ai-weekly-plan-repair-prompt-v1.0.0',
-      contractVersion: 1,
-      outputSchemaVersion: 1,
+      contractVersion: 2,
+      outputSchemaVersion: 2,
       initialReviewSummary: {
         decision: 'REPAIR_REQUIRED',
         issueCount: 1,
@@ -858,8 +928,8 @@ test('Audit V7 persists only final repaired summaries with distinct repair metad
     attempts: 1,
     maxAttempts: 1,
     promptVersion: 'ai-weekly-plan-repair-prompt-v1.0.0',
-    contractVersion: 1,
-    outputSchemaVersion: 1,
+    contractVersion: 2,
+    outputSchemaVersion: 2,
     initialReviewSummary: {
       decision: 'REPAIR_REQUIRED',
       issueCount: 1,
@@ -952,8 +1022,8 @@ function createBypassedRepairMetadata(overrides = {}) {
     attempts: 0,
     maxAttempts: 1,
     promptVersion: null,
-    contractVersion: 1,
-    outputSchemaVersion: 1,
+    contractVersion: 2,
+    outputSchemaVersion: 2,
     initialReviewSummary: null,
     provider: null,
     ...overrides,
@@ -967,8 +1037,8 @@ function createNotRequiredRepairMetadata(overrides = {}) {
     attempts: 0,
     maxAttempts: 1,
     promptVersion: null,
-    contractVersion: 1,
-    outputSchemaVersion: 1,
+    contractVersion: 2,
+    outputSchemaVersion: 2,
     initialReviewSummary: createRepairReviewSummary('PASS'),
     provider: null,
     ...overrides,
@@ -982,8 +1052,8 @@ function createPassedRepairMetadata(overrides = {}) {
     attempts: 1,
     maxAttempts: 1,
     promptVersion: 'ai-weekly-plan-repair-prompt-v1.0.0',
-    contractVersion: 1,
-    outputSchemaVersion: 1,
+    contractVersion: 2,
+    outputSchemaVersion: 2,
     initialReviewSummary: createRepairReviewSummary('REPAIR_REQUIRED'),
     provider: {
       type: 'openai',
@@ -1120,8 +1190,8 @@ test('NOT_REQUIRED repair metadata is exact and fail-closed', async (t) => {
     ['attempts one', { attempts: 1 }],
     ['wrong max attempts', { maxAttempts: 2 }],
     ['provider present', { provider: createPassedRepairMetadata().provider }],
-    ['wrong contract', { contractVersion: 2 }],
-    ['wrong schema', { outputSchemaVersion: 2 }],
+    ['wrong contract', { contractVersion: 999 }],
+    ['wrong schema', { outputSchemaVersion: 999 }],
   ];
   for (const [name, overrides] of invalidCases) {
     await t.test(`${name} is rejected`, () => {
@@ -1132,7 +1202,7 @@ test('NOT_REQUIRED repair metadata is exact and fail-closed', async (t) => {
   }
 });
 
-test('PASSED repair metadata requires exact V1 identity and OpenAI provider', async (t) => {
+test('PASSED repair metadata requires exact V2 identity and OpenAI provider', async (t) => {
   await t.test('exact structure is accepted without mutation', () => {
     const input = createPassedRepairMetadata();
     const originalInput = clone(input);
@@ -1152,8 +1222,8 @@ test('PASSED repair metadata requires exact V1 identity and OpenAI provider', as
     ['wrong provider type', { provider: { ...validProvider, type: 'mock' } }],
     ['empty provider model', { provider: { ...validProvider, model: ' ' } }],
     ['wrong prompt version', { promptVersion: 'PRIVATE_PROMPT_VERSION' }],
-    ['wrong contract', { contractVersion: 2 }],
-    ['wrong schema', { outputSchemaVersion: 2 }],
+    ['wrong contract', { contractVersion: 999 }],
+    ['wrong schema', { outputSchemaVersion: 999 }],
     ['attempts zero', { attempts: 0 }],
     ['attempts two', { attempts: 2 }],
     ['wrong max attempts', { maxAttempts: 2 }],

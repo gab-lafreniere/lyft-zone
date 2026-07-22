@@ -2,6 +2,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS,
+  AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS,
+  AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION,
+  AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION,
   buildWeeklyPlanAiJsonSchema,
   validateWeeklyPlanAiOutputSchema,
 } = require('../../src/domain/programGeneration/weeklyPlanAiSchema');
@@ -71,17 +75,19 @@ function createWorkout(index = 1, overrides = {}) {
 
 function createValidAIOutput(overrides = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     planName: 'AI Draft',
     sessionsPerWeek: 1,
     strategySummary: 'Simple full body plan.',
     splitType: 'full_body',
     workouts: [createWorkout()],
     volumeTargets: {
-      perMuscle: [],
+      bodyParts: [],
+      muscleFocuses: [],
     },
     frequencyTargets: {
-      perMuscle: [],
+      bodyParts: [],
+      muscleFocuses: [],
     },
     progressionModel: {
       type: 'double_progression',
@@ -133,6 +139,76 @@ test('validateWeeklyPlanAiOutputSchema accepts a minimal valid AI output', () =>
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.issues, []);
+});
+
+test('Weekly Plan AI Output V2 requires explicit canonical target taxonomies', () => {
+  const payload = createValidAIOutput({
+    volumeTargets: {
+      bodyParts: [
+        {
+          area: 'chest',
+          targetSetsPerWeek: 3,
+          priority: 'primary',
+          rationale: null,
+        },
+      ],
+      muscleFocuses: [
+        {
+          area: 'upper_chest',
+          targetSetsPerWeek: 3,
+          priority: 'primary',
+          rationale: null,
+        },
+      ],
+    },
+    frequencyTargets: {
+      bodyParts: [{ area: 'chest', targetSessionsPerWeek: 1 }],
+      muscleFocuses: [
+        { area: 'upper_chest', targetSessionsPerWeek: 1 },
+      ],
+    },
+  });
+
+  assert.equal(AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION, 2);
+  assert.equal(AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION, 2);
+  assert.equal(validateWeeklyPlanAiOutputSchema(payload).ok, true);
+  assert.equal(AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS.includes('chest'), true);
+  assert.equal(
+    AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS.includes('upper_chest'),
+    true
+  );
+});
+
+test('Weekly Plan AI Output V2 rejects perMuscle, crossed anatomy keys, and fractional targets', () => {
+  const legacy = createValidAIOutput({
+    volumeTargets: { perMuscle: [] },
+  });
+  const crossedBodyPart = createValidAIOutput();
+  crossedBodyPart.volumeTargets.bodyParts = [
+    {
+      area: 'pectoralis_major',
+      targetSetsPerWeek: 3,
+      priority: 'primary',
+      rationale: null,
+    },
+  ];
+  const crossedMuscleFocus = createValidAIOutput();
+  crossedMuscleFocus.frequencyTargets.muscleFocuses = [
+    { area: 'rhomboids', targetSessionsPerWeek: 1 },
+  ];
+  const fractional = createValidAIOutput();
+  fractional.volumeTargets.bodyParts = [
+    {
+      area: 'chest',
+      targetSetsPerWeek: 1.5,
+      priority: 'primary',
+      rationale: null,
+    },
+  ];
+
+  [legacy, crossedBodyPart, crossedMuscleFocus, fractional].forEach(
+    (payload) => assert.equal(validateWeeklyPlanAiOutputSchema(payload).ok, false)
+  );
 });
 
 test('setTemplate schema uses two complete nested anyOf variants', () => {

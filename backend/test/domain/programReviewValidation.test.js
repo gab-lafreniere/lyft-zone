@@ -49,7 +49,9 @@ function createReviewInput({ workouts = [] } = {}) {
       workouts,
       targetComparisons: {
         volume: {
-          items: [{ area: 'chest' }],
+          bodyParts: {
+            items: [{ area: 'chest' }],
+          },
         },
       },
     },
@@ -57,7 +59,10 @@ function createReviewInput({ workouts = [] } = {}) {
       cautionJointStressTags: ['deep_knee_flexion'],
     },
     intent: {
-      volumeTargets: [{ area: 'chest' }],
+      volumeTargets: {
+        bodyParts: [{ area: 'chest' }],
+        muscleFocuses: [],
+      },
     },
   };
 }
@@ -581,7 +586,7 @@ test('validateProgramReviewSemantics validates and resolves allowed JSON Pointer
     createIssue({
       issueIndex: 2,
       category: 'VOLUME_FREQUENCY_ALIGNMENT',
-      path: '/analytics/targetComparisons/volume/items/0',
+      path: '/analytics/targetComparisons/volume/bodyParts/items/0',
       message: 'The target comparison is informative.',
     }),
     createIssue({
@@ -593,7 +598,7 @@ test('validateProgramReviewSemantics validates and resolves allowed JSON Pointer
     createIssue({
       issueIndex: 4,
       category: 'SPLIT_DURATION_COHERENCE',
-      path: '/intent/volumeTargets/0',
+      path: '/intent/volumeTargets/bodyParts/0',
       message: 'Volume targets are available to review.',
     }),
     createIssue({

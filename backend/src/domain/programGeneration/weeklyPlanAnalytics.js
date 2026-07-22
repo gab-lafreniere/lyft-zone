@@ -15,11 +15,6 @@ const DIRECT_TAXONOMIES = Object.freeze([
   'muscle_focus',
   'body_part',
 ]);
-const TARGET_RESOLUTION_ORDER = Object.freeze([
-  'muscle_focus',
-  'body_part',
-  'target_muscle',
-]);
 const TAXONOMY_ORDER = Object.freeze([
   ...DIRECT_TAXONOMIES,
   'secondary_muscle',
@@ -258,17 +253,6 @@ function buildProjectionLookup(muscleMetrics) {
   return lookup;
 }
 
-function resolveTargetProjection(area, projectionLookup) {
-  for (const taxonomy of TARGET_RESOLUTION_ORDER) {
-    const entry = projectionLookup.get(projectionId(taxonomy, area));
-    if (entry) {
-      return entry;
-    }
-  }
-
-  return null;
-}
-
 function resolveComparisonStatus(generatedValue, targetValue) {
   if (generatedValue < targetValue) {
     return 'below_target';
@@ -279,18 +263,26 @@ function resolveComparisonStatus(generatedValue, targetValue) {
   return 'within_target';
 }
 
-function buildTargetComparisonItems(targets, projectionLookup, valueKey, targetValueKey) {
+function buildTargetComparisonItems(
+  targets,
+  projectionLookup,
+  taxonomy,
+  valueKey,
+  targetValueKey
+) {
   return toArray(targets)
     .map((target, targetIndex) => {
       const area = normalizeKey(target?.area);
       const targetValue = normalizeFiniteNumber(target?.[targetValueKey]);
-      const projection = area ? resolveTargetProjection(area, projectionLookup) : null;
+      const projection = area
+        ? projectionLookup.get(projectionId(taxonomy, area)) || null
+        : null;
 
       if (!projection || targetValue == null) {
         return {
           targetIndex,
           area,
-          resolvedTaxonomy: null,
+          resolvedTaxonomy: taxonomy,
           targetValue,
           generatedDirectValue: null,
           difference: null,
@@ -347,29 +339,82 @@ function summarizeTargetComparisons(items) {
   return summary;
 }
 
-function buildTargetComparisons(generatedAIOutput, muscleMetrics) {
-  const projectionLookup = buildProjectionLookup(muscleMetrics);
-  const volumeItems = buildTargetComparisonItems(
-    generatedAIOutput?.volumeTargets?.perMuscle,
-    projectionLookup,
-    'directWorkingSets',
-    'targetSetsPerWeek'
+function combineTargetComparisonSummaries(groups) {
+  return Object.values(groups).reduce(
+    (overall, group) => {
+      Object.keys(overall).forEach((key) => {
+        overall[key] += group.summary[key];
+      });
+      return overall;
+    },
+    summarizeTargetComparisons([])
   );
-  const frequencyItems = buildTargetComparisonItems(
-    generatedAIOutput?.frequencyTargets?.perMuscle,
+}
+
+function buildExplicitTargetComparisonGroup({
+  targets,
+  projectionLookup,
+  taxonomy,
+  valueKey,
+  targetValueKey,
+}) {
+  const items = buildTargetComparisonItems(
+    targets,
     projectionLookup,
-    'directWorkoutCount',
-    'targetSessionsPerWeek'
+    taxonomy,
+    valueKey,
+    targetValueKey
   );
 
   return {
+    items,
+    summary: summarizeTargetComparisons(items),
+  };
+}
+
+function buildTargetComparisons(generatedAIOutput, muscleMetrics) {
+  const projectionLookup = buildProjectionLookup(muscleMetrics);
+  const volume = {
+    bodyParts: buildExplicitTargetComparisonGroup({
+      targets: generatedAIOutput?.volumeTargets?.bodyParts,
+      projectionLookup,
+      taxonomy: 'body_part',
+      valueKey: 'directWorkingSets',
+      targetValueKey: 'targetSetsPerWeek',
+    }),
+    muscleFocuses: buildExplicitTargetComparisonGroup({
+      targets: generatedAIOutput?.volumeTargets?.muscleFocuses,
+      projectionLookup,
+      taxonomy: 'muscle_focus',
+      valueKey: 'directWorkingSets',
+      targetValueKey: 'targetSetsPerWeek',
+    }),
+  };
+  const frequency = {
+    bodyParts: buildExplicitTargetComparisonGroup({
+      targets: generatedAIOutput?.frequencyTargets?.bodyParts,
+      projectionLookup,
+      taxonomy: 'body_part',
+      valueKey: 'directWorkoutCount',
+      targetValueKey: 'targetSessionsPerWeek',
+    }),
+    muscleFocuses: buildExplicitTargetComparisonGroup({
+      targets: generatedAIOutput?.frequencyTargets?.muscleFocuses,
+      projectionLookup,
+      taxonomy: 'muscle_focus',
+      valueKey: 'directWorkoutCount',
+      targetValueKey: 'targetSessionsPerWeek',
+    }),
+  };
+
+  return {
     volume: {
-      items: volumeItems,
-      summary: summarizeTargetComparisons(volumeItems),
+      ...volume,
+      overallSummary: combineTargetComparisonSummaries(volume),
     },
     frequency: {
-      items: frequencyItems,
-      summary: summarizeTargetComparisons(frequencyItems),
+      ...frequency,
+      overallSummary: combineTargetComparisonSummaries(frequency),
     },
   };
 }
@@ -703,6 +748,8 @@ function calculateWeeklyPlanAnalytics({
 }
 
 function buildWeeklyPlanAnalyticsAuditSummary(analytics) {
+  const volumeComparisons = analytics?.targetComparisons?.volume;
+  const frequencyComparisons = analytics?.targetComparisons?.frequency;
   if (
     !analytics ||
     typeof analytics !== 'object' ||
@@ -710,7 +757,13 @@ function buildWeeklyPlanAnalyticsAuditSummary(analytics) {
     !hasCanonicalEvaluationPolicyIdentity(analytics.evaluationPolicy) ||
     !analytics.plan ||
     !analytics.metadataCoverage ||
-    !analytics.targetComparisons
+    !analytics.targetComparisons ||
+    !volumeComparisons?.bodyParts?.summary ||
+    !volumeComparisons?.muscleFocuses?.summary ||
+    !volumeComparisons?.overallSummary ||
+    !frequencyComparisons?.bodyParts?.summary ||
+    !frequencyComparisons?.muscleFocuses?.summary ||
+    !frequencyComparisons?.overallSummary
   ) {
     throw new WeeklyPlanAnalyticsError(
       'INVALID_WEEKLY_PLAN_ANALYTICS',
@@ -767,8 +820,28 @@ function buildWeeklyPlanAnalyticsAuditSummary(analytics) {
       unresolvedExerciseCount: toArray(metadataCoverage.unresolvedExerciseIds).length,
     },
     targetComparisons: {
-      volume: { ...analytics.targetComparisons.volume.summary },
-      frequency: { ...analytics.targetComparisons.frequency.summary },
+      volume: {
+        bodyParts: {
+          ...volumeComparisons.bodyParts.summary,
+        },
+        muscleFocuses: {
+          ...volumeComparisons.muscleFocuses.summary,
+        },
+        overallSummary: {
+          ...volumeComparisons.overallSummary,
+        },
+      },
+      frequency: {
+        bodyParts: {
+          ...frequencyComparisons.bodyParts.summary,
+        },
+        muscleFocuses: {
+          ...frequencyComparisons.muscleFocuses.summary,
+        },
+        overallSummary: {
+          ...frequencyComparisons.overallSummary,
+        },
+      },
     },
   };
 }

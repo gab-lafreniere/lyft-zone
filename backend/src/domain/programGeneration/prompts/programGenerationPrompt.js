@@ -11,7 +11,7 @@ const {
 } = require('../programGenerationPromptInputBuilder');
 
 const PROGRAM_GENERATION_PROMPT_VERSION =
-  'ai-weekly-plan-builder-prompt-v1.2.1';
+  'ai-weekly-plan-builder-prompt-v1.3.0';
 
 class ProgramGenerationPromptError extends Error {
   constructor(code, message) {
@@ -350,6 +350,11 @@ function buildProgramGenerationPrompt({ doctrine, context } = {}) {
     '- A model-declared estimatedDurationMinutes is only an estimate and never replaces the backend-calculated duration.',
     '- Choose sets, repetitions, tempos, rest periods and block structure so each workout is realistically likely to fall within a non-correction duration band.',
     '- After designing the program, make volumeTargets and frequencyTargets accurately describe the plan actually produced when evaluated under evaluationPolicy.',
+    '- volumeTargets.bodyParts and frequencyTargets.bodyParts use only exact canonical bodyParts values supplied in the eligible exercise metadata.',
+    '- volumeTargets.muscleFocuses and frequencyTargets.muscleFocuses use only exact canonical muscleFocus values supplied in the eligible exercise metadata.',
+    '- Target set counts must equal direct WORKING sets, counted in full for every matching bodyParts or muscleFocus value; target session counts must equal distinct workouts with at least one direct WORKING set for that value.',
+    '- targetMuscles and muscleContributions are anatomical coaching signals only and must never be used as target area keys or to calculate direct target values.',
+    '- Never invent a target area that is absent from the canonical bodyParts or muscleFocus values supplied in the eligible exercise pool.',
     '- Use only exact muscle keys available in the supplied exercise metadata.',
     '',
     'Required output consistency:',

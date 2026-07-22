@@ -135,12 +135,12 @@ function parseEligiblePool(userMessage) {
   return JSON.parse(userMessage.slice(start + marker.length));
 }
 
-test('buildProgramGenerationPrompt preserves the V1.2.1 coach role and injects the exact classic runtime once', () => {
+test('buildProgramGenerationPrompt preserves the V1.3.0 coach role and injects the exact classic runtime once', () => {
   const doctrine = loadWeeklyPlanBuilderDoctrine();
   const context = createContext();
   const prompt = buildProgramGenerationPrompt({ doctrine, context });
 
-  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.2.1');
+  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.3.0');
   assert.match(prompt.systemMessage, /lead bodybuilding and hypertrophy coach/);
   assert.match(prompt.systemMessage, /IFBB-caliber programming expertise/);
   assert.match(prompt.systemMessage, /natural lifters/);
@@ -172,7 +172,7 @@ test('system instructions retain approximate-duration coaching and output consis
     context: createContext(),
   });
 
-  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.2.1');
+  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.3.0');
   assert.match(prompt.systemMessage, /Evaluation policy behavior:/);
   assert.match(prompt.systemMessage, /compact duration guidance derived from evaluationPolicy/);
   assert.match(prompt.systemMessage, /approximate session capacity, not an exact minute requirement/);
@@ -182,7 +182,11 @@ test('system instructions retain approximate-duration coaching and output consis
   assert.match(prompt.systemMessage, /estimatedDurationMinutes is only an estimate/);
   assert.match(prompt.systemMessage, /non-correction duration band/);
   assert.match(prompt.systemMessage, /volumeTargets and frequencyTargets/);
-  assert.match(prompt.systemMessage, /exact muscle keys/);
+  assert.match(prompt.systemMessage, /exact canonical bodyParts values/);
+  assert.match(prompt.systemMessage, /exact canonical muscleFocus values/);
+  assert.match(prompt.systemMessage, /direct WORKING sets/);
+  assert.match(prompt.systemMessage, /distinct workouts with at least one direct WORKING set/);
+  assert.match(prompt.systemMessage, /targetMuscles and muscleContributions are anatomical coaching signals only/);
   assert.match(prompt.systemMessage, /Required output consistency:/);
   assert.match(prompt.systemMessage, /sessionsPerWeek must equal workouts\.length/);
   assert.match(prompt.systemMessage, /orderIndex and setIndex start at 1/);
@@ -461,8 +465,8 @@ test('prompt construction is deterministic, compact, and does not mutate context
   assert.ok(first.userMessage.length < legacyUserMessage.length);
   assert.doesNotMatch(first.systemMessage, /"additionalProperties"/);
   assert.doesNotMatch(first.systemMessage, /"\$schema"/);
-  assert.equal(AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION, 1);
-  assert.equal(AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION, 1);
+  assert.equal(AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION, 2);
+  assert.equal(AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION, 2);
 });
 
 test('prompt rejects obsolete or structurally incomplete contexts with the controlled prompt error', () => {

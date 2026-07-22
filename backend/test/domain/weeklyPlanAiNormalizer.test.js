@@ -62,7 +62,7 @@ function createCardioExercise(overrides = {}) {
 
 function createAIOutput() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     planName: 'AI Draft',
     sessionsPerWeek: 1,
     strategySummary: 'Simple full body plan.',
@@ -105,10 +105,12 @@ function createAIOutput() {
       },
     ],
     volumeTargets: {
-      perMuscle: [],
+      bodyParts: [],
+      muscleFocuses: [],
     },
     frequencyTargets: {
-      perMuscle: [],
+      bodyParts: [],
+      muscleFocuses: [],
     },
     progressionModel: {
       type: 'double_progression',
@@ -204,8 +206,8 @@ test('normalizeWeeklyPlanAiOutput prefers canonical pool metadata when available
 test('buildWeeklyPlanAiGenerationMetadata extracts audit fields without raw output', () => {
   const metadata = buildWeeklyPlanAiGenerationMetadata(createAIOutput());
 
-  assert.equal(metadata.aiContractVersion, 1);
-  assert.equal(metadata.aiOutputSchemaVersion, 1);
+  assert.equal(metadata.aiContractVersion, 2);
+  assert.equal(metadata.aiOutputSchemaVersion, 2);
   assert.equal(metadata.strategySummary, 'Simple full body plan.');
   assert.equal(metadata.splitType, 'full_body');
   assert.equal(metadata.workouts, undefined);

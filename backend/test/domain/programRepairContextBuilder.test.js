@@ -298,10 +298,10 @@ test('ProgramGenerationContext V4 and canonical Evaluation Policy V1 are require
   );
 });
 
-test('Generated AI Output V1 and the prepared plan document are required', () => {
+test('Generated AI Output V2 and the prepared plan document are required', () => {
   const cases = [
     createInput({ generatedAIOutput: null }),
-    createInput({ generatedAIOutput: createGeneratedAIOutput({ schemaVersion: 2 }) }),
+    createInput({ generatedAIOutput: createGeneratedAIOutput({ schemaVersion: 1 }) }),
     createInput({ generatedAIOutput: createGeneratedAIOutput({ workouts: null }) }),
     createInput({ generatedPlanDocument: null }),
     createInput({ generatedPlanDocument: createGeneratedPlanDocument({ workouts: null }) }),

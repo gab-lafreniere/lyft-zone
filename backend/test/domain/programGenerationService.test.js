@@ -247,7 +247,7 @@ function clone(value) {
 
 function createGeneratedAIOutput(overrides = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     planName: 'AI Output Draft',
     sessionsPerWeek: 1,
     strategySummary: 'Simple upper session generated from AI output.',
@@ -293,10 +293,12 @@ function createGeneratedAIOutput(overrides = {}) {
       },
     ],
     volumeTargets: {
-      perMuscle: [],
+      bodyParts: [],
+      muscleFocuses: [],
     },
     frequencyTargets: {
-      perMuscle: [],
+      bodyParts: [],
+      muscleFocuses: [],
     },
     progressionModel: {
       type: 'double_progression',
@@ -900,12 +902,12 @@ test('createAIWeeklyPlanDraft creates an AI draft from a valid mock generated do
   );
   assert.equal(
     createPayload.generationContext.validationSummary.analytics.targetComparisons.volume
-      .targetCount,
+      .overallSummary.targetCount,
     0
   );
   assert.equal(
     createPayload.generationContext.validationSummary.analytics.targetComparisons.frequency
-      .targetCount,
+      .overallSummary.targetCount,
     0
   );
   const persistedAudit = JSON.stringify(createPayload.generationContext);
@@ -951,8 +953,8 @@ test('createAIWeeklyPlanDraft creates an AI draft from valid generatedAIOutput',
   assert.equal(createPayload.name, 'AI Output Draft');
   assert.equal(createPayload.source, 'ai');
   assert.equal(createPayload.workouts[0].blocks[0].blockType, 'SINGLE');
-  assert.equal(createPayload.generationContext.aiContractVersion, 1);
-  assert.equal(createPayload.generationContext.aiOutputSchemaVersion, 1);
+  assert.equal(createPayload.generationContext.aiContractVersion, 2);
+  assert.equal(createPayload.generationContext.aiOutputSchemaVersion, 2);
   assert.equal(
     createPayload.generationContext.strategySummary,
     'Simple upper session generated from AI output.'
@@ -1453,13 +1455,15 @@ test('createAIWeeklyPlanDraft maps Audit V7 policy identity failures before pers
 test('createAIWeeklyPlanDraft persists below and above target analytics', async () => {
   const generatedAIOutput = createGeneratedAIOutput({
     volumeTargets: {
-      perMuscle: [
+      muscleFocuses: [
         {
           area: 'upper_chest',
           targetSetsPerWeek: 2,
           priority: 'primary',
           rationale: null,
         },
+      ],
+      bodyParts: [
         {
           area: 'chest',
           targetSetsPerWeek: 0,
@@ -1501,12 +1505,12 @@ test('createAIWeeklyPlanDraft persists below and above target analytics', async 
   assert.equal(createPayload.generationContext.validationSummary.analytics.status, 'complete');
   assert.equal(
     createPayload.generationContext.validationSummary.analytics.targetComparisons.volume
-      .belowTargetCount,
+      .overallSummary.belowTargetCount,
     1
   );
   assert.equal(
     createPayload.generationContext.validationSummary.analytics.targetComparisons.volume
-      .aboveTargetCount,
+      .overallSummary.aboveTargetCount,
     1
   );
 });
@@ -1953,7 +1957,7 @@ test('createAIWeeklyPlanDraft reviews legacy, mock AI output, and provider AI ou
       assert.equal(createCalled, true);
       assert.ok(reviewInput);
       if (entry.expectedAIOutput === 'mock') {
-        assert.equal(reviewInput.generatedAIOutput.schemaVersion, 1);
+        assert.equal(reviewInput.generatedAIOutput.schemaVersion, 2);
       } else {
         assert.strictEqual(reviewInput.generatedAIOutput, entry.expectedAIOutput);
       }
@@ -2582,8 +2586,8 @@ test('malformed repair results fail before repaired validation and persistence',
     null,
     { ...createRepairResult(), attemptNumber: 2 },
     { ...createRepairResult(), promptVersion: 'wrong-prompt' },
-    { ...createRepairResult(), contractVersion: 2 },
-    { ...createRepairResult(), outputSchemaVersion: 2 },
+    { ...createRepairResult(), contractVersion: 999 },
+    { ...createRepairResult(), outputSchemaVersion: 999 },
     { ...createRepairResult(), repairedAIOutput: null },
     {
       ...createRepairResult(),

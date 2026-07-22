@@ -360,7 +360,13 @@ export function ManualProgramProvider({ children }) {
       }));
       throw error;
     }
-  }, [draftMetadata, programDraft]);
+  }, [
+    draftMetadata.lastPersistedSignature,
+    draftMetadata.loadedFromBackend,
+    draftMetadata.weeklyPlanParentId,
+    draftMetadata.weeklyPlanVersionId,
+    programDraft,
+  ]);
 
   useEffect(() => {
     if (
