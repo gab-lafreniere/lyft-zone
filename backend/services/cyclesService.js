@@ -1093,8 +1093,27 @@ function pickVisiblePlan(plans = []) {
   return pickLatestPublished(plans) || pickLatestDraft(plans);
 }
 
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+  ) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
 function createComparableWorkout(workout) {
-  return JSON.stringify({
+  return stableStringify({
     name: workout.name,
     orderIndex: workout.orderIndex,
     scheduledDay: workout.scheduledDay || null,
@@ -4249,6 +4268,7 @@ module.exports = {
   openOrCreateCycleEditDraft,
   publishCycleDraft,
   rescheduleUpcomingCycle,
+  stableStringify,
   updateCycleDraft,
   updateUpcomingDraftTimeline,
 };
