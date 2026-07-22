@@ -211,14 +211,14 @@ function collectKeys(value, keys = []) {
   return keys;
 }
 
-test('buildProgramGenerationPromptInput projects a compact V1 athlete brief and canonical 30-minute ranges', () => {
+test('buildProgramGenerationPromptInput projects a compact V2 athlete brief, Training Metrics Guidance, and canonical 30-minute ranges', () => {
   const input = buildProgramGenerationPromptInput(createContext());
 
   assert.equal(
     PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION,
-    1
+    2
   );
-  assert.equal(input.schemaVersion, 1);
+  assert.equal(input.schemaVersion, 2);
   assert.equal(input.athleteBrief.primaryGoal, 'HYPERTROPHY');
   assert.equal(input.athleteBrief.experience, 'intermediate');
   assert.deepEqual(input.athleteBrief.trainingSchedule, {
@@ -249,6 +249,21 @@ test('buildProgramGenerationPromptInput projects a compact V1 athlete brief and 
     cautionJointStressTags: ['shoulder_load'],
   });
   assert.equal(input.athleteBrief.physicalNotes, 'Keep setup changes simple.');
+  assert.equal(input.trainingMetricsGuidance.schemaVersion, 1);
+  assert.equal(
+    input.trainingMetricsGuidance.duration.methodId,
+    'historical_weekly_plan_metrics_v1'
+  );
+  assert.deepEqual(input.trainingMetricsGuidance.duration.ranges, {
+    requestedMinutes: 30,
+    acceptableMinutes: { minimum: 26, maximum: 31 },
+    preferredMinutes: { minimum: 27, maximum: 30 },
+  });
+  assert.equal(
+    input.trainingMetricsGuidance.duration.declaredDuration
+      .contributesToBackendDuration,
+    false
+  );
 });
 
 test('muscle contributions use canonical activation weights, primary precedence, null fallback, and exact diagnostics', () => {
@@ -503,6 +518,13 @@ test('projection is deterministic, owns its arrays and objects, and never mutate
 
   first.eligibleExercisePool[0].bodyParts.push('projection_only');
   assert.deepEqual(firstContext.exercisePoolItems[0].bodyParts, ['chest']);
+  first.trainingMetricsGuidance.duration.repetitions.valuePrecedence.push(
+    'projection_only'
+  );
+  assert.deepEqual(
+    firstContext.evaluationPolicy.duration.calculation.repetitions.valuePrecedence,
+    ['targetReps', 'maxReps', 'minReps', 'zero']
+  );
 });
 
 test('builder requires ProgramGenerationContext V4, canonical policy, availability, and pool items', () => {

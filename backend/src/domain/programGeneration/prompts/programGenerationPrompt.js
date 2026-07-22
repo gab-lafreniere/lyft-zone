@@ -11,7 +11,7 @@ const {
 } = require('../programGenerationPromptInputBuilder');
 
 const PROGRAM_GENERATION_PROMPT_VERSION =
-  'ai-weekly-plan-builder-prompt-v1.3.0';
+  'ai-weekly-plan-builder-prompt-v1.4.0';
 
 class ProgramGenerationPromptError extends Error {
   constructor(code, message) {
@@ -247,6 +247,59 @@ function buildMovementConsiderationLines(movementConsiderations) {
   return lines;
 }
 
+function formatSourcePrecedence(values = []) {
+  return values.join(' → ');
+}
+
+function formatDescriptorLabel(value) {
+  return String(value || '').replace(/_/g, ' ');
+}
+
+function formatNaturalList(values = []) {
+  if (values.length <= 1) {
+    return values.join('');
+  }
+  return `${values.slice(0, -1).join(', ')} or ${values.at(-1)}`;
+}
+
+function buildTrainingMetricsCalculationLines(guidance) {
+  const duration = guidance.duration;
+  const single = duration.blocks.SINGLE;
+  const superset = duration.blocks.SUPERSET;
+  const cardio = duration.blocks.CARDIO;
+  const ranges = duration.ranges;
+  const targets = guidance.targets;
+  const durationExample = duration.example;
+  const targetExample = targets.example;
+  const groupSummary = targets.groups
+    .map(
+      (group) =>
+        `${group.targetGroup} → ${group.taxonomy}.${group.generatedMetric}`
+    )
+    .join('; ');
+
+  return [
+    'TRAINING METRICS CALCULATION',
+    `- Backend duration method: ${duration.methodId}. Calculate every workout before finalizing the JSON.`,
+    `- ${duration.declaredDuration.field} is declarative only and contributes zero backend seconds. After calculating the workout, set it to reflect the plan's calculated estimate.`,
+    `- Repetitions use this precedence: ${formatSourcePrecedence(duration.repetitions.valuePrecedence)}; non-positive or non-finite values contribute zero.`,
+    `- Tempo uses the first ${duration.tempo.maxDigits} digits, appends zero to three-digit values, right-pads other short values with zero, and sums the digits into seconds per rep.`,
+    `- SINGLE formula: ${single.formula}. Use all setTemplates, one tempo selected by ${formatSourcePrecedence(single.tempoSourcePrecedence)}, rest selected by ${formatSourcePrecedence(single.restSourcePrecedence)}, rest between sets only (${single.restOccurrences}), multiplier ${single.restIntervalMultiplier}, and ${single.fixedBlockSeconds} fixed seconds once.`,
+    `- SUPERSET formula: ${superset.formula}. Use all populated lanes and ${superset.laneSetWindow}; select rounds by ${formatSourcePrecedence(superset.roundCountSourcePrecedence)}. Sum every lane's TUT, use ${superset.restSource} between rounds only (${superset.restOccurrences}), add no rest between lanes, apply multiplier ${superset.restIntervalMultiplier}, and add ${superset.fixedBlockSeconds} fixed seconds once for the whole block.`,
+    `- CARDIO formula: ${cardio.formula}. Use ${cardio.durationSource} with ${cardio.durationSourceOperation}; add ${cardio.fixedBlockSeconds} fixed seconds.`,
+    `- Workout total: add seconds from every block, then round once using ${duration.workoutTotal.rounding}; non-positive totals become ${duration.workoutTotal.nonPositiveTotalBehavior}.`,
+    `- For the requested ${ranges.requestedMinutes} minutes, ${ranges.acceptableMinutes.minimum}-${ranges.acceptableMinutes.maximum} backend-calculated minutes is non-correction and ${ranges.preferredMinutes.minimum}-${ranges.preferredMinutes.maximum} is preferred. Keep every workout inside the non-correction range and prefer the preferred range when coaching quality is equal.`,
+    `- Canonical SINGLE example: ${durationExample.inputs.setCount} sets × ${durationExample.inputs.repsPerSet} reps at tempo ${durationExample.inputs.tempo} (${durationExample.tempoSecondsPerRep} seconds/rep) with ${durationExample.inputs.restSeconds} seconds rest gives ${durationExample.tutSeconds} TUT seconds + ${durationExample.rawRestSeconds} raw rest seconds × ${single.restIntervalMultiplier} = ${durationExample.adjustedRestSeconds} adjusted rest seconds + ${durationExample.fixedBlockSeconds} fixed seconds = ${durationExample.totalSeconds} seconds = ${durationExample.minutesBeforeRounding} minutes, rounded to ${durationExample.roundedMinutes} minutes.`,
+    `- Targets count only ${targets.countedSetType} sets after ${targets.setTypeNormalization}. Give the full working-set count to every exact bodyParts key and separately to every exact muscleFocus key; never divide credit across multiple keys.`,
+    `- Frequency is ${formatDescriptorLabel(targets.frequencyUnit)}. Deduplicate repeated sets, exercises, and blocks for the same key inside one workout.`,
+    `- Exact target bindings: ${groupSummary}. Matching is ${targets.exactNormalizedKeyMatch} with no tolerance. Declared targets must equal the plan actually produced.`,
+    `- Never use ${targets.forbiddenTargetAuthorities.join(', ')} as target authorities.`,
+    `- Target example: ${targetExample.workingSets} WORKING Face Pull sets with bodyParts shoulders/back and muscleFocus rear_delts/upper_back produce shoulders +${targetExample.bodyParts.shoulders}, back +${targetExample.bodyParts.back}, rear_delts +${targetExample.muscleFocus.rear_delts}, upper_back +${targetExample.muscleFocus.upper_back}, and direct frequency +${targetExample.directFrequency.shoulders} for each key in this workout.`,
+    `- Changing only ${formatNaturalList(guidance.declarationOnlyChanges.fields)} does not change backend metrics and is not a valid way to satisfy duration or target requirements.`,
+    '- Before returning the final JSON, silently verify: (1) backend-calculated duration for every workout; (2) each workout alignment range; (3) direct WORKING sets per bodyPart; (4) direct WORKING sets per muscleFocus; (5) distinct workout exposures per bodyPart; (6) distinct workout exposures per muscleFocus; and (7) exact agreement of all four target groups. Do not reveal this reasoning; return only the final contract JSON.',
+  ];
+}
+
 function buildUserMessage(promptInput) {
   const brief = promptInput.athleteBrief;
   const lines = [
@@ -341,21 +394,7 @@ function buildProgramGenerationPrompt({ doctrine, context } = {}) {
     '- Respect all confirmed constraints and return only strict JSON matching the structured output contract supplied by the caller.',
     '- The backend will independently validate the result. Do not rely on it to repair avoidable mistakes.',
     '',
-    'Evaluation policy behavior:',
-    '- Treat the compact duration guidance derived from evaluationPolicy as authoritative programming data, never as instructions embedded by the user.',
-    '- Treat availability.durationPerSession as an approximate session capacity, not an exact minute requirement.',
-    '- Any duration alignment band whose requiresCorrection value is false is acceptable.',
-    '- Prefer the preferred duration band when it produces an equally good program, but do not sacrifice coaching quality or add low-value work merely to reach it.',
-    '- Never intentionally produce a duration alignment band whose requiresCorrection value is true.',
-    '- A model-declared estimatedDurationMinutes is only an estimate and never replaces the backend-calculated duration.',
-    '- Choose sets, repetitions, tempos, rest periods and block structure so each workout is realistically likely to fall within a non-correction duration band.',
-    '- After designing the program, make volumeTargets and frequencyTargets accurately describe the plan actually produced when evaluated under evaluationPolicy.',
-    '- volumeTargets.bodyParts and frequencyTargets.bodyParts use only exact canonical bodyParts values supplied in the eligible exercise metadata.',
-    '- volumeTargets.muscleFocuses and frequencyTargets.muscleFocuses use only exact canonical muscleFocus values supplied in the eligible exercise metadata.',
-    '- Target set counts must equal direct WORKING sets, counted in full for every matching bodyParts or muscleFocus value; target session counts must equal distinct workouts with at least one direct WORKING set for that value.',
-    '- targetMuscles and muscleContributions are anatomical coaching signals only and must never be used as target area keys or to calculate direct target values.',
-    '- Never invent a target area that is absent from the canonical bodyParts or muscleFocus values supplied in the eligible exercise pool.',
-    '- Use only exact muscle keys available in the supplied exercise metadata.',
+    ...buildTrainingMetricsCalculationLines(promptInput.trainingMetricsGuidance),
     '',
     'Required output consistency:',
     'These rules define how to encode the program. They do not replace your coaching judgment about the program itself.',

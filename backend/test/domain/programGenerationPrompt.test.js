@@ -135,12 +135,12 @@ function parseEligiblePool(userMessage) {
   return JSON.parse(userMessage.slice(start + marker.length));
 }
 
-test('buildProgramGenerationPrompt preserves the V1.3.0 coach role and injects the exact classic runtime once', () => {
+test('buildProgramGenerationPrompt preserves the V1.4.0 coach role and injects the exact classic runtime once', () => {
   const doctrine = loadWeeklyPlanBuilderDoctrine();
   const context = createContext();
   const prompt = buildProgramGenerationPrompt({ doctrine, context });
 
-  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.3.0');
+  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.4.0');
   assert.match(prompt.systemMessage, /lead bodybuilding and hypertrophy coach/);
   assert.match(prompt.systemMessage, /IFBB-caliber programming expertise/);
   assert.match(prompt.systemMessage, /natural lifters/);
@@ -166,27 +166,35 @@ test('buildProgramGenerationPrompt preserves the V1.3.0 coach role and injects t
   assert.doesNotMatch(combinedPrompt, /# Lyft Zone Bodybuilding Doctrine\n/);
 });
 
-test('system instructions retain approximate-duration coaching and output consistency without embedding the schema', () => {
+test('system instructions render Training Metrics Guidance exactly once with duration, targets, calibration, and silent verification', () => {
   const prompt = buildProgramGenerationPrompt({
     doctrine: MOCK_DOCTRINE,
     context: createContext(),
   });
 
-  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.3.0');
-  assert.match(prompt.systemMessage, /Evaluation policy behavior:/);
-  assert.match(prompt.systemMessage, /compact duration guidance derived from evaluationPolicy/);
-  assert.match(prompt.systemMessage, /approximate session capacity, not an exact minute requirement/);
-  assert.match(prompt.systemMessage, /requiresCorrection value is false is acceptable/);
-  assert.match(prompt.systemMessage, /do not sacrifice coaching quality or add low-value work/);
-  assert.match(prompt.systemMessage, /requiresCorrection value is true/);
-  assert.match(prompt.systemMessage, /estimatedDurationMinutes is only an estimate/);
-  assert.match(prompt.systemMessage, /non-correction duration band/);
-  assert.match(prompt.systemMessage, /volumeTargets and frequencyTargets/);
-  assert.match(prompt.systemMessage, /exact canonical bodyParts values/);
-  assert.match(prompt.systemMessage, /exact canonical muscleFocus values/);
-  assert.match(prompt.systemMessage, /direct WORKING sets/);
-  assert.match(prompt.systemMessage, /distinct workouts with at least one direct WORKING set/);
-  assert.match(prompt.systemMessage, /targetMuscles and muscleContributions are anatomical coaching signals only/);
+  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.4.0');
+  assert.equal(
+    prompt.systemMessage.split('TRAINING METRICS CALCULATION').length - 1,
+    1
+  );
+  assert.equal(prompt.userMessage.includes('TRAINING METRICS CALCULATION'), false);
+  assert.match(prompt.systemMessage, /SINGLE formula: tutSeconds/);
+  assert.match(prompt.systemMessage, /SUPERSET formula: allLaneTutSeconds/);
+  assert.match(prompt.systemMessage, /CARDIO formula: truncatedDurationMinutes/);
+  assert.match(prompt.systemMessage, /multiplier 1\.15/);
+  assert.match(prompt.systemMessage, /90 fixed seconds once/);
+  assert.match(prompt.systemMessage, /estimatedDurationMinutes is declarative only and contributes zero backend seconds/);
+  assert.match(prompt.systemMessage, /Changing only estimatedDurationMinutes, planName, focus, strategySummary, rationales or other prose does not change backend metrics/);
+  assert.match(prompt.systemMessage, /Targets count only WORKING sets/);
+  assert.match(prompt.systemMessage, /full working-set count to every exact bodyParts key/);
+  assert.match(prompt.systemMessage, /separately to every exact muscleFocus key/);
+  assert.match(prompt.systemMessage, /never divide credit across multiple keys/);
+  assert.match(prompt.systemMessage, /Frequency is distinct workouts/);
+  assert.match(prompt.systemMessage, /Deduplicate repeated sets, exercises, and blocks/);
+  assert.match(prompt.systemMessage, /targetMuscles, secondaryMuscles, muscleActivation, normalizedShare/);
+  assert.match(prompt.systemMessage, /531 seconds = 8\.85 minutes, rounded to 9 minutes/);
+  assert.match(prompt.systemMessage, /silently verify: \(1\) backend-calculated duration/);
+  assert.match(prompt.systemMessage, /Do not reveal this reasoning; return only the final contract JSON/);
   assert.match(prompt.systemMessage, /Required output consistency:/);
   assert.match(prompt.systemMessage, /sessionsPerWeek must equal workouts\.length/);
   assert.match(prompt.systemMessage, /orderIndex and setIndex start at 1/);
@@ -201,6 +209,7 @@ test('system instructions retain approximate-duration coaching and output consis
   assert.match(prompt.systemMessage, /ceil\(30% of strength exercises\)/);
   assert.doesNotMatch(prompt.systemMessage, /"additionalProperties"/);
   assert.doesNotMatch(prompt.systemMessage, /"\$schema"/);
+  assert.doesNotMatch(prompt.systemMessage, /"evaluationPolicy"/);
 });
 
 test('user message is a readable hybrid brief with derived duration ranges and only the compact pool in JSON', () => {

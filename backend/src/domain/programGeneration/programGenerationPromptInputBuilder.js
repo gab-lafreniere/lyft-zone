@@ -6,13 +6,16 @@ const {
   WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
 } = require('./weeklyPlanEvaluationPolicy');
 const {
+  buildWeeklyPlanTrainingMetricsPromptProjection,
+} = require('./weeklyPlanTrainingMetricsPromptProjection');
+const {
   getParentArea,
   isMicroFocus,
   normalizeAreaName,
 } = require('../trainingProfile/trainingProfileRules');
 const exerciseEnums = require('../../exercise-library/exercise-enums.json');
 
-const PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION = 1;
+const PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION = 2;
 const ALLOWED_ACTIVATION_WEIGHTS = new Set(
   exerciseEnums.muscleActivationValues || []
 );
@@ -119,98 +122,13 @@ function assertProgramGenerationContext(context) {
   }
 }
 
-function ratioMatchesBand(ratio, band = {}) {
-  if (Number.isFinite(band.minInclusive) && ratio < band.minInclusive) {
-    return false;
-  }
-
-  if (Number.isFinite(band.minExclusive) && ratio <= band.minExclusive) {
-    return false;
-  }
-
-  if (Number.isFinite(band.maxInclusive) && ratio > band.maxInclusive) {
-    return false;
-  }
-
-  if (Number.isFinite(band.maxExclusive) && ratio >= band.maxExclusive) {
-    return false;
-  }
-
-  return true;
-}
-
-function getFiniteUpperBound(band = {}) {
-  if (Number.isFinite(band.maxInclusive)) {
-    return band.maxInclusive;
-  }
-
-  if (Number.isFinite(band.maxExclusive)) {
-    return band.maxExclusive;
-  }
-
-  return null;
-}
-
-function buildIntegerRange(values, label) {
-  if (!values.length) {
-    throw invalidContext(`${label} duration range is unavailable`);
-  }
-
-  const minimum = values[0];
-  const maximum = values[values.length - 1];
-  const expectedCount = maximum - minimum + 1;
-
-  if (values.length !== expectedCount) {
-    throw invalidContext(`${label} duration range is not contiguous`);
-  }
-
-  return { minimum, maximum };
-}
-
-function projectTrainingSchedule(context) {
-  const requestedMinutes = context.availability.durationPerSession;
-  const bands = context.evaluationPolicy?.duration?.alignment?.bands;
-
-  if (!Array.isArray(bands) || bands.length === 0) {
-    throw invalidContext('Evaluation Policy duration bands are required');
-  }
-
-  const acceptableBands = bands.filter((band) => band?.requiresCorrection === false);
-  const finiteUpperBounds = acceptableBands
-    .map(getFiniteUpperBound)
-    .filter(Number.isFinite);
-
-  if (
-    acceptableBands.length === 0 ||
-    finiteUpperBounds.length !== acceptableBands.length
-  ) {
-    throw invalidContext('Evaluation Policy non-correction bands must be bounded');
-  }
-
-  const maximumRatio = Math.max(...finiteUpperBounds);
-  const maximumCandidateMinutes = Math.ceil(requestedMinutes * maximumRatio) + 1;
-  const acceptableMinutes = [];
-  const preferredMinutes = [];
-
-  for (let minutes = 0; minutes <= maximumCandidateMinutes; minutes += 1) {
-    const ratio = minutes / requestedMinutes;
-    const matchingBand = acceptableBands.find((band) => ratioMatchesBand(ratio, band));
-
-    if (!matchingBand) {
-      continue;
-    }
-
-    acceptableMinutes.push(minutes);
-    if (matchingBand.status === 'preferred') {
-      preferredMinutes.push(minutes);
-    }
-  }
-
+function projectTrainingSchedule(context, trainingMetricsGuidance) {
+  const ranges = trainingMetricsGuidance.duration.ranges;
   return {
     sessionsPerWeek: context.availability.sessionsPerWeek,
-    approximateDurationMinutes: requestedMinutes,
-    acceptableDurationMinutes: buildIntegerRange(acceptableMinutes, 'Acceptable'),
-    preferredDurationMinutes: buildIntegerRange(preferredMinutes, 'Preferred'),
+    approximateDurationMinutes: ranges.requestedMinutes,
+    acceptableDurationMinutes: { ...ranges.acceptableMinutes },
+    preferredDurationMinutes: { ...ranges.preferredMinutes },
   };
 }
 
@@ -466,6 +384,16 @@ function projectExercisePool(items) {
 function buildProjectionResult(context) {
   assertProgramGenerationContext(context);
 
+  let trainingMetricsGuidance;
+  try {
+    trainingMetricsGuidance = buildWeeklyPlanTrainingMetricsPromptProjection({
+      requestedDurationMinutes: context.availability.durationPerSession,
+      evaluationPolicy: context.evaluationPolicy,
+    });
+  } catch (_error) {
+    throw invalidContext('Canonical Training Metrics Guidance is invalid');
+  }
+
   const athleteBrief = {};
   const musclePriorities = projectMusclePriorities(context.musclePriorityProfile);
   const exercisePreference = projectExercisePreference(context.equipmentContext);
@@ -479,7 +407,10 @@ function buildProjectionResult(context) {
 
   assignNonEmpty(athleteBrief, 'primaryGoal', context.primaryGoal);
   assignNonEmpty(athleteBrief, 'experience', context.experience);
-  athleteBrief.trainingSchedule = projectTrainingSchedule(context);
+  athleteBrief.trainingSchedule = projectTrainingSchedule(
+    context,
+    trainingMetricsGuidance
+  );
   assignNonEmpty(athleteBrief, 'musclePriorities', musclePriorities);
   assignNonEmpty(athleteBrief, 'exercisePreference', exercisePreference);
   assignNonEmpty(athleteBrief, 'cardio', cardio);
@@ -490,6 +421,7 @@ function buildProjectionResult(context) {
     promptInput: {
       schemaVersion: PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION,
       athleteBrief,
+      trainingMetricsGuidance,
       eligibleExercisePool: poolProjection.exercises,
     },
     muscleContributionDiagnostics: poolProjection.diagnostics,
