@@ -212,12 +212,12 @@ const DYNAMIC_PROMPT_CASES = [
   },
 ];
 
-test('buildProgramGenerationPrompt V1.5.0 preserves the coach role and injects the exact classic runtime once', () => {
+test('buildProgramGenerationPrompt V1.5.1 preserves the coach role and injects the exact classic runtime once', () => {
   const doctrine = loadWeeklyPlanBuilderDoctrine();
   const context = createContext();
   const prompt = buildProgramGenerationPrompt({ doctrine, context });
 
-  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.5.0');
+  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.5.1');
   assert.match(prompt.systemMessage, /lead bodybuilding and hypertrophy coach/);
   assert.match(prompt.systemMessage, /IFBB-caliber programming expertise/);
   assert.match(prompt.systemMessage, /natural lifters/);
@@ -250,14 +250,14 @@ test('system instructions render procedural Training Metrics Guidance V2 exactly
   });
   const section = extractTrainingMetricsSection(prompt.systemMessage);
 
-  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.5.0');
+  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.5.1');
   assert.equal(
     prompt.systemMessage.split('TRAINING METRICS CALCULATION').length - 1,
     1
   );
   assert.equal(prompt.userMessage.includes('TRAINING METRICS CALCULATION'), false);
-  assert.ok(section.length <= 6800, `metrics section has ${section.length} characters`);
-  assert.ok(section.length <= 6750, `metrics section engineering target missed at ${section.length} characters`);
+  assert.ok(section.length <= 7000, `metrics section has ${section.length} characters`);
+  assert.ok(section.length <= 6900, `metrics section engineering target missed at ${section.length} characters`);
   [
     '1. BACKEND WORKOUT DURATION',
     '2. READ REPETITIONS',
@@ -269,6 +269,7 @@ test('system instructions render procedural Training Metrics Guidance V2 exactly
     '8. CALCULATE A CARDIO BLOCK',
     '9. CALCULATE THE WORKOUT TOTAL',
     '10. COMPARE WITH THE SCHEDULE',
+    '10A. BACKEND DURATION AS A DESIGN CONSTRAINT',
     '11. SINGLE EXAMPLE',
     '12. REFERENCE SUPERSET MODULE',
     '13. WORKOUT ARITHMETIC FOR THIS 30-MINUTE REQUEST',
@@ -276,8 +277,8 @@ test('system instructions render procedural Training Metrics Guidance V2 exactly
     '15. LYFT ZONE REPORTING VOLUME',
     '16. FINAL PRIVATE CHECKSUM',
   ].forEach((heading) => assert.ok(section.includes(heading), heading));
-  assert.match(section, /Movement time \(Time Under Tension or TUT in backend metrics\) is a deterministic seconds estimate/);
-  assert.match(section, /not a physiological measure of muscular tension, effort, stimulus or hypertrophy/);
+  assert.match(section, /Movement time \(backend TUT\) is deterministic seconds/);
+  assert.match(section, /not physiological muscular tension, effort, stimulus or hypertrophy/);
   assert.match(section, /Tempo 3010 means 3 \+ 0 \+ 1 \+ 0 = 4 seconds per repetition/);
   assert.match(section, /8 reps at tempo 3010 with 150 seconds rest/);
   assert.match(section, /32 seconds per set; 96 movement seconds/);
@@ -322,18 +323,41 @@ test('system instructions render procedural Training Metrics Guidance V2 exactly
   assert.match(section, /defaultTempo and defaultRestSeconds are authoritative/);
   assert.match(section, /COACHING VOLUME/);
   assert.match(section, /LYFT ZONE REPORTING VOLUME/);
-  assert.match(section, /Count only setTemplates whose setType becomes WORKING/);
-  assert.match(section, /full set count to every bodyParts key/);
-  assert.match(section, /separately give the full set count to every muscleFocus key/);
+  assert.match(section, /Count only setTemplates whose trimmed uppercase setType is WORKING/);
+  assert.match(section, /full set count separately to every bodyParts and muscleFocus key/);
   assert.match(section, /same set once in bodyParts and once in muscleFocus is required/);
-  assert.match(section, /Frequency is the number of distinct workouts/);
+  assert.match(section, /Frequency counts distinct workouts/);
   assert.match(section, /targetMuscles, secondaryMuscles, muscleActivation, normalizedShare/);
-  assert.match(section, /Declare only strategically significant areas/);
-  assert.match(section, /Arrays may be empty; do not enumerate every area with zero/);
-  assert.match(section, /Every declared target must exactly equal reporting for the produced plan/);
+  assert.match(section, /Declare only strategic areas/);
+  assert.match(section, /arrays may be empty, never enumerate every zero/);
+  assert.match(section, /Each target must equal reporting for the produced plan/);
   assert.match(section, /estimatedDurationMinutes, planName, focus, strategySummary, rationales or other prose are declarative only/);
-  assert.match(section, /silently verify for every workout: \(1\) movement seconds per set/);
-  assert.match(section, /\(12\) exact agreement of all four target groups/);
+  assert.equal(
+    section.split('10A. BACKEND DURATION AS A DESIGN CONSTRAINT').length - 1,
+    1
+  );
+  assert.match(section, /Requested duration is a target under Lyft Zone's backend method/);
+  assert.match(section, /not an intuitive real-world gym-time estimate/);
+  assert.match(section, /backend-calculated duration as an active design constraint/);
+  assert.match(section, /never design by feel and calculate afterward without revision/);
+  assert.match(section, /Private revision loop: design blocks, sets, reps, tempos and rest/);
+  assert.match(section, /calculate the complete workout/);
+  assert.match(section, /compare its rounded result with both ranges/);
+  assert.match(section, /if outside acceptable, revise structure and calculate again before JSON/);
+  assert.match(section, /When quality permits, move acceptable toward preferred/);
+  assert.match(section, /Return only the final revision; never expose the loop/);
+  assert.match(section, /productive sets\/exercises/);
+  assert.match(section, /SINGLE\/SUPERSET choice, appropriate rest, work distribution, redundancy or priority coverage/);
+  assert.match(section, /Never fix duration with declarations\/prose/);
+  assert.match(section, /low-value sets, redundant exercises, inflated rest/);
+  assert.match(section, /copied reference SUPERSET module/);
+  assert.match(section, /forced all-SUPERSET structure or lower coaching quality/);
+  assert.match(section, /estimatedDurationMinutes must equal the returned workout's final rounded backend duration/);
+  assert.match(section, /copy requestedDurationMinutes only when the final calculation genuinely rounds there/);
+  assert.match(section, /silently verify movement\/block\/workout seconds/);
+  assert.match(section, /revision plus recalculation after the first out-of-range result/);
+  assert.match(section, /no declarative-only compliance or quality loss/);
+  assert.match(section, /WORKING sets, bodyPart\/muscleFocus exposures and all targets/);
   assert.match(section, /Do not reveal this reasoning\. Return only JSON matching the output contract/);
   [
     'max_set_count_minus_one_zero',
@@ -459,8 +483,13 @@ test('dynamic prompt arithmetic follows each current duration without duplicatin
       false
     );
     assert.doesNotMatch(section, /1695|28\.25/);
-    assert.ok(section.length <= 6800);
-    assert.ok(section.length <= 6750);
+    assert.ok(section.length <= 7000);
+    if ([30, 45, 60, 75, 90].includes(expected.requestedMinutes)) {
+      assert.ok(
+        section.length <= 6900,
+        `${expected.requestedMinutes}-minute metrics section has ${section.length} characters`
+      );
+    }
     assert.ok(
       JSON.stringify(promptInput.trainingMetricsGuidance).length <= 6000
     );
@@ -544,8 +573,8 @@ test('35- and 50-minute prompts preserve current ranges and budgets while render
         `preferred backend-calculated range is approximately ${expected.preferredMinutes[0]} to ${expected.preferredMinutes[1]} minutes`
       )
     );
-    assert.ok(section.length <= 6800);
-    assert.ok(section.length <= 6750);
+    assert.ok(section.length <= 7000);
+    assert.ok(section.length <= 6900);
   }
 });
 
@@ -581,6 +610,7 @@ test('user message is a readable hybrid brief with derived duration ranges and o
   assert.match(prompt.userMessage, /Experience:\nIntermediate\./);
   assert.match(prompt.userMessage, /Build exactly 2 workouts per week/);
   assert.match(prompt.userMessage, /approximately 30 minutes/);
+  assert.match(prompt.userMessage, /The requested duration refers to the final duration calculated with Lyft Zone's backend method, not a general estimate of real-world gym time\./);
   assert.match(prompt.userMessage, /Approximately 26 to 31 backend-calculated minutes is acceptable/);
   assert.match(prompt.userMessage, /preferred backend-calculated range is approximately 27 to 30 minutes/);
   assert.match(prompt.userMessage, /not mandatory/);
