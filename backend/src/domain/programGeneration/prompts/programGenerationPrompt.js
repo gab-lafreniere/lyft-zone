@@ -11,7 +11,7 @@ const {
 } = require('../programGenerationPromptInputBuilder');
 
 const PROGRAM_GENERATION_PROMPT_VERSION =
-  'ai-weekly-plan-builder-prompt-v1.4.0';
+  'ai-weekly-plan-builder-prompt-v1.5.0';
 
 class ProgramGenerationPromptError extends Error {
   constructor(code, message) {
@@ -247,14 +247,6 @@ function buildMovementConsiderationLines(movementConsiderations) {
   return lines;
 }
 
-function formatSourcePrecedence(values = []) {
-  return values.join(' → ');
-}
-
-function formatDescriptorLabel(value) {
-  return String(value || '').replace(/_/g, ' ');
-}
-
 function formatNaturalList(values = []) {
   if (values.length <= 1) {
     return values.join('');
@@ -262,16 +254,44 @@ function formatNaturalList(values = []) {
   return `${values.slice(0, -1).join(', ')} or ${values.at(-1)}`;
 }
 
+function buildWorkoutArithmeticExampleLines({
+  duration,
+  supersetExample,
+  workoutExample,
+}) {
+  if (!workoutExample) {
+    return [
+      '13. APPLY THE METHOD TO THE ACTUAL WORKOUT',
+      '- No compact complete-workout example is available for this duration. Apply the calculation above to the actual workout and compare its final rounded result with the current request ranges.',
+    ];
+  }
+
+  return [
+    `13. WORKOUT ARITHMETIC FOR THIS ${workoutExample.requestedMinutes}-MINUTE REQUEST`,
+    '- This is an arithmetic checksum only, not a program template. Do not copy its blocks, exercise organization, rounds, repetitions, rest periods or volume. Design the actual workout independently, then apply the same calculation method.',
+    `- ${workoutExample.moduleCount} × ${supersetExample.blockTotalSeconds} = ${workoutExample.workoutTotalSeconds} seconds.`,
+    `- ${workoutExample.workoutTotalSeconds} / ${duration.workoutTotal.secondsPerMinute} = ${workoutExample.unroundedMinutes} minutes.`,
+    `- One final rounding gives ${workoutExample.roundedMinutes} backend minutes.`,
+    '- Evaluation Policy:',
+    `- ${workoutExample.alignmentStatus}; correction required: ${workoutExample.requiresCorrection}.`,
+  ];
+}
+
 function buildTrainingMetricsCalculationLines(guidance) {
   const duration = guidance.duration;
+  const normalization = duration.outputV2Normalization;
   const single = duration.blocks.SINGLE;
   const superset = duration.blocks.SUPERSET;
   const cardio = duration.blocks.CARDIO;
   const ranges = duration.ranges;
+  const budgets = duration.budgets;
   const targets = guidance.targets;
-  const durationExample = duration.example;
+  const reporting = targets.reportingVolume;
+  const singleExample = duration.examples.single;
+  const supersetExample = duration.examples.superset;
+  const workoutExample = duration.examples.workout;
   const targetExample = targets.example;
-  const groupSummary = targets.groups
+  const groupSummary = reporting.groups
     .map(
       (group) =>
         `${group.targetGroup} → ${group.taxonomy}.${group.generatedMetric}`
@@ -280,23 +300,53 @@ function buildTrainingMetricsCalculationLines(guidance) {
 
   return [
     'TRAINING METRICS CALCULATION',
-    `- Backend duration method: ${duration.methodId}. Calculate every workout before finalizing the JSON.`,
-    `- ${duration.declaredDuration.field} is declarative only and contributes zero backend seconds. After calculating the workout, set it to reflect the plan's calculated estimate.`,
-    `- Repetitions use this precedence: ${formatSourcePrecedence(duration.repetitions.valuePrecedence)}; non-positive or non-finite values contribute zero.`,
-    `- Tempo uses the first ${duration.tempo.maxDigits} digits, appends zero to three-digit values, right-pads other short values with zero, and sums the digits into seconds per rep.`,
-    `- SINGLE formula: ${single.formula}. Use all setTemplates, one tempo selected by ${formatSourcePrecedence(single.tempoSourcePrecedence)}, rest selected by ${formatSourcePrecedence(single.restSourcePrecedence)}, rest between sets only (${single.restOccurrences}), multiplier ${single.restIntervalMultiplier}, and ${single.fixedBlockSeconds} fixed seconds once.`,
-    `- SUPERSET formula: ${superset.formula}. Use all populated lanes and ${superset.laneSetWindow}; select rounds by ${formatSourcePrecedence(superset.roundCountSourcePrecedence)}. Sum every lane's TUT, use ${superset.restSource} between rounds only (${superset.restOccurrences}), add no rest between lanes, apply multiplier ${superset.restIntervalMultiplier}, and add ${superset.fixedBlockSeconds} fixed seconds once for the whole block.`,
-    `- CARDIO formula: ${cardio.formula}. Use ${cardio.durationSource} with ${cardio.durationSourceOperation}; add ${cardio.fixedBlockSeconds} fixed seconds.`,
-    `- Workout total: add seconds from every block, then round once using ${duration.workoutTotal.rounding}; non-positive totals become ${duration.workoutTotal.nonPositiveTotalBehavior}.`,
-    `- For the requested ${ranges.requestedMinutes} minutes, ${ranges.acceptableMinutes.minimum}-${ranges.acceptableMinutes.maximum} backend-calculated minutes is non-correction and ${ranges.preferredMinutes.minimum}-${ranges.preferredMinutes.maximum} is preferred. Keep every workout inside the non-correction range and prefer the preferred range when coaching quality is equal.`,
-    `- Canonical SINGLE example: ${durationExample.inputs.setCount} sets × ${durationExample.inputs.repsPerSet} reps at tempo ${durationExample.inputs.tempo} (${durationExample.tempoSecondsPerRep} seconds/rep) with ${durationExample.inputs.restSeconds} seconds rest gives ${durationExample.tutSeconds} TUT seconds + ${durationExample.rawRestSeconds} raw rest seconds × ${single.restIntervalMultiplier} = ${durationExample.adjustedRestSeconds} adjusted rest seconds + ${durationExample.fixedBlockSeconds} fixed seconds = ${durationExample.totalSeconds} seconds = ${durationExample.minutesBeforeRounding} minutes, rounded to ${durationExample.roundedMinutes} minutes.`,
-    `- Targets count only ${targets.countedSetType} sets after ${targets.setTypeNormalization}. Give the full working-set count to every exact bodyParts key and separately to every exact muscleFocus key; never divide credit across multiple keys.`,
-    `- Frequency is ${formatDescriptorLabel(targets.frequencyUnit)}. Deduplicate repeated sets, exercises, and blocks for the same key inside one workout.`,
-    `- Exact target bindings: ${groupSummary}. Matching is ${targets.exactNormalizedKeyMatch} with no tolerance. Declared targets must equal the plan actually produced.`,
-    `- Never use ${targets.forbiddenTargetAuthorities.join(', ')} as target authorities.`,
-    `- Target example: ${targetExample.workingSets} WORKING Face Pull sets with bodyParts shoulders/back and muscleFocus rear_delts/upper_back produce shoulders +${targetExample.bodyParts.shoulders}, back +${targetExample.bodyParts.back}, rear_delts +${targetExample.muscleFocus.rear_delts}, upper_back +${targetExample.muscleFocus.upper_back}, and direct frequency +${targetExample.directFrequency.shoulders} for each key in this workout.`,
-    `- Changing only ${formatNaturalList(guidance.declarationOnlyChanges.fields)} does not change backend metrics and is not a valid way to satisfy duration or target requirements.`,
-    '- Before returning the final JSON, silently verify: (1) backend-calculated duration for every workout; (2) each workout alignment range; (3) direct WORKING sets per bodyPart; (4) direct WORKING sets per muscleFocus; (5) distinct workout exposures per bodyPart; (6) distinct workout exposures per muscleFocus; and (7) exact agreement of all four target groups. Do not reveal this reasoning; return only the final contract JSON.',
+    '1. BACKEND WORKOUT DURATION',
+    `- Use backend method ${duration.methodId}. Calculate every workout from its JSON prescriptions before finalizing.`,
+    '- Movement time (Time Under Tension or TUT in backend metrics) is a deterministic seconds estimate from prescribed repetitions and tempo, not a physiological measure of muscular tension, effort, stimulus or hypertrophy.',
+    `- ${formatNaturalList(guidance.declarationOnlyChanges.fields)} are declarative only; changing them never changes backend metrics.`,
+    '2. READ REPETITIONS',
+    `- Per set, use ${duration.repetitions.valuePrecedence[0]}, else ${duration.repetitions.valuePrecedence[1]}, else ${duration.repetitions.valuePrecedence[2]}; a non-positive or non-finite result contributes zero.`,
+    '3. READ TEMPO',
+    `- Valid strength output's non-null exercise.defaultTempo is authoritative; otherwise use first-set tempo. Read at most ${duration.tempo.maxDigits} digits; append 0 to three-digit tempo, right-pad other short tempos with 0, then sum the digits. Tempo 3010 means 3 + 0 + 1 + 0 = 4 seconds per repetition.`,
+    '4. CALCULATE MOVEMENT TIME',
+    '- Set movement time = prescribed repetitions × seconds per repetition. Exercise movement time = the sum of its set movement times.',
+    '5. OUTPUT V2 NORMALIZATION',
+    `- AI Output V2 omits ${normalization.derivedBlockFields.join(', ')}; the backend derives them before duration calculation.`,
+    `- In a SUPERSET, lane A is orderIndex ${normalization.laneAOrderIndex}: its setTemplate count becomes roundCount and its defaultRestSeconds (else first-set rest) becomes block rest. Lane B never controls block rest.`,
+    '- Valid strength defaultTempo and defaultRestSeconds are authoritative. Use the same intended defaultRestSeconds in both SUPERSET lanes.',
+    '6. CALCULATE A SINGLE BLOCK',
+    `- Use every setTemplate of the one exercise. Add all set movement times. Count rest only between sets: for N sets, use N - 1 intervals and no rest after the last set. Raw rest time = intervals × block restSeconds. Adjusted rest time = raw rest time × ${single.restIntervalMultiplier}. Add ${single.fixedBlockSeconds} fixed block seconds once. Block total = exercise movement time + adjusted rest time + fixed block time.`,
+    '7. CALCULATE A SUPERSET BLOCK',
+    `- Use lane A's setTemplate count as the number of rounds and the first that many sets from each populated lane. Add every lane's movement time. Do not add rest between lane A and lane B. Count block rest only between rounds: for R rounds, use R - 1 intervals and no rest after the last round. Multiply raw rest time by ${superset.restIntervalMultiplier}, then add ${superset.fixedBlockSeconds} fixed seconds once for the whole block. Never calculate the two lanes as two SINGLE blocks.`,
+    '8. CALCULATE A CARDIO BLOCK',
+    `- Use ${cardio.durationSource}, truncate it to whole minutes, and multiply by ${cardio.secondsPerMinute} seconds. CARDIO adds ${cardio.fixedBlockSeconds} fixed block seconds.`,
+    '9. CALCULATE THE WORKOUT TOTAL',
+    `- Add every block total in seconds first. Divide the complete workout total by ${duration.workoutTotal.secondsPerMinute}, then round once to the nearest integer minute. Never round individual blocks. estimatedDurationMinutes does not alter this result.`,
+    '10. COMPARE WITH THE SCHEDULE',
+    `- For a ${ranges.requestedMinutes}-minute request, the preferred planning budget is ${budgets.preferredSeconds.minimum}-${budgets.preferredSeconds.maximum} seconds and the acceptable planning budget is ${budgets.acceptableSeconds.minimum}-${budgets.acceptableSeconds.maximum} seconds. These second budgets are planning guides, not the authoritative verdict.`,
+    `- The verdict uses the complete workout total, division by ${duration.workoutTotal.secondsPerMinute}, one final rounding, then compares the integer result with Evaluation Policy: ${ranges.preferredMinutes.minimum}-${ranges.preferredMinutes.maximum} minutes preferred; ${ranges.acceptableMinutes.minimum}-${ranges.acceptableMinutes.maximum} minutes acceptable.`,
+    '11. SINGLE EXAMPLE',
+    `- ${singleExample.inputs.setCount} sets of ${singleExample.inputs.repsPerSet} reps at tempo ${singleExample.inputs.tempo} with ${singleExample.inputs.restSeconds} seconds rest: ${singleExample.secondsPerRepetition} seconds per repetition; ${singleExample.setMovementSeconds} seconds per set; ${singleExample.exerciseMovementSeconds} movement seconds; ${singleExample.restIntervals} rest intervals; ${singleExample.rawRestSeconds} raw rest seconds; ${singleExample.adjustedRestSeconds} adjusted rest seconds; +${singleExample.fixedBlockSeconds} fixed seconds = ${singleExample.blockTotalSeconds} seconds = ${singleExample.unroundedMinutes} minutes, rounded to ${singleExample.roundedMinutes}.`,
+    '12. REFERENCE SUPERSET MODULE',
+    `- Arithmetic-only duration reference, not a program template: ${supersetExample.rounds} rounds at tempo ${supersetExample.inputs.tempo}. Lane A: ${supersetExample.rounds}×${supersetExample.inputs.laneAReps}×${supersetExample.secondsPerRepetition}=${supersetExample.laneAMovementSeconds} s; lane B: ${supersetExample.rounds}×${supersetExample.inputs.laneBReps}×${supersetExample.secondsPerRepetition}=${supersetExample.laneBMovementSeconds} s; adjusted rest: ${supersetExample.restIntervals}×${supersetExample.inputs.laneADefaultRestSeconds}×${superset.restIntervalMultiplier}=${supersetExample.adjustedRestSeconds} s; fixed: ${supersetExample.fixedBlockSeconds} s once; total: ${supersetExample.blockTotalSeconds} s=${supersetExample.unroundedMinutes} min, rounded to ${supersetExample.roundedMinutes}. No between-lane or final-round rest.`,
+    ...buildWorkoutArithmeticExampleLines({
+      duration,
+      supersetExample,
+      workoutExample,
+    }),
+    '14. COACHING VOLUME',
+    '- Use the runtime doctrine\'s direct and indirect contributions to judge exercise selection, recoverability and whether the program is appropriate.',
+    '15. LYFT ZONE REPORTING VOLUME',
+    `- The numeric volumeTargets and frequencyTargets use separate deterministic bookkeeping. Count only setTemplates whose setType becomes ${reporting.countedSetType} after trimming and converting it to uppercase.`,
+    '- Give the full set count to every bodyParts key on the exercise and separately give the full set count to every muscleFocus key. Never divide sets and never use partial contributions.',
+    `- Never use ${reporting.forbiddenAuthorities.join(', ')} as reporting authorities. Reporting the same set once in bodyParts and once in muscleFocus is required and is not prohibited coaching double-counting.`,
+    '- Frequency is the number of distinct workouts with at least one direct WORKING set for the key. Multiple sets, exercises or blocks for the same key in one workout create one exposure.',
+    `- Exact target bindings: ${groupSummary}. Declare only strategically significant areas. Arrays may be empty; do not enumerate every area with zero. Every declared target must exactly equal reporting for the produced plan.`,
+    `- Reporting example: ${targetExample.workingSets} WORKING Face Pull sets with bodyParts shoulders/back and muscleFocus rear_delts/upper_back produce shoulders +${targetExample.bodyParts.shoulders}, back +${targetExample.bodyParts.back}, rear_delts +${targetExample.muscleFocus.rear_delts}, upper_back +${targetExample.muscleFocus.upper_back}, and frequency +${targetExample.directFrequency.shoulders} for each key in this workout.`,
+    `- Target keys match exactly after trimming and lowercasing, with no tolerance.`,
+    '16. FINAL PRIVATE CHECKSUM',
+    '- Before returning JSON, silently verify for every workout: (1) movement seconds per set; (2) movement seconds per exercise or lane; (3) block totals; (4) workout total seconds; (5) workout total divided by 60; (6) rounded backend minutes; (7) duration alignment; (8) raw WORKING sets per bodyPart; (9) raw WORKING sets per muscleFocus; (10) distinct workout exposures per bodyPart; (11) distinct workout exposures per muscleFocus; and (12) exact agreement of all four target groups.',
+    '- Do not reveal this reasoning. Return only JSON matching the output contract.',
   ];
 }
 

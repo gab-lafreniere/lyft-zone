@@ -3,6 +3,9 @@ const assert = require('node:assert/strict');
 
 const {
   buildWeeklyPlanAiGenerationMetadata,
+  deriveAIBlockRestSeconds,
+  deriveAIBlockRestStrategy,
+  deriveAIBlockRoundCount,
   normalizeWeeklyPlanAiOutput,
 } = require('../../src/domain/programGeneration/weeklyPlanAiNormalizer');
 
@@ -190,6 +193,112 @@ test('normalizeWeeklyPlanAiOutput maps SINGLE, SUPERSET, and CARDIO blocks', () 
   assert.equal(cardio.restStrategy, 'NONE');
   assert.deepEqual(cardio.exercises[0].setTemplates, []);
   assert.equal(cardio.exercises[0].cardioPrescription.durationMinutes, 20);
+});
+
+test('block derivation helpers use lane A and preserve the exact strategy by block type', () => {
+  const superset = {
+    blockType: 'superset',
+    exercises: [
+      createStrengthExercise('ex_curl', 2, {
+        defaultRestSeconds: 60,
+        setTemplates: [
+          createSetTemplate(1),
+          createSetTemplate(2),
+          createSetTemplate(3),
+        ],
+      }),
+      createStrengthExercise('ex_row', 1, {
+        defaultRestSeconds: 120,
+        setTemplates: [
+          createSetTemplate(1),
+          createSetTemplate(2),
+          createSetTemplate(3),
+        ],
+      }),
+    ],
+  };
+  const before = structuredClone(superset);
+
+  assert.equal(deriveAIBlockRoundCount(superset), 3);
+  assert.equal(deriveAIBlockRestSeconds(superset), 120);
+  assert.equal(deriveAIBlockRestStrategy('SUPERSET'), 'AFTER_ROUND');
+  assert.equal(deriveAIBlockRestStrategy('SINGLE'), 'AFTER_EXERCISE');
+  assert.equal(deriveAIBlockRestStrategy('CARDIO'), 'NONE');
+  assert.deepEqual(superset, before);
+});
+
+test('block rest derivation falls back to lane A first set and ignores lane B rest', () => {
+  const superset = {
+    blockType: 'SUPERSET',
+    exercises: [
+      createStrengthExercise('ex_row', 1, {
+        defaultRestSeconds: null,
+        setTemplates: [
+          createSetTemplate(1, { restSeconds: 95 }),
+          createSetTemplate(2, { restSeconds: 95 }),
+        ],
+      }),
+      createStrengthExercise('ex_curl', 2, {
+        defaultRestSeconds: 60,
+        setTemplates: [
+          createSetTemplate(1, { restSeconds: 60 }),
+          createSetTemplate(2, { restSeconds: 60 }),
+        ],
+      }),
+    ],
+  };
+
+  assert.equal(deriveAIBlockRestSeconds(superset), 95);
+  assert.equal(deriveAIBlockRoundCount(superset), 2);
+  assert.equal(
+    deriveAIBlockRestSeconds({
+      blockType: 'SINGLE',
+      exercises: [
+        createStrengthExercise('ex_bench', 1, {
+          defaultRestSeconds: 75,
+        }),
+      ],
+    }),
+    75
+  );
+  assert.equal(
+    deriveAIBlockRestSeconds({
+      blockType: 'CARDIO',
+      exercises: [createCardioExercise()],
+    }),
+    null
+  );
+});
+
+test('normalizer materializes lane A rest without mutation and preserves equal SUPERSET set counts', () => {
+  const aiOutput = createAIOutput();
+  const superset = aiOutput.workouts[0].blocks[1];
+  superset.exercises[0].defaultRestSeconds = 120;
+  superset.exercises[1].defaultRestSeconds = 60;
+  superset.exercises.forEach((exercise) => {
+    exercise.setTemplates = [
+      createSetTemplate(1),
+      createSetTemplate(2),
+      createSetTemplate(3),
+    ];
+  });
+  const before = structuredClone(aiOutput);
+
+  const document = normalizeWeeklyPlanAiOutput(aiOutput, {
+    context: createContext(),
+  });
+  const normalizedSuperset = document.workouts[0].blocks[1];
+
+  assert.equal(normalizedSuperset.roundCount, 3);
+  assert.equal(normalizedSuperset.restSeconds, 120);
+  assert.equal(normalizedSuperset.restStrategy, 'AFTER_ROUND');
+  assert.deepEqual(
+    normalizedSuperset.exercises.map(
+      (exercise) => exercise.setTemplates.length
+    ),
+    [3, 3]
+  );
+  assert.deepEqual(aiOutput, before);
 });
 
 test('normalizeWeeklyPlanAiOutput prefers canonical pool metadata when available', () => {

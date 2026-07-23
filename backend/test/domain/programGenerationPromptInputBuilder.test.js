@@ -249,7 +249,7 @@ test('buildProgramGenerationPromptInput projects a compact V2 athlete brief, Tra
     cautionJointStressTags: ['shoulder_load'],
   });
   assert.equal(input.athleteBrief.physicalNotes, 'Keep setup changes simple.');
-  assert.equal(input.trainingMetricsGuidance.schemaVersion, 1);
+  assert.equal(input.trainingMetricsGuidance.schemaVersion, 2);
   assert.equal(
     input.trainingMetricsGuidance.duration.methodId,
     'historical_weekly_plan_metrics_v1'
@@ -259,11 +259,11 @@ test('buildProgramGenerationPromptInput projects a compact V2 athlete brief, Tra
     acceptableMinutes: { minimum: 26, maximum: 31 },
     preferredMinutes: { minimum: 27, maximum: 30 },
   });
-  assert.equal(
-    input.trainingMetricsGuidance.duration.declaredDuration
-      .contributesToBackendDuration,
-    false
-  );
+  assert.deepEqual(input.trainingMetricsGuidance.duration.budgets, {
+    planningOnly: true,
+    acceptableSeconds: { minimum: 1560, maximum: 1860 },
+    preferredSeconds: { minimum: 1620, maximum: 1800 },
+  });
 });
 
 test('muscle contributions use canonical activation weights, primary precedence, null fallback, and exact diagnostics', () => {

@@ -1,5 +1,6 @@
 const {
   WEEKLY_PLAN_DURATION_METHOD_DESCRIPTOR,
+  computeWeeklyPlanWorkoutMetrics,
 } = require('../weeklyPlans/weeklyPlanMetrics');
 const {
   WEEKLY_PLAN_EVALUATION_POLICY,
@@ -8,9 +9,16 @@ const {
 const {
   calculateWeeklyPlanAnalytics,
 } = require('./weeklyPlanAnalytics');
+const {
+  deriveAIBlockRestSeconds,
+  deriveAIBlockRestStrategy,
+  deriveAIBlockRoundCount,
+} = require('./weeklyPlanAiNormalizer');
 
-const TRAINING_METRICS_GUIDANCE_SCHEMA_VERSION = 1;
+const TRAINING_METRICS_GUIDANCE_SCHEMA_VERSION = 2;
 const MAX_TRAINING_METRICS_GUIDANCE_CHARACTERS = 6000;
+const REFERENCE_DURATION_MODULE_MINUTES = 15;
+const MAX_DURATION_EXAMPLE_MODULES = 32;
 
 class WeeklyPlanTrainingMetricsPromptProjectionError extends Error {
   constructor(message) {
@@ -21,6 +29,29 @@ class WeeklyPlanTrainingMetricsPromptProjectionError extends Error {
 
 function invalidProjection(message) {
   return new WeeklyPlanTrainingMetricsPromptProjectionError(message);
+}
+
+function toPedagogicalNumber(value, label = 'Projected numeric value') {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw invalidProjection(`${label} must be finite`);
+  }
+
+  const stableValue = Number(value.toFixed(6));
+  return Object.is(stableValue, -0) ? 0 : stableValue;
+}
+
+function assertValidDurationAlignment(alignment) {
+  if (
+    !alignment ||
+    typeof alignment !== 'object' ||
+    typeof alignment.durationAlignmentStatus !== 'string' ||
+    !alignment.durationAlignmentStatus ||
+    typeof alignment.requiresCorrection !== 'boolean'
+  ) {
+    throw invalidProjection('Canonical duration alignment result is invalid');
+  }
+
+  return alignment;
 }
 
 function getFiniteUpperBound(band = {}) {
@@ -81,10 +112,12 @@ function projectDurationRanges(
   const preferredMinutes = [];
 
   for (let minutes = 0; minutes <= maximumCandidateMinutes; minutes += 1) {
-    const alignment = calculateAlignment({
-      requestedDurationMinutes: requestedMinutes,
-      calculatedDurationMinutes: minutes,
-    });
+    const alignment = assertValidDurationAlignment(
+      calculateAlignment({
+        requestedDurationMinutes: requestedMinutes,
+        calculatedDurationMinutes: minutes,
+      })
+    );
     const matchingBand = acceptableBands.find(
       (band) => band.status === alignment.durationAlignmentStatus
     );
@@ -101,6 +134,29 @@ function projectDurationRanges(
     requestedMinutes,
     acceptableMinutes: buildIntegerRange(acceptableMinutes, 'Acceptable'),
     preferredMinutes: buildIntegerRange(preferredMinutes, 'Preferred'),
+  };
+}
+
+function projectDurationBudgets(ranges, secondsPerMinute) {
+  if (!Number.isFinite(secondsPerMinute) || secondsPerMinute <= 0) {
+    throw invalidProjection('Canonical seconds per minute are required');
+  }
+
+  const toSeconds = (range) => ({
+    minimum: toPedagogicalNumber(
+      range.minimum * secondsPerMinute,
+      'Minimum duration budget'
+    ),
+    maximum: toPedagogicalNumber(
+      range.maximum * secondsPerMinute,
+      'Maximum duration budget'
+    ),
+  });
+
+  return {
+    planningOnly: true,
+    acceptableSeconds: toSeconds(ranges.acceptableMinutes),
+    preferredSeconds: toSeconds(ranges.preferredMinutes),
   };
 }
 
@@ -122,37 +178,402 @@ function parseTempoFromDescriptor(value, tempoDescriptor = {}) {
     .reduce((sum, digit) => sum + Number.parseInt(digit, 10), 0);
 }
 
-function buildDurationExample(durationDescriptor) {
-  const setCount = 3;
-  const repsPerSet = 8;
-  const tempo = '3010';
-  const restSeconds = 150;
+function createStrengthSets({ setCount, repsPerSet, tempo, restSeconds }) {
+  return Array.from({ length: setCount }, (_, index) => ({
+    setIndex: index + 1,
+    setType: 'WORKING',
+    targetReps: repsPerSet,
+    minReps: null,
+    maxReps: null,
+    tempo,
+    restSeconds,
+  }));
+}
+
+function createStrengthLane({
+  exerciseId,
+  orderIndex,
+  setCount,
+  repsPerSet,
+  tempo,
+  restSeconds,
+}) {
+  return {
+    exerciseId,
+    exerciseName: exerciseId,
+    orderIndex,
+    defaultTempo: tempo,
+    defaultRestSeconds: restSeconds,
+    setTemplates: createStrengthSets({
+      setCount,
+      repsPerSet,
+      tempo,
+      restSeconds,
+    }),
+  };
+}
+
+function verifyProductionMinutes({
+  label,
+  workout,
+  totalSeconds,
+  secondsPerMinute,
+  calculateWorkoutMetrics,
+  enabled,
+  expectedSetCount = null,
+  expectedMovementSeconds = null,
+}) {
+  const roundedMinutes = Math.round(totalSeconds / secondsPerMinute);
+  if (!enabled) {
+    return roundedMinutes;
+  }
+
+  if (typeof calculateWorkoutMetrics !== 'function') {
+    throw invalidProjection('Canonical workout metrics calculator is required');
+  }
+
+  const production = calculateWorkoutMetrics(workout);
+  if (production.estimatedDurationMinutes !== roundedMinutes) {
+    throw invalidProjection(`${label} disagrees with production duration`);
+  }
+  if (
+    expectedSetCount != null &&
+    production.setCount !== expectedSetCount
+  ) {
+    throw invalidProjection(`${label} disagrees with production set count`);
+  }
+  if (
+    expectedMovementSeconds != null &&
+    production.totalTUTSeconds !== expectedMovementSeconds
+  ) {
+    throw invalidProjection(`${label} disagrees with production movement time`);
+  }
+  return production.estimatedDurationMinutes;
+}
+
+function buildSingleExample({
+  durationDescriptor,
+  calculateWorkoutMetrics,
+  verifyProduction,
+  deriveRestSeconds,
+  deriveRestStrategy,
+}) {
+  const inputs = {
+    setCount: 3,
+    repsPerSet: 8,
+    tempo: '3010',
+    restSeconds: 150,
+  };
+  const rawBlock = {
+    blockType: 'SINGLE',
+    exercises: [
+      createStrengthLane({
+        exerciseId: 'single_example',
+        orderIndex: 1,
+        ...inputs,
+      }),
+    ],
+  };
   const single = durationDescriptor.blocks.SINGLE;
   const secondsPerMinute = durationDescriptor.blocks.CARDIO.secondsPerMinute;
-  const tempoSecondsPerRep = parseTempoFromDescriptor(
-    tempo,
+  const secondsPerRepetition = parseTempoFromDescriptor(
+    inputs.tempo,
     durationDescriptor.tempo
   );
-  const tutSeconds = setCount * repsPerSet * tempoSecondsPerRep;
-  const restOccurrences = Math.max(setCount - 1, 0);
-  const rawRestSeconds = restSeconds * restOccurrences;
-  const adjustedRestSeconds = rawRestSeconds * single.restIntervalMultiplier;
-  const totalSeconds =
-    tutSeconds + adjustedRestSeconds + single.fixedBlockSeconds;
-  const minutesBeforeRounding = totalSeconds / secondsPerMinute;
+  const setMovementSeconds = inputs.repsPerSet * secondsPerRepetition;
+  const exerciseMovementSeconds = inputs.setCount * setMovementSeconds;
+  const restIntervals = Math.max(inputs.setCount - 1, 0);
+  const blockRestSeconds = deriveRestSeconds(rawBlock);
+  const rawRestSeconds = blockRestSeconds * restIntervals;
+  const adjustedRestSeconds =
+    rawRestSeconds * single.restIntervalMultiplier;
+  const blockTotalSeconds =
+    exerciseMovementSeconds +
+    adjustedRestSeconds +
+    single.fixedBlockSeconds;
+  const normalizedBlock = {
+    ...rawBlock,
+    roundCount: null,
+    restStrategy: deriveRestStrategy(rawBlock.blockType),
+    restSeconds: blockRestSeconds,
+  };
+  const roundedMinutes = verifyProductionMinutes({
+    label: 'Canonical SINGLE example',
+    workout: { blocks: [normalizedBlock] },
+    totalSeconds: blockTotalSeconds,
+    secondsPerMinute,
+    calculateWorkoutMetrics,
+    enabled: verifyProduction,
+  });
 
   return {
-    blockType: 'SINGLE',
-    inputs: { setCount, repsPerSet, tempo, restSeconds },
-    tempoSecondsPerRep,
-    tutSeconds,
-    restOccurrences,
-    rawRestSeconds,
-    adjustedRestSeconds,
-    fixedBlockSeconds: single.fixedBlockSeconds,
-    totalSeconds,
-    minutesBeforeRounding,
-    roundedMinutes: Math.round(minutesBeforeRounding),
+    example: {
+      inputs,
+      secondsPerRepetition: toPedagogicalNumber(secondsPerRepetition),
+      setMovementSeconds: toPedagogicalNumber(setMovementSeconds),
+      exerciseMovementSeconds: toPedagogicalNumber(exerciseMovementSeconds),
+      restIntervals: toPedagogicalNumber(restIntervals),
+      rawRestSeconds: toPedagogicalNumber(rawRestSeconds),
+      adjustedRestSeconds: toPedagogicalNumber(adjustedRestSeconds),
+      fixedBlockSeconds: toPedagogicalNumber(single.fixedBlockSeconds),
+      blockTotalSeconds: toPedagogicalNumber(blockTotalSeconds),
+      unroundedMinutes: toPedagogicalNumber(
+        blockTotalSeconds / secondsPerMinute
+      ),
+      roundedMinutes,
+    },
+    normalizedBlock,
+  };
+}
+
+function buildSupersetExample({
+  durationDescriptor,
+  calculateWorkoutMetrics,
+  verifyProduction,
+  deriveRoundCount,
+  deriveRestSeconds,
+  deriveRestStrategy,
+}) {
+  const inputs = {
+    setCountPerLane: 4,
+    laneAOrderIndex: 1,
+    laneAReps: 8,
+    laneBOrderIndex: 2,
+    laneBReps: 10,
+    tempo: '3010',
+    laneADefaultRestSeconds: 150,
+    laneBDefaultRestSeconds: 150,
+  };
+  const rawBlock = {
+    blockType: 'SUPERSET',
+    exercises: [
+      createStrengthLane({
+        exerciseId: 'superset_lane_a',
+        orderIndex: inputs.laneAOrderIndex,
+        setCount: inputs.setCountPerLane,
+        repsPerSet: inputs.laneAReps,
+        tempo: inputs.tempo,
+        restSeconds: inputs.laneADefaultRestSeconds,
+      }),
+      createStrengthLane({
+        exerciseId: 'superset_lane_b',
+        orderIndex: inputs.laneBOrderIndex,
+        setCount: inputs.setCountPerLane,
+        repsPerSet: inputs.laneBReps,
+        tempo: inputs.tempo,
+        restSeconds: inputs.laneBDefaultRestSeconds,
+      }),
+    ],
+  };
+  const superset = durationDescriptor.blocks.SUPERSET;
+  const secondsPerMinute = durationDescriptor.blocks.CARDIO.secondsPerMinute;
+  const secondsPerRepetition = parseTempoFromDescriptor(
+    inputs.tempo,
+    durationDescriptor.tempo
+  );
+  const rounds = deriveRoundCount(rawBlock);
+  const laneAMovementSeconds =
+    rounds * inputs.laneAReps * secondsPerRepetition;
+  const laneBMovementSeconds =
+    rounds * inputs.laneBReps * secondsPerRepetition;
+  const restIntervals = Math.max(rounds - 1, 0);
+  const blockRestSeconds = deriveRestSeconds(rawBlock);
+  const rawRestSeconds = blockRestSeconds * restIntervals;
+  const adjustedRestSeconds =
+    rawRestSeconds * superset.restIntervalMultiplier;
+  const blockTotalSeconds =
+    laneAMovementSeconds +
+    laneBMovementSeconds +
+    adjustedRestSeconds +
+    superset.fixedBlockSeconds;
+  const normalizedBlock = {
+    ...rawBlock,
+    roundCount: rounds,
+    restStrategy: deriveRestStrategy(rawBlock.blockType),
+    restSeconds: blockRestSeconds,
+  };
+  const roundedMinutes = verifyProductionMinutes({
+    label: 'Canonical SUPERSET example',
+    workout: { blocks: [normalizedBlock] },
+    totalSeconds: blockTotalSeconds,
+    secondsPerMinute,
+    calculateWorkoutMetrics,
+    enabled: verifyProduction,
+    expectedSetCount: rounds * rawBlock.exercises.length,
+    expectedMovementSeconds:
+      laneAMovementSeconds + laneBMovementSeconds,
+  });
+
+  return {
+    example: {
+      arithmeticOnly: true,
+      copyPrescriptions: false,
+      inputs,
+      secondsPerRepetition: toPedagogicalNumber(secondsPerRepetition),
+      laneAMovementSeconds: toPedagogicalNumber(laneAMovementSeconds),
+      laneBMovementSeconds: toPedagogicalNumber(laneBMovementSeconds),
+      rounds: toPedagogicalNumber(rounds),
+      restIntervals: toPedagogicalNumber(restIntervals),
+      rawRestSeconds: toPedagogicalNumber(rawRestSeconds),
+      adjustedRestSeconds: toPedagogicalNumber(adjustedRestSeconds),
+      fixedBlockSeconds: toPedagogicalNumber(superset.fixedBlockSeconds),
+      betweenLaneRestSeconds: toPedagogicalNumber(
+        superset.betweenLaneRest ? blockRestSeconds : 0
+      ),
+      blockTotalSeconds: toPedagogicalNumber(blockTotalSeconds),
+      unroundedMinutes: toPedagogicalNumber(
+        blockTotalSeconds / secondsPerMinute
+      ),
+      roundedMinutes,
+    },
+    normalizedBlock,
+  };
+}
+
+function buildWorkoutExample({
+  requestedDurationMinutes,
+  supersetExample,
+  supersetNormalizedBlock,
+  calculateWorkoutMetrics,
+  calculateAlignment,
+  verifyProduction,
+  secondsPerMinute,
+}) {
+  const moduleCount =
+    requestedDurationMinutes / REFERENCE_DURATION_MODULE_MINUTES;
+  if (
+    !Number.isInteger(requestedDurationMinutes) ||
+    requestedDurationMinutes <= 0 ||
+    !Number.isInteger(moduleCount) ||
+    moduleCount <= 0 ||
+    !Number.isSafeInteger(moduleCount) ||
+    moduleCount > MAX_DURATION_EXAMPLE_MODULES ||
+    supersetExample.roundedMinutes !== REFERENCE_DURATION_MODULE_MINUTES
+  ) {
+    return null;
+  }
+
+  const workoutTotalSeconds =
+    moduleCount * supersetExample.blockTotalSeconds;
+  const unroundedMinutes = workoutTotalSeconds / secondsPerMinute;
+  const roundedMinutes = Math.round(unroundedMinutes);
+
+  if (
+    !Number.isFinite(workoutTotalSeconds) ||
+    !Number.isFinite(unroundedMinutes) ||
+    !Number.isSafeInteger(roundedMinutes)
+  ) {
+    return null;
+  }
+
+  const productionRoundedMinutes = verifyProductionMinutes({
+    label: 'Canonical repeated-module workout example',
+    workout: {
+      blocks: Array.from(
+        { length: moduleCount },
+        () => structuredClone(supersetNormalizedBlock)
+      ),
+    },
+    totalSeconds: workoutTotalSeconds,
+    secondsPerMinute,
+    calculateWorkoutMetrics,
+    enabled: verifyProduction,
+  });
+  if (productionRoundedMinutes !== roundedMinutes) {
+    throw invalidProjection(
+      'Canonical repeated-module workout example disagrees with production duration'
+    );
+  }
+
+  const alignment = assertValidDurationAlignment(
+    calculateAlignment({
+      requestedDurationMinutes,
+      calculatedDurationMinutes: roundedMinutes,
+    })
+  );
+
+  if (
+    alignment.requiresCorrection ||
+    alignment.durationAlignmentStatus === 'unavailable'
+  ) {
+    return null;
+  }
+
+  return {
+    arithmeticOnly: true,
+    copyPrescriptions: false,
+    requestedMinutes: requestedDurationMinutes,
+    referenceExample: 'superset',
+    referenceModuleMinutes: REFERENCE_DURATION_MODULE_MINUTES,
+    moduleCount,
+    workoutTotalSeconds: toPedagogicalNumber(workoutTotalSeconds),
+    unroundedMinutes: toPedagogicalNumber(unroundedMinutes),
+    roundedMinutes,
+    alignmentStatus: alignment.durationAlignmentStatus,
+    requiresCorrection: alignment.requiresCorrection,
+  };
+}
+
+function buildOutputV2Normalization({
+  deriveRoundCount,
+  deriveRestSeconds,
+  deriveRestStrategy,
+}) {
+  const supersetProbe = {
+    blockType: 'SUPERSET',
+    exercises: [
+      createStrengthLane({
+        exerciseId: 'lane_a',
+        orderIndex: 1,
+        setCount: 3,
+        repsPerSet: 8,
+        tempo: '3010',
+        restSeconds: 120,
+      }),
+      createStrengthLane({
+        exerciseId: 'lane_b',
+        orderIndex: 2,
+        setCount: 3,
+        repsPerSet: 8,
+        tempo: '3010',
+        restSeconds: 60,
+      }),
+    ],
+  };
+
+  return {
+    derivedBlockFields: [
+      'block.roundCount',
+      'block.restSeconds',
+      'block.restStrategy',
+    ],
+    laneAOrderIndex: 1,
+    strengthDefaultsAuthoritativeInValidOutput: [
+      'exercise.defaultTempo',
+      'exercise.defaultRestSeconds',
+    ],
+    SINGLE: {
+      roundCount: null,
+      restSource: 'laneA.defaultRestSeconds_then_laneA.firstSetTemplate.restSeconds',
+      restStrategy: deriveRestStrategy('SINGLE'),
+    },
+    SUPERSET: {
+      roundCountSource: 'laneA.setTemplates.length',
+      restSource: 'laneA.defaultRestSeconds_then_laneA.firstSetTemplate.restSeconds',
+      laneBControlsRest: false,
+      sample: {
+        laneADefaultRestSeconds: 120,
+        laneBDefaultRestSeconds: 60,
+        roundCount: deriveRoundCount(supersetProbe),
+        blockRestSeconds: deriveRestSeconds(supersetProbe),
+      },
+      restStrategy: deriveRestStrategy('SUPERSET'),
+    },
+    CARDIO: {
+      roundCount: null,
+      restSeconds: null,
+      restStrategy: deriveRestStrategy('CARDIO'),
+    },
   };
 }
 
@@ -250,57 +671,73 @@ function buildTargetGuidance(evaluationPolicy, calculateAnalytics) {
   const muscleFocus = ['rear_delts', 'upper_back'];
 
   return {
-    methods: {
-      volume: analytics.methods.muscleVolume,
-      frequency: analytics.methods.frequency,
-      comparison: analytics.methods.targetComparison,
+    coachingVolume: {
+      authority: 'runtime_doctrine',
+      useDirectAndIndirectContributions: true,
+      purpose: 'exercise_selection_recoverability_and_program_appropriateness',
     },
-    countedSetType: volumePolicy.countedSetType,
-    setTypeNormalization: volumePolicy.setTypeNormalization,
-    fullWorkingSetCreditPerKey:
-      volumePolicy.direct.contribution === 'full_working_set_count_per_key',
-    divideCreditAcrossKeys: false,
-    frequencyUnit: frequencyPolicy.unit,
-    deduplicateWithinWorkout: frequencyPolicy.deduplicateWithinWorkout,
-    exactNormalizedKeyMatch: targetPolicy.match,
-    comparisonTolerance: targetPolicy.comparisonTolerance,
-    generatedValueSource: targetPolicy.generatedValueSource,
-    groups: [
-      {
-        targetGroup: 'volumeTargets.bodyParts',
-        taxonomy: firstResolvedTaxonomy(
-          analytics.targetComparisons.volume.bodyParts
-        ),
-        generatedMetric: 'directWorkingSets',
+    reportingVolume: {
+      methods: {
+        volume: analytics.methods.muscleVolume,
+        frequency: analytics.methods.frequency,
+        comparison: analytics.methods.targetComparison,
       },
-      {
-        targetGroup: 'volumeTargets.muscleFocuses',
-        taxonomy: firstResolvedTaxonomy(
-          analytics.targetComparisons.volume.muscleFocuses
-        ),
-        generatedMetric: 'directWorkingSets',
-      },
-      {
-        targetGroup: 'frequencyTargets.bodyParts',
-        taxonomy: firstResolvedTaxonomy(
-          analytics.targetComparisons.frequency.bodyParts
-        ),
-        generatedMetric: 'directWorkoutCount',
-      },
-      {
-        targetGroup: 'frequencyTargets.muscleFocuses',
-        taxonomy: firstResolvedTaxonomy(
-          analytics.targetComparisons.frequency.muscleFocuses
-        ),
-        generatedMetric: 'directWorkoutCount',
-      },
-    ],
-    forbiddenTargetAuthorities: [
-      'targetMuscles',
-      'secondaryMuscles',
-      'muscleActivation',
-      'normalizedShare',
-    ],
+      countedSetType: volumePolicy.countedSetType,
+      setTypeNormalization: volumePolicy.setTypeNormalization,
+      fullWorkingSetCreditPerBodyPart:
+        volumePolicy.direct.contribution === 'full_working_set_count_per_key',
+      fullWorkingSetCreditPerMuscleFocus:
+        volumePolicy.direct.contribution === 'full_working_set_count_per_key',
+      divideCreditAcrossKeys: false,
+      sameSetAcrossTaxonomiesRequired: true,
+      frequencyUnit: frequencyPolicy.unit,
+      deduplicateWithinWorkout: frequencyPolicy.deduplicateWithinWorkout,
+      groups: [
+        {
+          targetGroup: 'volumeTargets.bodyParts',
+          taxonomy: firstResolvedTaxonomy(
+            analytics.targetComparisons.volume.bodyParts
+          ),
+          generatedMetric: 'directWorkingSets',
+        },
+        {
+          targetGroup: 'volumeTargets.muscleFocuses',
+          taxonomy: firstResolvedTaxonomy(
+            analytics.targetComparisons.volume.muscleFocuses
+          ),
+          generatedMetric: 'directWorkingSets',
+        },
+        {
+          targetGroup: 'frequencyTargets.bodyParts',
+          taxonomy: firstResolvedTaxonomy(
+            analytics.targetComparisons.frequency.bodyParts
+          ),
+          generatedMetric: 'directWorkoutCount',
+        },
+        {
+          targetGroup: 'frequencyTargets.muscleFocuses',
+          taxonomy: firstResolvedTaxonomy(
+            analytics.targetComparisons.frequency.muscleFocuses
+          ),
+          generatedMetric: 'directWorkoutCount',
+        },
+      ],
+      forbiddenAuthorities: [
+        'targetMuscles',
+        'secondaryMuscles',
+        'muscleActivation',
+        'normalizedShare',
+      ],
+    },
+    strategicAreas: {
+      onlySignificantAreas: true,
+      arraysMayBeEmpty: true,
+      enumerateZeroValueAreas: false,
+      declaredTargetsEqualProducedPlanReporting: true,
+      exactNormalizedKeyMatch: targetPolicy.match,
+      comparisonTolerance: targetPolicy.comparisonTolerance,
+      generatedValueSource: targetPolicy.generatedValueSource,
+    },
     example: {
       exercise: 'Face Pull',
       workingSets: 2,
@@ -317,18 +754,23 @@ function buildTargetGuidance(evaluationPolicy, calculateAnalytics) {
         ])
       ),
       directFrequency: Object.fromEntries(
-        [...bodyParts.map((key) => ['body_part', key]), ...muscleFocus.map((key) => ['muscle_focus', key])]
-          .map(([taxonomy, key]) => [
-            key,
-            findMetric(analytics, taxonomy, key).directWorkoutCount,
-          ])
+        [
+          ...bodyParts.map((key) => ['body_part', key]),
+          ...muscleFocus.map((key) => ['muscle_focus', key]),
+        ].map(([taxonomy, key]) => [
+          key,
+          findMetric(analytics, taxonomy, key).directWorkoutCount,
+        ])
       ),
     },
   };
 }
 
 function buildWeeklyPlanTrainingMetricsPromptProjection(
-  { requestedDurationMinutes, evaluationPolicy = WEEKLY_PLAN_EVALUATION_POLICY } = {},
+  {
+    requestedDurationMinutes,
+    evaluationPolicy = WEEKLY_PLAN_EVALUATION_POLICY,
+  } = {},
   dependencies = {}
 ) {
   const durationDescriptor =
@@ -339,6 +781,15 @@ function buildWeeklyPlanTrainingMetricsPromptProjection(
     dependencies.calculateWeeklyPlanAnalytics || calculateWeeklyPlanAnalytics;
   const calculateAlignment =
     dependencies.calculateDurationAlignment || calculateDurationAlignment;
+  const calculateWorkoutMetrics =
+    dependencies.computeWeeklyPlanWorkoutMetrics ||
+    computeWeeklyPlanWorkoutMetrics;
+  const deriveRoundCount =
+    dependencies.deriveAIBlockRoundCount || deriveAIBlockRoundCount;
+  const deriveRestSeconds =
+    dependencies.deriveAIBlockRestSeconds || deriveAIBlockRestSeconds;
+  const deriveRestStrategy =
+    dependencies.deriveAIBlockRestStrategy || deriveAIBlockRestStrategy;
 
   if (
     !durationDescriptor ||
@@ -350,63 +801,107 @@ function buildWeeklyPlanTrainingMetricsPromptProjection(
     throw invalidProjection('Canonical duration descriptor is required');
   }
 
-  const single = durationDescriptor.blocks.SINGLE;
-  const superset = durationDescriptor.blocks.SUPERSET;
-  const cardio = durationDescriptor.blocks.CARDIO;
+  const secondsPerMinute = durationDescriptor.blocks.CARDIO.secondsPerMinute;
+  const ranges = projectDurationRanges(
+    requestedDurationMinutes,
+    evaluationPolicy,
+    calculateAlignment
+  );
+  const verifyProduction = dependencies.durationDescriptor == null;
+  const singleExample = buildSingleExample({
+    durationDescriptor,
+    calculateWorkoutMetrics,
+    verifyProduction,
+    deriveRestSeconds,
+    deriveRestStrategy,
+  });
+  const supersetExample = buildSupersetExample({
+    durationDescriptor,
+    calculateWorkoutMetrics,
+    verifyProduction,
+    deriveRoundCount,
+    deriveRestSeconds,
+    deriveRestStrategy,
+  });
   const guidance = {
     schemaVersion: TRAINING_METRICS_GUIDANCE_SCHEMA_VERSION,
     duration: {
       methodId: durationDescriptor.id,
-      declaredDuration: {
-        field: durationDescriptor.output.field,
-        contributesToBackendDuration: false,
-      },
+      outputV2Normalization: buildOutputV2Normalization({
+        deriveRoundCount,
+        deriveRestSeconds,
+        deriveRestStrategy,
+      }),
       repetitions: {
         valuePrecedence: [...durationDescriptor.repetitions.valuePrecedence],
-        selectionOperation: durationDescriptor.repetitions.selectionOperation,
-        invalidBehavior: durationDescriptor.repetitions.nonPositiveOrNonFiniteBehavior,
+        invalidBehavior:
+          durationDescriptor.repetitions.nonPositiveOrNonFiniteBehavior,
       },
       tempo: { ...durationDescriptor.tempo },
       blocks: {
         SINGLE: {
-          formula: `tutSeconds + restSeconds * restOccurrences * ${single.restIntervalMultiplier} + ${single.fixedBlockSeconds}`,
-          setCountSource: single.setCountSource,
-          tempoSourcePrecedence: [...single.tempoSourcePrecedence],
-          restSourcePrecedence: [...single.restSourcePrecedence],
-          restOccurrences: single.restOccurrences,
-          restIntervalMultiplier: single.restIntervalMultiplier,
-          fixedBlockSeconds: single.fixedBlockSeconds,
+          setCountSource: durationDescriptor.blocks.SINGLE.setCountSource,
+          tempoSourcePrecedence: [
+            ...durationDescriptor.blocks.SINGLE.tempoSourcePrecedence,
+          ],
+          restSourcePrecedence: [
+            ...durationDescriptor.blocks.SINGLE.restSourcePrecedence,
+          ],
+          restIntervalMultiplier:
+            toPedagogicalNumber(
+              durationDescriptor.blocks.SINGLE.restIntervalMultiplier
+            ),
+          fixedBlockSeconds:
+            toPedagogicalNumber(
+              durationDescriptor.blocks.SINGLE.fixedBlockSeconds
+            ),
         },
         SUPERSET: {
-          formula: `allLaneTutSeconds + blockRestSeconds * restOccurrences * ${superset.restIntervalMultiplier} + ${superset.fixedBlockSeconds}`,
-          roundCountSourcePrecedence: [...superset.roundCountSourcePrecedence],
-          laneSetWindow: superset.laneSetWindow,
-          tempoSourcePrecedence: [...superset.tempoSourcePrecedence],
-          restSource: superset.restSource,
-          restOccurrences: superset.restOccurrences,
-          betweenLaneRest: superset.betweenLaneRest,
-          restIntervalMultiplier: superset.restIntervalMultiplier,
-          fixedBlockSeconds: superset.fixedBlockSeconds,
+          laneSetWindow: durationDescriptor.blocks.SUPERSET.laneSetWindow,
+          tempoSourcePrecedence: [
+            ...durationDescriptor.blocks.SUPERSET.tempoSourcePrecedence,
+          ],
+          betweenLaneRest:
+            durationDescriptor.blocks.SUPERSET.betweenLaneRest,
+          restIntervalMultiplier:
+            toPedagogicalNumber(
+              durationDescriptor.blocks.SUPERSET.restIntervalMultiplier
+            ),
+          fixedBlockSeconds:
+            toPedagogicalNumber(
+              durationDescriptor.blocks.SUPERSET.fixedBlockSeconds
+            ),
         },
         CARDIO: {
-          formula: `truncatedDurationMinutes * ${cardio.secondsPerMinute}`,
-          durationSource: cardio.durationSource,
-          durationSourceOperation: cardio.durationSourceOperation,
-          secondsPerMinute: cardio.secondsPerMinute,
-          fixedBlockSeconds: cardio.fixedBlockSeconds,
+          durationSource: durationDescriptor.blocks.CARDIO.durationSource,
+          secondsPerMinute: toPedagogicalNumber(secondsPerMinute),
+          fixedBlockSeconds:
+            toPedagogicalNumber(
+              durationDescriptor.blocks.CARDIO.fixedBlockSeconds
+            ),
         },
       },
       workoutTotal: {
-        operation: 'sum_all_block_seconds_then_round_once',
+        sumBlocksBeforeConversion: true,
+        secondsPerMinute: toPedagogicalNumber(secondsPerMinute),
+        roundOnceAfterWorkoutTotal: true,
         rounding: durationDescriptor.output.rounding,
-        nonPositiveTotalBehavior: durationDescriptor.output.nonPositiveTotalBehavior,
       },
-      ranges: projectDurationRanges(
-        requestedDurationMinutes,
-        evaluationPolicy,
-        calculateAlignment
-      ),
-      example: buildDurationExample(durationDescriptor),
+      ranges,
+      budgets: projectDurationBudgets(ranges, secondsPerMinute),
+      examples: {
+        single: singleExample.example,
+        superset: supersetExample.example,
+        workout: buildWorkoutExample({
+          requestedDurationMinutes,
+          supersetExample: supersetExample.example,
+          supersetNormalizedBlock: supersetExample.normalizedBlock,
+          calculateWorkoutMetrics,
+          calculateAlignment,
+          verifyProduction,
+          secondsPerMinute,
+        }),
+      },
     },
     targets: buildTargetGuidance(evaluationPolicy, calculateAnalytics),
     declarationOnlyChanges: {
@@ -419,7 +914,6 @@ function buildWeeklyPlanTrainingMetricsPromptProjection(
         'other prose',
       ],
       changeBackendMetrics: false,
-      validMetricCorrection: false,
     },
   };
 

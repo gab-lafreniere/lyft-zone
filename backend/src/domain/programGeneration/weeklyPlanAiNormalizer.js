@@ -32,6 +32,48 @@ function normalizeInt(value) {
   return normalized == null ? null : Math.trunc(normalized);
 }
 
+function getAIBlockLaneA(aiBlock = {}) {
+  const exercises = toArray(aiBlock.exercises);
+  return (
+    exercises.find((exercise) => normalizeInt(exercise?.orderIndex) === 1) ||
+    exercises[0] ||
+    {}
+  );
+}
+
+function deriveAIBlockRoundCount(aiBlock = {}) {
+  const blockType = String(aiBlock.blockType || '').trim().toUpperCase();
+  if (blockType !== 'SUPERSET') {
+    return null;
+  }
+
+  return toArray(getAIBlockLaneA(aiBlock).setTemplates).length || null;
+}
+
+function deriveAIBlockRestSeconds(aiBlock = {}) {
+  const blockType = String(aiBlock.blockType || '').trim().toUpperCase();
+  if (blockType === 'CARDIO') {
+    return null;
+  }
+
+  const laneA = getAIBlockLaneA(aiBlock);
+  const firstSetTemplate = toArray(laneA.setTemplates)[0] || {};
+  return normalizeInt(
+    laneA.defaultRestSeconds ?? firstSetTemplate.restSeconds
+  );
+}
+
+function deriveAIBlockRestStrategy(blockType) {
+  const normalizedBlockType = String(blockType || '').trim().toUpperCase();
+  if (normalizedBlockType === 'CARDIO') {
+    return 'NONE';
+  }
+
+  return normalizedBlockType === 'SUPERSET'
+    ? 'AFTER_ROUND'
+    : 'AFTER_EXERCISE';
+}
+
 function buildPoolItemByExerciseId(exercisePoolItems = []) {
   return new Map(
     toArray(exercisePoolItems)
@@ -70,13 +112,6 @@ function normalizeSetTemplate(setTemplate = {}) {
     restSeconds: normalizeInt(setTemplate.restSeconds),
     notes: null,
   };
-}
-
-function getBlockRestSeconds(aiBlock = {}) {
-  const firstExercise = toArray(aiBlock.exercises)[0] || {};
-  const firstSetTemplate = toArray(firstExercise.setTemplates)[0] || {};
-
-  return normalizeInt(firstExercise.defaultRestSeconds ?? firstSetTemplate.restSeconds);
 }
 
 function normalizeStrengthExercise(aiExercise = {}, poolItem = null) {
@@ -139,7 +174,7 @@ function normalizeBlock(aiBlock = {}, poolItemByExerciseId = new Map(), workoutI
       blockType,
       label: null,
       roundCount: null,
-      restStrategy: 'NONE',
+      restStrategy: deriveAIBlockRestStrategy(blockType),
       restSeconds: null,
       notes: null,
       exercises: [
@@ -161,9 +196,9 @@ function normalizeBlock(aiBlock = {}, poolItemByExerciseId = new Map(), workoutI
     orderIndex: normalizeInt(aiBlock.orderIndex),
     blockType,
     label: null,
-    roundCount: blockType === 'SUPERSET' ? normalizedExercises[0]?.setTemplates?.length || null : null,
-    restStrategy: blockType === 'SUPERSET' ? 'AFTER_ROUND' : 'AFTER_EXERCISE',
-    restSeconds: getBlockRestSeconds(aiBlock),
+    roundCount: deriveAIBlockRoundCount(aiBlock),
+    restStrategy: deriveAIBlockRestStrategy(blockType),
+    restSeconds: deriveAIBlockRestSeconds(aiBlock),
     notes: null,
     exercises: normalizedExercises,
   };
@@ -218,5 +253,8 @@ function buildWeeklyPlanAiGenerationMetadata(aiOutput = {}) {
 module.exports = {
   buildPoolItemByExerciseId,
   buildWeeklyPlanAiGenerationMetadata,
+  deriveAIBlockRestSeconds,
+  deriveAIBlockRestStrategy,
+  deriveAIBlockRoundCount,
   normalizeWeeklyPlanAiOutput,
 };

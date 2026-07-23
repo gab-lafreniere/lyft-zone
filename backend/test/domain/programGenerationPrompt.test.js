@@ -135,12 +135,89 @@ function parseEligiblePool(userMessage) {
   return JSON.parse(userMessage.slice(start + marker.length));
 }
 
-test('buildProgramGenerationPrompt preserves the V1.4.0 coach role and injects the exact classic runtime once', () => {
+function extractTrainingMetricsSection(systemMessage) {
+  const start = systemMessage.indexOf('TRAINING METRICS CALCULATION');
+  const end = systemMessage.indexOf('\n\nRequired output consistency:', start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  return systemMessage.slice(start, end);
+}
+
+const DYNAMIC_PROMPT_CASES = [
+  {
+    requestedMinutes: 30,
+    moduleCount: 2,
+    totalSeconds: 1791,
+    unroundedMinutes: 29.85,
+    roundedMinutes: 30,
+    acceptableMinutes: [26, 31],
+    preferredMinutes: [27, 30],
+    acceptableSeconds: [1560, 1860],
+    preferredSeconds: [1620, 1800],
+  },
+  {
+    requestedMinutes: 45,
+    moduleCount: 3,
+    totalSeconds: 2686.5,
+    unroundedMinutes: 44.775,
+    roundedMinutes: 45,
+    acceptableMinutes: [39, 47],
+    preferredMinutes: [41, 45],
+    acceptableSeconds: [2340, 2820],
+    preferredSeconds: [2460, 2700],
+  },
+  {
+    requestedMinutes: 60,
+    moduleCount: 4,
+    totalSeconds: 3582,
+    unroundedMinutes: 59.7,
+    roundedMinutes: 60,
+    acceptableMinutes: [51, 63],
+    preferredMinutes: [54, 60],
+    acceptableSeconds: [3060, 3780],
+    preferredSeconds: [3240, 3600],
+  },
+  {
+    requestedMinutes: 75,
+    moduleCount: 5,
+    totalSeconds: 4477.5,
+    unroundedMinutes: 74.625,
+    roundedMinutes: 75,
+    acceptableMinutes: [64, 78],
+    preferredMinutes: [68, 75],
+    acceptableSeconds: [3840, 4680],
+    preferredSeconds: [4080, 4500],
+  },
+  {
+    requestedMinutes: 90,
+    moduleCount: 6,
+    totalSeconds: 5373,
+    unroundedMinutes: 89.55,
+    roundedMinutes: 90,
+    acceptableMinutes: [77, 94],
+    preferredMinutes: [81, 90],
+    acceptableSeconds: [4620, 5640],
+    preferredSeconds: [4860, 5400],
+  },
+  {
+    requestedMinutes: 120,
+    moduleCount: 8,
+    totalSeconds: 7164,
+    unroundedMinutes: 119.4,
+    roundedMinutes: 119,
+    acceptableMinutes: [102, 126],
+    preferredMinutes: [108, 120],
+    acceptableSeconds: [6120, 7560],
+    preferredSeconds: [6480, 7200],
+  },
+];
+
+test('buildProgramGenerationPrompt V1.5.0 preserves the coach role and injects the exact classic runtime once', () => {
   const doctrine = loadWeeklyPlanBuilderDoctrine();
   const context = createContext();
   const prompt = buildProgramGenerationPrompt({ doctrine, context });
 
-  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.4.0');
+  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.5.0');
   assert.match(prompt.systemMessage, /lead bodybuilding and hypertrophy coach/);
   assert.match(prompt.systemMessage, /IFBB-caliber programming expertise/);
   assert.match(prompt.systemMessage, /natural lifters/);
@@ -166,35 +243,108 @@ test('buildProgramGenerationPrompt preserves the V1.4.0 coach role and injects t
   assert.doesNotMatch(combinedPrompt, /# Lyft Zone Bodybuilding Doctrine\n/);
 });
 
-test('system instructions render Training Metrics Guidance exactly once with duration, targets, calibration, and silent verification', () => {
+test('system instructions render procedural Training Metrics Guidance V2 exactly once within the size budget', () => {
   const prompt = buildProgramGenerationPrompt({
     doctrine: MOCK_DOCTRINE,
     context: createContext(),
   });
+  const section = extractTrainingMetricsSection(prompt.systemMessage);
 
-  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.4.0');
+  assert.equal(prompt.promptVersion, 'ai-weekly-plan-builder-prompt-v1.5.0');
   assert.equal(
     prompt.systemMessage.split('TRAINING METRICS CALCULATION').length - 1,
     1
   );
   assert.equal(prompt.userMessage.includes('TRAINING METRICS CALCULATION'), false);
-  assert.match(prompt.systemMessage, /SINGLE formula: tutSeconds/);
-  assert.match(prompt.systemMessage, /SUPERSET formula: allLaneTutSeconds/);
-  assert.match(prompt.systemMessage, /CARDIO formula: truncatedDurationMinutes/);
-  assert.match(prompt.systemMessage, /multiplier 1\.15/);
-  assert.match(prompt.systemMessage, /90 fixed seconds once/);
-  assert.match(prompt.systemMessage, /estimatedDurationMinutes is declarative only and contributes zero backend seconds/);
-  assert.match(prompt.systemMessage, /Changing only estimatedDurationMinutes, planName, focus, strategySummary, rationales or other prose does not change backend metrics/);
-  assert.match(prompt.systemMessage, /Targets count only WORKING sets/);
-  assert.match(prompt.systemMessage, /full working-set count to every exact bodyParts key/);
-  assert.match(prompt.systemMessage, /separately to every exact muscleFocus key/);
-  assert.match(prompt.systemMessage, /never divide credit across multiple keys/);
-  assert.match(prompt.systemMessage, /Frequency is distinct workouts/);
-  assert.match(prompt.systemMessage, /Deduplicate repeated sets, exercises, and blocks/);
-  assert.match(prompt.systemMessage, /targetMuscles, secondaryMuscles, muscleActivation, normalizedShare/);
-  assert.match(prompt.systemMessage, /531 seconds = 8\.85 minutes, rounded to 9 minutes/);
-  assert.match(prompt.systemMessage, /silently verify: \(1\) backend-calculated duration/);
-  assert.match(prompt.systemMessage, /Do not reveal this reasoning; return only the final contract JSON/);
+  assert.ok(section.length <= 6800, `metrics section has ${section.length} characters`);
+  assert.ok(section.length <= 6750, `metrics section engineering target missed at ${section.length} characters`);
+  [
+    '1. BACKEND WORKOUT DURATION',
+    '2. READ REPETITIONS',
+    '3. READ TEMPO',
+    '4. CALCULATE MOVEMENT TIME',
+    '5. OUTPUT V2 NORMALIZATION',
+    '6. CALCULATE A SINGLE BLOCK',
+    '7. CALCULATE A SUPERSET BLOCK',
+    '8. CALCULATE A CARDIO BLOCK',
+    '9. CALCULATE THE WORKOUT TOTAL',
+    '10. COMPARE WITH THE SCHEDULE',
+    '11. SINGLE EXAMPLE',
+    '12. REFERENCE SUPERSET MODULE',
+    '13. WORKOUT ARITHMETIC FOR THIS 30-MINUTE REQUEST',
+    '14. COACHING VOLUME',
+    '15. LYFT ZONE REPORTING VOLUME',
+    '16. FINAL PRIVATE CHECKSUM',
+  ].forEach((heading) => assert.ok(section.includes(heading), heading));
+  assert.match(section, /Movement time \(Time Under Tension or TUT in backend metrics\) is a deterministic seconds estimate/);
+  assert.match(section, /not a physiological measure of muscular tension, effort, stimulus or hypertrophy/);
+  assert.match(section, /Tempo 3010 means 3 \+ 0 \+ 1 \+ 0 = 4 seconds per repetition/);
+  assert.match(section, /8 reps at tempo 3010 with 150 seconds rest/);
+  assert.match(section, /32 seconds per set; 96 movement seconds/);
+  assert.match(section, /300 raw rest seconds; 345 adjusted rest seconds/);
+  assert.match(section, /531 seconds = 8\.85 minutes, rounded to 9/);
+  assert.match(section, /Lane A: 4×8×4=128 s/);
+  assert.match(section, /lane B: 4×10×4=160 s/);
+  assert.match(section, /adjusted rest: 3×150×1\.15=517\.5 s/);
+  assert.match(section, /total: 895\.5 s=14\.925 min, rounded to 15/);
+  assert.match(section, /No between-lane or final-round rest/);
+  assert.match(
+    section,
+    /2 × 895\.5 = 1791 seconds/
+  );
+  assert.match(section, /1791 \/ 60 = 29\.85 minutes/);
+  assert.match(section, /One final rounding gives 30 backend minutes/);
+  assert.match(
+    section,
+    /Evaluation Policy:\n- preferred; correction required: false/
+  );
+  assert.equal(
+    section.split('Arithmetic-only duration reference, not a program template').length - 1,
+    1
+  );
+  assert.equal(
+    section.split('This is an arithmetic checksum only, not a program template').length - 1,
+    1
+  );
+  assert.match(
+    section,
+    /Do not copy its blocks, exercise organization, rounds, repetitions, rest periods or volume/
+  );
+  assert.doesNotMatch(section, /1695|28\.25/);
+  assert.doesNotMatch(section, /1229\.25/);
+  assert.match(section, /preferred planning budget is 1620-1800 seconds/);
+  assert.match(section, /acceptable planning budget is 1560-1860 seconds/);
+  assert.match(section, /27-30 minutes preferred; 26-31 minutes acceptable/);
+  assert.match(section, /AI Output V2 omits block\.roundCount, block\.restSeconds, block\.restStrategy/);
+  assert.match(section, /lane A is orderIndex 1/);
+  assert.match(section, /setTemplate count becomes roundCount/);
+  assert.match(section, /Lane B never controls block rest/);
+  assert.match(section, /defaultTempo and defaultRestSeconds are authoritative/);
+  assert.match(section, /COACHING VOLUME/);
+  assert.match(section, /LYFT ZONE REPORTING VOLUME/);
+  assert.match(section, /Count only setTemplates whose setType becomes WORKING/);
+  assert.match(section, /full set count to every bodyParts key/);
+  assert.match(section, /separately give the full set count to every muscleFocus key/);
+  assert.match(section, /same set once in bodyParts and once in muscleFocus is required/);
+  assert.match(section, /Frequency is the number of distinct workouts/);
+  assert.match(section, /targetMuscles, secondaryMuscles, muscleActivation, normalizedShare/);
+  assert.match(section, /Declare only strategically significant areas/);
+  assert.match(section, /Arrays may be empty; do not enumerate every area with zero/);
+  assert.match(section, /Every declared target must exactly equal reporting for the produced plan/);
+  assert.match(section, /estimatedDurationMinutes, planName, focus, strategySummary, rationales or other prose are declarative only/);
+  assert.match(section, /silently verify for every workout: \(1\) movement seconds per set/);
+  assert.match(section, /\(12\) exact agreement of all four target groups/);
+  assert.match(section, /Do not reveal this reasoning\. Return only JSON matching the output contract/);
+  [
+    'max_set_count_minus_one_zero',
+    'first_round_count_set_templates',
+    'finite_number_truncate_else_zero',
+    'nearest_integer_half_up_after_workout_total',
+    'exact_normalized_key',
+    'trim_uppercase',
+    'allLaneTutSeconds',
+    'restOccurrences',
+  ].forEach((descriptor) => assert.equal(section.includes(descriptor), false));
   assert.match(prompt.systemMessage, /Required output consistency:/);
   assert.match(prompt.systemMessage, /sessionsPerWeek must equal workouts\.length/);
   assert.match(prompt.systemMessage, /orderIndex and setIndex start at 1/);
@@ -210,6 +360,212 @@ test('system instructions render Training Metrics Guidance exactly once with dur
   assert.doesNotMatch(prompt.systemMessage, /"additionalProperties"/);
   assert.doesNotMatch(prompt.systemMessage, /"\$schema"/);
   assert.doesNotMatch(prompt.systemMessage, /"evaluationPolicy"/);
+});
+
+test('dynamic prompt arithmetic follows each current duration without duplicating or leaking the example into the user message', () => {
+  for (const expected of DYNAMIC_PROMPT_CASES) {
+    const context = createContext({
+      availability: {
+        sessionsPerWeek: 2,
+        durationPerSession: expected.requestedMinutes,
+      },
+    });
+    const promptInput = buildProgramGenerationPromptInput(context);
+    const prompt = buildProgramGenerationPrompt({
+      doctrine: MOCK_DOCTRINE,
+      context,
+    });
+    const section = extractTrainingMetricsSection(prompt.systemMessage);
+    const dynamicHeading =
+      `13. WORKOUT ARITHMETIC FOR THIS ${expected.requestedMinutes}-MINUTE REQUEST`;
+
+    assert.ok(section.includes(dynamicHeading));
+    assert.equal(
+      (section.match(/13\. WORKOUT ARITHMETIC FOR THIS \d+-MINUTE REQUEST/g) || [])
+        .length,
+      1
+    );
+    assert.equal(
+      section.split('12. REFERENCE SUPERSET MODULE').length - 1,
+      1
+    );
+    assert.equal(
+      section.split('Arithmetic-only duration reference, not a program template')
+        .length - 1,
+      1
+    );
+    assert.equal(
+      section.split(
+        'This is an arithmetic checksum only, not a program template'
+      ).length - 1,
+      1
+    );
+    assert.match(
+      section,
+      new RegExp(
+        `${expected.moduleCount} × 895\\.5 = ${String(
+          expected.totalSeconds
+        ).replace('.', '\\.')} seconds`
+      )
+    );
+    assert.match(
+      section,
+      new RegExp(
+        `${String(expected.totalSeconds).replace('.', '\\.')} / 60 = ${String(
+          expected.unroundedMinutes
+        ).replace('.', '\\.')} minutes`
+      )
+    );
+    assert.match(
+      section,
+      new RegExp(
+        `One final rounding gives ${expected.roundedMinutes} backend minutes`
+      )
+    );
+    assert.match(
+      section,
+      /Evaluation Policy:\n- preferred; correction required: false/
+    );
+    assert.match(
+      section,
+      new RegExp(
+        `preferred planning budget is ${expected.preferredSeconds[0]}-${expected.preferredSeconds[1]} seconds`
+      )
+    );
+    assert.match(
+      section,
+      new RegExp(
+        `acceptable planning budget is ${expected.acceptableSeconds[0]}-${expected.acceptableSeconds[1]} seconds`
+      )
+    );
+    assert.match(
+      prompt.userMessage,
+      new RegExp(
+        `Approximately ${expected.acceptableMinutes[0]} to ${expected.acceptableMinutes[1]} backend-calculated minutes is acceptable`
+      )
+    );
+    assert.match(
+      prompt.userMessage,
+      new RegExp(
+        `preferred backend-calculated range is approximately ${expected.preferredMinutes[0]} to ${expected.preferredMinutes[1]} minutes`
+      )
+    );
+    assert.equal(
+      prompt.userMessage.includes('WORKOUT ARITHMETIC FOR THIS'),
+      false
+    );
+    assert.equal(
+      prompt.userMessage.includes('arithmetic checksum only'),
+      false
+    );
+    assert.doesNotMatch(section, /1695|28\.25/);
+    assert.ok(section.length <= 6800);
+    assert.ok(section.length <= 6750);
+    assert.ok(
+      JSON.stringify(promptInput.trainingMetricsGuidance).length <= 6000
+    );
+    assert.deepEqual(
+      parseEligiblePool(prompt.userMessage).map((item) => item.exerciseId),
+      context.exercisePoolItems.map((item) => item.exerciseId)
+    );
+  }
+});
+
+test('35- and 50-minute prompts preserve current ranges and budgets while rendering the non-numeric fallback', () => {
+  const cases = [
+    {
+      requestedMinutes: 35,
+      acceptableMinutes: [30, 36],
+      preferredMinutes: [32, 35],
+      acceptableSeconds: [1800, 2160],
+      preferredSeconds: [1920, 2100],
+    },
+    {
+      requestedMinutes: 50,
+      acceptableMinutes: [43, 52],
+      preferredMinutes: [45, 50],
+      acceptableSeconds: [2580, 3120],
+      preferredSeconds: [2700, 3000],
+    },
+  ];
+
+  for (const expected of cases) {
+    const context = createContext({
+      availability: {
+        sessionsPerWeek: 2,
+        durationPerSession: expected.requestedMinutes,
+      },
+    });
+    const prompt = buildProgramGenerationPrompt({
+      doctrine: MOCK_DOCTRINE,
+      context,
+    });
+    const section = extractTrainingMetricsSection(prompt.systemMessage);
+    const fallbackStart = section.indexOf(
+      '13. APPLY THE METHOD TO THE ACTUAL WORKOUT'
+    );
+    const fallbackEnd = section.indexOf('\n14. COACHING VOLUME', fallbackStart);
+    const fallback = section.slice(fallbackStart, fallbackEnd);
+    const fallbackBody = fallback.split('\n').slice(1).join('\n');
+
+    assert.notEqual(fallbackStart, -1);
+    assert.notEqual(fallbackEnd, -1);
+    assert.match(
+      fallback,
+      /No compact complete-workout example is available for this duration/
+    );
+    assert.doesNotMatch(
+      section,
+      /13\. WORKOUT ARITHMETIC FOR THIS \d+-MINUTE REQUEST/
+    );
+    assert.doesNotMatch(fallbackBody, /\d|moduleCount|preferred|correction/);
+    assert.equal(section.includes('arithmetic checksum only'), false);
+    assert.match(
+      section,
+      new RegExp(
+        `preferred planning budget is ${expected.preferredSeconds[0]}-${expected.preferredSeconds[1]} seconds`
+      )
+    );
+    assert.match(
+      section,
+      new RegExp(
+        `acceptable planning budget is ${expected.acceptableSeconds[0]}-${expected.acceptableSeconds[1]} seconds`
+      )
+    );
+    assert.match(
+      prompt.userMessage,
+      new RegExp(
+        `Approximately ${expected.acceptableMinutes[0]} to ${expected.acceptableMinutes[1]} backend-calculated minutes is acceptable`
+      )
+    );
+    assert.match(
+      prompt.userMessage,
+      new RegExp(
+        `preferred backend-calculated range is approximately ${expected.preferredMinutes[0]} to ${expected.preferredMinutes[1]} minutes`
+      )
+    );
+    assert.ok(section.length <= 6800);
+    assert.ok(section.length <= 6750);
+  }
+});
+
+test('120-minute rendering reports the policy result at 119 backend minutes without claiming exact equality', () => {
+  const prompt = buildProgramGenerationPrompt({
+    doctrine: MOCK_DOCTRINE,
+    context: createContext({
+      availability: { sessionsPerWeek: 2, durationPerSession: 120 },
+    }),
+  });
+  const section = extractTrainingMetricsSection(prompt.systemMessage);
+
+  assert.match(section, /8 × 895\.5 = 7164 seconds/);
+  assert.match(section, /7164 \/ 60 = 119\.4 minutes/);
+  assert.match(section, /One final rounding gives 119 backend minutes/);
+  assert.match(
+    section,
+    /Evaluation Policy:\n- preferred; correction required: false/
+  );
+  assert.doesNotMatch(section, /119 (?:equals|is equal to) 120/i);
 });
 
 test('user message is a readable hybrid brief with derived duration ranges and only the compact pool in JSON', () => {
