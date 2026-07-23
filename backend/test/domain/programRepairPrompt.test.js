@@ -129,7 +129,7 @@ function countOccurrences(text, value) {
   return text.split(value).length - 1;
 }
 
-test('buildProgramRepairPrompt uses the exact V1.0.0 version, classic doctrine, and one serialized context', () => {
+test('buildProgramRepairPrompt uses the exact V1.1.0 version, classic doctrine, and one serialized context', () => {
   const doctrine = loadWeeklyPlanBuilderDoctrine();
   const repairContext = createRepairContext();
   const serializedRepairContext = stableStringify(repairContext);
@@ -137,7 +137,7 @@ test('buildProgramRepairPrompt uses the exact V1.0.0 version, classic doctrine, 
 
   assert.equal(
     PROGRAM_REPAIR_PROMPT_VERSION,
-    'ai-weekly-plan-repair-prompt-v1.0.0'
+    'ai-weekly-plan-repair-prompt-v1.1.0'
   );
   assert.equal(prompt.promptVersion, PROGRAM_REPAIR_PROMPT_VERSION);
   assert.equal(countOccurrences(prompt.systemMessage, doctrine.content), 1);
@@ -282,7 +282,7 @@ test('invalid doctrine and repair context inputs produce controlled prompt error
 
   const invalidContexts = [
     null,
-    { ...validContext, schemaVersion: 2 },
+    { ...validContext, schemaVersion: 1 },
     {
       ...validContext,
       repairControl: { ...validContext.repairControl, maxAttempts: 2 },

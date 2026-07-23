@@ -96,7 +96,10 @@ function createAnalytics(overrides = {}) {
     workouts: [
       {
         workoutOrderIndex: 1,
-        durationDifferenceMinutes: -18,
+        requestedDurationMinutes: 30,
+        calculatedDurationMinutes: 15,
+        durationDifferenceMinutes: -15,
+        durationRequiresCorrection: true,
       },
     ],
     ...overrides,
@@ -178,11 +181,11 @@ function assertControlledError(input, expectedCode) {
   );
 }
 
-test('buildProgramRepairContext creates the exact V1 root and one-attempt control', () => {
+test('buildProgramRepairContext creates the exact V2 root and one-attempt control', () => {
   const input = createInput();
   const result = buildProgramRepairContext(input);
 
-  assert.equal(PROGRAM_REPAIR_CONTEXT_SCHEMA_VERSION, 1);
+  assert.equal(PROGRAM_REPAIR_CONTEXT_SCHEMA_VERSION, 2);
   assert.equal(PROGRAM_REPAIR_MAX_ATTEMPTS, 1);
   assert.equal(PROGRAM_REPAIR_OUTPUT_MODE, 'full_replacement');
   assert.deepEqual(Object.keys(result), [
@@ -192,7 +195,7 @@ test('buildProgramRepairContext creates the exact V1 root and one-attempt contro
     'source',
     'repairBrief',
   ]);
-  assert.equal(result.schemaVersion, 1);
+  assert.equal(result.schemaVersion, 2);
   assert.deepEqual(result.repairControl, {
     maxAttempts: 1,
     attemptNumber: 1,
@@ -205,6 +208,96 @@ test('buildProgramRepairContext creates the exact V1 root and one-attempt contro
   assert.deepEqual(result.source.generatedAIOutput, input.generatedAIOutput);
   assert.deepEqual(result.source.generatedPlanDocument, input.generatedPlanDocument);
   assert.deepEqual(result.source.analytics, input.analytics);
+  assert.deepEqual(result.repairBrief.durationCompensation, {
+    method: 'proportional_requested_squared_over_calculated_v1',
+    minFactor: 0.5,
+    maxFactor: 2,
+    workouts: [
+      {
+        workoutOrderIndex: 1,
+        originalRequestedDurationMinutes: 30,
+        currentCalculatedDurationMinutes: 15,
+        rawCompensationFactor: 2,
+        appliedCompensationFactor: 2,
+        repairDesignTargetMinutes: 60,
+      },
+    ],
+  });
+});
+
+test('duration compensation proportionally increases a short workout target', () => {
+  const input = createInput({
+    analytics: createAnalytics({
+      workouts: [
+        {
+          workoutOrderIndex: 1,
+          requestedDurationMinutes: 30,
+          calculatedDurationMinutes: 22,
+          durationDifferenceMinutes: -8,
+          durationRequiresCorrection: true,
+        },
+      ],
+    }),
+  });
+
+  const result = buildProgramRepairContext(input);
+  const compensation =
+    result.repairBrief.durationCompensation.workouts[0];
+
+  assert.equal(compensation.originalRequestedDurationMinutes, 30);
+  assert.equal(compensation.currentCalculatedDurationMinutes, 22);
+  assert.equal(compensation.rawCompensationFactor, 1.3636);
+  assert.equal(compensation.appliedCompensationFactor, 1.3636);
+  assert.equal(compensation.repairDesignTargetMinutes, 41);
+});
+
+test('duration compensation proportionally decreases a long workout target', () => {
+  const input = createInput({
+    analytics: createAnalytics({
+      workouts: [
+        {
+          workoutOrderIndex: 1,
+          requestedDurationMinutes: 30,
+          calculatedDurationMinutes: 40,
+          durationDifferenceMinutes: 10,
+          durationRequiresCorrection: true,
+        },
+      ],
+    }),
+  });
+
+  const result = buildProgramRepairContext(input);
+  const compensation =
+    result.repairBrief.durationCompensation.workouts[0];
+
+  assert.equal(compensation.originalRequestedDurationMinutes, 30);
+  assert.equal(compensation.currentCalculatedDurationMinutes, 40);
+  assert.equal(compensation.rawCompensationFactor, 0.75);
+  assert.equal(compensation.appliedCompensationFactor, 0.75);
+  assert.equal(compensation.repairDesignTargetMinutes, 23);
+});
+
+test('duration compensation excludes workouts that do not require correction', () => {
+  const input = createInput({
+    analytics: createAnalytics({
+      workouts: [
+        {
+          workoutOrderIndex: 1,
+          requestedDurationMinutes: 30,
+          calculatedDurationMinutes: 29,
+          durationDifferenceMinutes: -1,
+          durationRequiresCorrection: false,
+        },
+      ],
+    }),
+  });
+
+  const result = buildProgramRepairContext(input);
+
+  assert.deepEqual(
+    result.repairBrief.durationCompensation.workouts,
+    []
+  );
 });
 
 test('mandatory and recommended issues are projected, filtered, and ordered by issueIndex', () => {

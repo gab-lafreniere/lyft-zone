@@ -872,7 +872,7 @@ test('Audit V7 persists only final repaired summaries with distinct repair metad
       outcome: 'PASSED',
       attempts: 1,
       maxAttempts: 1,
-      promptVersion: 'ai-weekly-plan-repair-prompt-v1.0.0',
+      promptVersion: 'ai-weekly-plan-repair-prompt-v1.1.0',
       contractVersion: 2,
       outputSchemaVersion: 2,
       initialReviewSummary: {
@@ -927,7 +927,7 @@ test('Audit V7 persists only final repaired summaries with distinct repair metad
     outcome: 'PASSED',
     attempts: 1,
     maxAttempts: 1,
-    promptVersion: 'ai-weekly-plan-repair-prompt-v1.0.0',
+    promptVersion: 'ai-weekly-plan-repair-prompt-v1.1.0',
     contractVersion: 2,
     outputSchemaVersion: 2,
     initialReviewSummary: {
@@ -1051,7 +1051,7 @@ function createPassedRepairMetadata(overrides = {}) {
     outcome: 'PASSED',
     attempts: 1,
     maxAttempts: 1,
-    promptVersion: 'ai-weekly-plan-repair-prompt-v1.0.0',
+    promptVersion: 'ai-weekly-plan-repair-prompt-v1.1.0',
     contractVersion: 2,
     outputSchemaVersion: 2,
     initialReviewSummary: createRepairReviewSummary('REPAIR_REQUIRED'),

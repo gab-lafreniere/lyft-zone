@@ -16,9 +16,16 @@ const {
   WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
 } = require('./weeklyPlanEvaluationPolicy');
 
-const PROGRAM_REPAIR_CONTEXT_SCHEMA_VERSION = 1;
+const PROGRAM_REPAIR_CONTEXT_SCHEMA_VERSION = 2;
 const PROGRAM_REPAIR_MAX_ATTEMPTS = 1;
 const PROGRAM_REPAIR_OUTPUT_MODE = 'full_replacement';
+
+const DURATION_COMPENSATION_METHOD =
+  'proportional_requested_squared_over_calculated_v1';
+
+const MIN_DURATION_COMPENSATION_FACTOR = 0.5;
+const MAX_DURATION_COMPENSATION_FACTOR = 2;
+const MAX_REPAIR_DESIGN_TARGET_MINUTES = 240;
 
 class ProgramRepairContextError extends Error {
   constructor(code, message) {
@@ -174,6 +181,67 @@ function deepFreeze(value, seen = new WeakSet()) {
   return Object.freeze(value);
 }
 
+function clamp(value, minimum, maximum) {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function roundTo(value, decimals = 4) {
+  return Number(value.toFixed(decimals));
+}
+
+function buildDurationCompensation(analytics) {
+  const workouts = Array.isArray(analytics?.workouts)
+    ? analytics.workouts
+    : [];
+
+  return {
+    method: DURATION_COMPENSATION_METHOD,
+    minFactor: MIN_DURATION_COMPENSATION_FACTOR,
+    maxFactor: MAX_DURATION_COMPENSATION_FACTOR,
+    workouts: workouts
+      .filter((workout) => workout?.durationRequiresCorrection === true)
+      .map((workout) => {
+        const requestedMinutes = Number(workout.requestedDurationMinutes);
+        const calculatedMinutes = Number(workout.calculatedDurationMinutes);
+
+        if (
+          !Number.isFinite(requestedMinutes) ||
+          requestedMinutes <= 0 ||
+          !Number.isFinite(calculatedMinutes) ||
+          calculatedMinutes < 0
+        ) {
+          return null;
+        }
+
+        const rawFactor =
+          calculatedMinutes > 0
+            ? requestedMinutes / calculatedMinutes
+            : MAX_DURATION_COMPENSATION_FACTOR;
+
+        const appliedFactor = clamp(
+          rawFactor,
+          MIN_DURATION_COMPENSATION_FACTOR,
+          MAX_DURATION_COMPENSATION_FACTOR
+        );
+
+        const repairDesignTargetMinutes = Math.min(
+          MAX_REPAIR_DESIGN_TARGET_MINUTES,
+          Math.max(1, Math.round(requestedMinutes * appliedFactor))
+        );
+
+        return {
+          workoutOrderIndex: workout.workoutOrderIndex,
+          originalRequestedDurationMinutes: requestedMinutes,
+          currentCalculatedDurationMinutes: calculatedMinutes,
+          rawCompensationFactor: roundTo(rawFactor),
+          appliedCompensationFactor: roundTo(appliedFactor),
+          repairDesignTargetMinutes,
+        };
+      })
+      .filter(Boolean),
+  };
+}
+
 function buildProgramRepairContext({
   context,
   generatedAIOutput,
@@ -203,6 +271,7 @@ function buildProgramRepairContext({
       analytics,
     },
     repairBrief: {
+      durationCompensation: buildDurationCompensation(analytics),
       initialReview: {
         schemaVersion: initialReview.review.schemaVersion,
         decision: initialReview.review.decision,
@@ -222,5 +291,6 @@ module.exports = {
   PROGRAM_REPAIR_MAX_ATTEMPTS,
   PROGRAM_REPAIR_OUTPUT_MODE,
   ProgramRepairContextError,
+  buildDurationCompensation,
   buildProgramRepairContext,
 };

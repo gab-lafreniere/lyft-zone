@@ -22,7 +22,7 @@ const {
 const { stableStringify } = require('./programGenerationPrompt');
 
 const PROGRAM_REPAIR_PROMPT_VERSION =
-  'ai-weekly-plan-repair-prompt-v1.0.0';
+  'ai-weekly-plan-repair-prompt-v1.1.0';
 
 class ProgramRepairPromptError extends Error {
   constructor(code, message) {
@@ -123,6 +123,12 @@ function buildProgramRepairPrompt({ doctrine, repairContext } = {}) {
     '- A negative durationDifferenceMinutes means the workout is too short. Never reduce a workout that is already too short.',
     '- A positive durationDifferenceMinutes means the workout is too long. Never lengthen a workout that is already too long.',
     '- Use the supplied duration Analytics and evaluationPolicy configuration; do not duplicate or reinterpret backend calculations.',
+    '- repairBrief.durationCompensation.workouts contains temporary per-workout design targets calculated from the observed backend duration error.',
+    '- For each listed workout, use repairDesignTargetMinutes as the temporary design target during this repair only.',
+    '- Final acceptance remains based on originalRequestedDurationMinutes and newly recalculated backend Analytics.',
+    '- Modify actual duration contributors such as useful sets, relevant exercises, block organization, tempo and appropriate rest.',
+    '- Never repair duration by changing only estimatedDurationMinutes, names, notes, strategySummary or other prose.',
+    '- estimatedDurationMinutes must reflect the final backend-method calculation of the returned workout, not automatically the temporary repair design target.',
     '',
     'Exercise pool and final intent:',
     '- Use only exerciseIds from the User Exercise Pool in ProgramGenerationContext.',

@@ -212,7 +212,7 @@ test('runAIProgramRepair builds context, prompt, and Weekly Plan AI Schema V2 be
   );
   assert.equal(
     capture.providerInput.promptDescriptor.promptVersion,
-    'ai-weekly-plan-repair-prompt-v1.0.0'
+    'ai-weekly-plan-repair-prompt-v1.1.0'
   );
   assert.deepEqual(
     capture.providerInput.schema,
