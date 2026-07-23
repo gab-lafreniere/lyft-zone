@@ -14,7 +14,7 @@ const {
 
 function createPromptDescriptor() {
   return {
-    promptVersion: 'ai-weekly-plan-repair-prompt-v1.0.0',
+    promptVersion: 'ai-weekly-plan-repair-prompt-v1.1.0',
     systemMessage: 'SYSTEM_MESSAGE_SENTINEL',
     userMessage: 'USER_MESSAGE_SENTINEL',
   };
