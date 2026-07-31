@@ -17,3 +17,6 @@ export function getManualBuilderPath() {
   return "/program/manual-builder";
 }
 
+export function getAIWeeklyPlanBuilderPath() {
+  return "/program/ai-builder";
+}

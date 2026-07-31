@@ -1,0 +1,52 @@
+3-Day Advanced Hypertrophy Plan
+
+Workout 1 — Upper-Chest and Back Emphasis
+
+1. SINGLE — Incline Barbell Bench Press (exr_incline_barbell_bench_press): 5 sets of 6–8 reps, 2 RIR, tempo 3110, rest 180 seconds. Keep the upper back fixed to the bench.
+2. SINGLE — Chest Supported Cable Row (exr_chest_supported_cable_row): 4 sets of 8–10 reps, 2 RIR, tempo 3111, rest 150 seconds.
+3. SINGLE — Incline Dumbbell Press (exr_incline_dumbbell_press): 4 sets of 8–12 reps, 1–2 RIR, tempo 3010, rest 150 seconds. Use targetRir 2 when materialized.
+4. SUPERSET — 4 rounds:
+   A. Cable Rear Delt Fly (exr_cable_rear_delt_fly): 4 sets of 12–15 reps, 2 RIR, tempo 2111.
+   B. Neutral Grip Lat Pulldown (exr_neutral_grip_lat_pulldown): 4 sets of 8–12 reps, 2 RIR, tempo 3011.
+   Rest 90 seconds after each round.
+5. SUPERSET — 3 rounds:
+   A. Cable Lateral Raise (exr_cable_lateral_raise): 3 sets of 12–15 reps per side, 2 RIR, tempo 2111.
+   B. Incline Cable Fly (exr_incline_cable_fly): 3 sets of 10–15 reps, 2 RIR, tempo 2111.
+   Rest 75 seconds after each round.
+6. SUPERSET — 3 rounds:
+   A. Cable Overhead Triceps Extension (exr_cable_overhead_triceps_extension): 3 sets of 10–15 reps, 2 RIR, tempo 2111.
+   B. Bayesian Cable Curl (exr_bayesian_cable_curl): 3 sets of 10–15 reps per side, 2 RIR, tempo 2111.
+   Rest 75 seconds after each round.
+7. SINGLE — Barbell Standing Calf Raise (exr_barbell_standing_calf_raise): 4 sets of 8–12 reps, 2 RIR, tempo 2111, rest 90 seconds.
+
+Workout 2 — Posterior Chain and Upper-Chest Emphasis
+
+1. SINGLE — Romanian Deadlift (exr_romanian_deadlift): 4 sets of 6–8 reps, 2 RIR, tempo 3110, rest 180 seconds. Maintain a controlled hinge.
+2. SINGLE — Barbell Hip Thrust (exr_barbell_hip_thrust): 4 sets of 8–10 reps, 2 RIR, tempo 2111, rest 150 seconds.
+3. SINGLE — Incline Dumbbell Press (exr_incline_dumbbell_press): 4 sets of 10–12 reps, 2 RIR, tempo 3010, rest 150 seconds.
+4. SUPERSET — 4 rounds:
+   A. Close Neutral Grip Pulldown (exr_close_neutral_grip_pulldown): 4 sets of 8–12 reps, 2 RIR, tempo 3011.
+   B. Single Arm Rear Delt Cable Fly (exr_single_arm_rear_delt_cable_fly): 4 sets of 12–15 reps per side, 2 RIR, tempo 2111.
+   Rest 90 seconds after each round.
+5. SUPERSET — 3 rounds:
+   A. Cable Glute Kickback (exr_cable_glute_kickback): 3 sets of 12–15 reps per side, 2 RIR, tempo 2111.
+   B. Cable Hip Abduction (exr_cable_hip_abduction): 3 sets of 15–20 reps per side, 2 RIR, tempo 2111.
+   Rest 75 seconds after each round.
+6. SINGLE — Seated Dumbbell Calf Raise (exr_seated_dumbbell_calf_raise): 4 sets of 12–15 reps, 2 RIR, tempo 2111, rest 90 seconds.
+7. SINGLE — Ab Wheel Rollout (exr_ab_wheel_rollout): 3 sets of 8–12 reps, 2 RIR, tempo 3111, rest 90 seconds. Stop before lumbar extension.
+
+Workout 3 — Upper-Chest, Rear-Deltoid and Full-Body Emphasis
+
+1. SINGLE — Incline Barbell Bench Press (exr_incline_barbell_bench_press): 4 sets of 8–10 reps, 2 RIR, tempo 3110, rest 180 seconds.
+2. SINGLE — Chin Up (exr_chin_up): 4 sets of 6–10 reps, 2 RIR, tempo 3011, rest 150 seconds.
+3. SINGLE — Deficit Romanian Deadlift (exr_deficit_romanian_deadlift): 4 sets of 8–10 reps, 2 RIR, tempo 3110, rest 180 seconds.
+4. SINGLE — Single Arm Landmine Press (exr_single_arm_landmine_press): 4 sets of 8–12 reps per side, 2 RIR, tempo 3010, rest 120 seconds.
+5. SUPERSET — 4 rounds:
+   A. Cable High Row (exr_cable_high_row): 4 sets of 10–12 reps, 2 RIR, tempo 3011.
+   B. Chest Supported Rear Delt Fly (exr_chest_supported_rear_delt_fly): 4 sets of 12–15 reps, 2 RIR, tempo 2111.
+   Rest 90 seconds after each round.
+6. SUPERSET — 3 rounds:
+   A. Rope Triceps Pushdown (exr_rope_triceps_pushdown): 3 sets of 10–15 reps, 2 RIR, tempo 2111.
+   B. Incline Dumbbell Curl (exr_incline_dumbbell_curl): 3 sets of 10–12 reps, 2 RIR, tempo 2111.
+   Rest 75 seconds after each round.
+7. SINGLE — Single Leg Standing Calf Raise (exr_single_leg_standing_calf_raise): 4 sets of 12–15 reps per side, 2 RIR, tempo 2111, rest 90 seconds.

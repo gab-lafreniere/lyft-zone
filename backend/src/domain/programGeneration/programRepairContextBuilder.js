@@ -15,17 +15,18 @@ const {
   WEEKLY_PLAN_EVALUATION_POLICY_ID,
   WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
 } = require('./weeklyPlanEvaluationPolicy');
+const {
+  buildDurationCorrectionDetails,
+} = require('./weeklyPlanBackendDuration');
 
-const PROGRAM_REPAIR_CONTEXT_SCHEMA_VERSION = 2;
+const PROGRAM_REPAIR_CONTEXT_SCHEMA_VERSION = 4;
 const PROGRAM_REPAIR_MAX_ATTEMPTS = 1;
 const PROGRAM_REPAIR_OUTPUT_MODE = 'full_replacement';
-
-const DURATION_COMPENSATION_METHOD =
-  'proportional_requested_squared_over_calculated_v1';
-
-const MIN_DURATION_COMPENSATION_FACTOR = 0.5;
-const MAX_DURATION_COMPENSATION_FACTOR = 2;
-const MAX_REPAIR_DESIGN_TARGET_MINUTES = 240;
+const PROGRAM_REPAIR_TRIGGERS = Object.freeze(['DURATION', 'REVIEW']);
+const MIN_SESSIONS_PER_WEEK = 1;
+const MAX_SESSIONS_PER_WEEK = 7;
+const MIN_DURATION_PER_SESSION_MINUTES = 15;
+const MAX_DURATION_PER_SESSION_MINUTES = 120;
 
 class ProgramRepairContextError extends Error {
   constructor(code, message) {
@@ -39,6 +40,32 @@ function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function cloneStructuredValue(value, seen = new WeakMap()) {
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  if (seen.has(value)) {
+    return seen.get(value);
+  }
+
+  const clone = Array.isArray(value) ? [] : {};
+  seen.set(value, clone);
+  Object.keys(value).forEach((key) => {
+    clone[key] = cloneStructuredValue(value[key], seen);
+  });
+  return clone;
+}
+
+function deepFreeze(value, seen = new WeakSet()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) {
+    return value;
+  }
+
+  seen.add(value);
+  Object.values(value).forEach((entry) => deepFreeze(entry, seen));
+  return Object.freeze(value);
+}
+
 function hasCanonicalEvaluationPolicyIdentity(policy) {
   return (
     isObject(policy) &&
@@ -48,12 +75,20 @@ function hasCanonicalEvaluationPolicyIdentity(policy) {
 }
 
 function assertProgramGenerationContext(context) {
+  const availability = context?.availability;
   if (
     !isObject(context) ||
     context.schemaVersion !== PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION ||
     !hasCanonicalEvaluationPolicyIdentity(context.evaluationPolicy) ||
     !isObject(context.poolSnapshot) ||
-    !Array.isArray(context.exercisePoolItems)
+    !Array.isArray(context.exercisePoolItems) ||
+    !isObject(availability) ||
+    !Number.isInteger(availability.sessionsPerWeek) ||
+    availability.sessionsPerWeek < MIN_SESSIONS_PER_WEEK ||
+    availability.sessionsPerWeek > MAX_SESSIONS_PER_WEEK ||
+    !Number.isInteger(availability.durationPerSession) ||
+    availability.durationPerSession < MIN_DURATION_PER_SESSION_MINUTES ||
+    availability.durationPerSession > MAX_DURATION_PER_SESSION_MINUTES
   ) {
     throw new ProgramRepairContextError(
       'INVALID_PROGRAM_REPAIR_CONTEXT',
@@ -81,6 +116,14 @@ function assertAnalytics(analytics, context) {
   const hasMatchingPolicyIdentity =
     analytics?.evaluationPolicy?.id === context.evaluationPolicy.id &&
     analytics?.evaluationPolicy?.version === context.evaluationPolicy.version;
+  const hasCanonicalRequestedDurations =
+    Array.isArray(analytics?.workouts) &&
+    analytics.workouts.every(
+      (workout) =>
+        workout?.requestedDurationMinutes ===
+        context.availability.durationPerSession &&
+        isObject(workout?.durationCalculation)
+    );
 
   if (
     !isObject(analytics) ||
@@ -88,11 +131,12 @@ function assertAnalytics(analytics, context) {
     !hasCanonicalEvaluationPolicyIdentity(analytics.evaluationPolicy) ||
     !hasMatchingPolicyIdentity ||
     !isObject(analytics.plan) ||
-    !Array.isArray(analytics.workouts)
+    !Array.isArray(analytics.workouts) ||
+    !hasCanonicalRequestedDurations
   ) {
     throw new ProgramRepairContextError(
       'INVALID_PROGRAM_REPAIR_ANALYTICS',
-      'Valid program repair analytics are required'
+      'Valid backend-only program repair analytics are required'
     );
   }
 }
@@ -152,93 +196,47 @@ function projectIssues(issues, severity) {
     .sort((left, right) => left.issueIndex - right.issueIndex);
 }
 
-function cloneStructuredValue(value, seen = new WeakMap()) {
-  if (!value || typeof value !== 'object') {
-    return value;
-  }
-
-  if (seen.has(value)) {
-    return seen.get(value);
-  }
-
-  const clone = Array.isArray(value) ? [] : {};
-  seen.set(value, clone);
-
-  Object.keys(value).forEach((key) => {
-    clone[key] = cloneStructuredValue(value[key], seen);
-  });
-
-  return clone;
+function projectEvaluationPolicy(policy) {
+  return {
+    id: policy.id,
+    version: policy.version,
+    scope: policy.scope,
+    duration: cloneStructuredValue(policy.duration),
+    cardio: cloneStructuredValue(policy.cardio),
+    volumeFrequencyTargetsEvaluated: false,
+  };
 }
 
-function deepFreeze(value, seen = new WeakSet()) {
-  if (!value || typeof value !== 'object' || seen.has(value)) {
-    return value;
-  }
-
-  seen.add(value);
-  Object.values(value).forEach((item) => deepFreeze(item, seen));
-  return Object.freeze(value);
+function buildAcceptableDurationBrief(analytics) {
+  return {
+    status: 'ACCEPTABLE',
+    workouts: analytics.workouts.map((workout) => ({
+      workoutOrderIndex: workout.workoutOrderIndex,
+      requestedDurationMinutes: workout.requestedDurationMinutes,
+      calculatedDurationMinutes: workout.calculatedDurationMinutes,
+      durationAlignmentStatus: workout.durationAlignmentStatus,
+      backendDurationCalculation: cloneStructuredValue(
+        workout.durationCalculation
+      ),
+    })),
+  };
 }
 
-function clamp(value, minimum, maximum) {
-  return Math.min(maximum, Math.max(minimum, value));
-}
-
-function roundTo(value, decimals = 4) {
-  return Number(value.toFixed(decimals));
-}
-
-function buildDurationCompensation(analytics) {
-  const workouts = Array.isArray(analytics?.workouts)
-    ? analytics.workouts
+function projectDebugContractValidation(validation) {
+  const issues = Array.isArray(validation?.issues)
+    ? validation.issues
+        .filter((issue) => isObject(issue))
+        .map((issue) => ({
+          code: typeof issue.code === 'string' ? issue.code : null,
+          path: typeof issue.path === 'string' ? issue.path : null,
+          message: typeof issue.message === 'string' ? issue.message : null,
+        }))
+        .filter((issue) => issue.code && issue.path && issue.message)
     : [];
 
   return {
-    method: DURATION_COMPENSATION_METHOD,
-    minFactor: MIN_DURATION_COMPENSATION_FACTOR,
-    maxFactor: MAX_DURATION_COMPENSATION_FACTOR,
-    workouts: workouts
-      .filter((workout) => workout?.durationRequiresCorrection === true)
-      .map((workout) => {
-        const requestedMinutes = Number(workout.requestedDurationMinutes);
-        const calculatedMinutes = Number(workout.calculatedDurationMinutes);
-
-        if (
-          !Number.isFinite(requestedMinutes) ||
-          requestedMinutes <= 0 ||
-          !Number.isFinite(calculatedMinutes) ||
-          calculatedMinutes < 0
-        ) {
-          return null;
-        }
-
-        const rawFactor =
-          calculatedMinutes > 0
-            ? requestedMinutes / calculatedMinutes
-            : MAX_DURATION_COMPENSATION_FACTOR;
-
-        const appliedFactor = clamp(
-          rawFactor,
-          MIN_DURATION_COMPENSATION_FACTOR,
-          MAX_DURATION_COMPENSATION_FACTOR
-        );
-
-        const repairDesignTargetMinutes = Math.min(
-          MAX_REPAIR_DESIGN_TARGET_MINUTES,
-          Math.max(1, Math.round(requestedMinutes * appliedFactor))
-        );
-
-        return {
-          workoutOrderIndex: workout.workoutOrderIndex,
-          originalRequestedDurationMinutes: requestedMinutes,
-          currentCalculatedDurationMinutes: calculatedMinutes,
-          rawCompensationFactor: roundTo(rawFactor),
-          appliedCompensationFactor: roundTo(appliedFactor),
-          repairDesignTargetMinutes,
-        };
-      })
-      .filter(Boolean),
+    requiresCorrection: validation?.ok === false && issues.length > 0,
+    issues,
   };
 }
 
@@ -247,50 +245,107 @@ function buildProgramRepairContext({
   generatedAIOutput,
   generatedPlanDocument,
   analytics,
-  initialReview,
+  initialReview = null,
+  trigger = null,
+  debugContractValidation = null,
 } = {}) {
   assertProgramGenerationContext(context);
   assertSourcePlan(generatedAIOutput, generatedPlanDocument);
   assertAnalytics(analytics, context);
-  assertInitialReview(initialReview);
 
-  const repairContext = {
+  const resolvedTrigger =
+    trigger ||
+    (analytics.workouts.some(
+      (workout) => workout.durationRequiresCorrection === true
+    )
+      ? 'DURATION'
+      : 'REVIEW');
+
+  if (!PROGRAM_REPAIR_TRIGGERS.includes(resolvedTrigger)) {
+    throw new ProgramRepairContextError(
+      'INVALID_PROGRAM_REPAIR_TRIGGER',
+      'Program repair trigger must be DURATION or REVIEW'
+    );
+  }
+
+  if (resolvedTrigger === 'REVIEW') {
+    assertInitialReview(initialReview);
+    if (
+      analytics.workouts.some(
+        (workout) => workout.durationRequiresCorrection === true
+      )
+    ) {
+      throw new ProgramRepairContextError(
+        'INVALID_PROGRAM_REPAIR_ANALYTICS',
+        'Review repair requires duration-valid backend Analytics'
+      );
+    }
+  }
+
+  const durationCorrections =
+    resolvedTrigger === 'DURATION'
+      ? buildDurationCorrectionDetails(analytics)
+      : [];
+  if (resolvedTrigger === 'DURATION' && durationCorrections.length === 0) {
+    throw new ProgramRepairContextError(
+      'INVALID_PROGRAM_REPAIR_ANALYTICS',
+      'Duration repair requires at least one correction-required workout'
+    );
+  }
+
+  const projectedContext = cloneStructuredValue(context);
+  projectedContext.evaluationPolicy = projectEvaluationPolicy(
+    context.evaluationPolicy
+  );
+
+  const review =
+    resolvedTrigger === 'REVIEW'
+      ? {
+          schemaVersion: initialReview.review.schemaVersion,
+          decision: initialReview.review.decision,
+          requiresRepair: initialReview.review.requiresRepair,
+          reviewSummary: initialReview.review.reviewSummary,
+        }
+      : null;
+  const issues = resolvedTrigger === 'REVIEW' ? initialReview.review.issues : [];
+
+  return deepFreeze({
     schemaVersion: PROGRAM_REPAIR_CONTEXT_SCHEMA_VERSION,
     repairControl: {
       maxAttempts: PROGRAM_REPAIR_MAX_ATTEMPTS,
       attemptNumber: 1,
       outputMode: PROGRAM_REPAIR_OUTPUT_MODE,
-      finalValidationRequired: true,
-      finalAnalyticsRequired: true,
-      finalReviewRequired: true,
+      trigger: resolvedTrigger,
     },
-    programGenerationContext: context,
+    programGenerationContext: projectedContext,
     source: {
-      generatedAIOutput,
-      generatedPlanDocument,
-      analytics,
+      generatedAIOutput: cloneStructuredValue(generatedAIOutput),
+      generatedPlanDocument: cloneStructuredValue(generatedPlanDocument),
+      analytics: cloneStructuredValue(analytics),
     },
     repairBrief: {
-      durationCompensation: buildDurationCompensation(analytics),
-      initialReview: {
-        schemaVersion: initialReview.review.schemaVersion,
-        decision: initialReview.review.decision,
-        requiresRepair: initialReview.review.requiresRepair,
-        reviewSummary: initialReview.review.reviewSummary,
-      },
-      mandatoryIssues: projectIssues(initialReview.review.issues, 'HIGH'),
-      recommendedIssues: projectIssues(initialReview.review.issues, 'MEDIUM'),
+      duration:
+        resolvedTrigger === 'DURATION'
+          ? {
+              status: 'CORRECTION_REQUIRED',
+              workouts: durationCorrections,
+            }
+          : buildAcceptableDurationBrief(analytics),
+      debugContract: projectDebugContractValidation(
+        debugContractValidation
+      ),
+      review,
+      mandatoryIssues: projectIssues(issues, 'HIGH'),
+      recommendedIssues: projectIssues(issues, 'MEDIUM'),
     },
-  };
-
-  return deepFreeze(cloneStructuredValue(repairContext));
+  });
 }
 
 module.exports = {
   PROGRAM_REPAIR_CONTEXT_SCHEMA_VERSION,
   PROGRAM_REPAIR_MAX_ATTEMPTS,
   PROGRAM_REPAIR_OUTPUT_MODE,
+  PROGRAM_REPAIR_TRIGGERS,
   ProgramRepairContextError,
-  buildDurationCompensation,
   buildProgramRepairContext,
 };

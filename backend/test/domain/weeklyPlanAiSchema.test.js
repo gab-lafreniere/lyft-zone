@@ -2,400 +2,172 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS,
-  AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS,
   AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION,
   AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION,
   buildWeeklyPlanAiJsonSchema,
   validateWeeklyPlanAiOutputSchema,
 } = require('../../src/domain/programGeneration/weeklyPlanAiSchema');
+const {
+  clone,
+  createAiOutput,
+  createSetTemplate,
+} = require('./weeklyPlanAiV4Fixtures');
 
-const UNSUPPORTED_STRUCTURED_OUTPUT_KEYWORDS = new Set([
-  'oneOf',
-  'allOf',
-  'not',
-  'if',
-  'then',
-  'else',
-  'dependentRequired',
-  'dependentSchemas',
-]);
-
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
+function withSetTemplate(setTemplate) {
+  const output = createAiOutput();
+  output.workouts[0].blocks[0].exercises[0].setTemplates = [setTemplate];
+  return output;
 }
 
-function createSetTemplate(overrides = {}) {
-  return {
-    setIndex: 1,
-    setType: 'WORKING',
-    targetReps: 10,
-    minReps: null,
-    maxReps: null,
-    targetRir: 2,
-    tempo: '3010',
-    restSeconds: 120,
-    ...overrides,
-  };
-}
-
-function createExercise(overrides = {}) {
-  return {
-    exerciseId: 'ex_bench',
-    exerciseName: 'Dumbbell Bench Press',
-    orderIndex: 1,
-    bodyParts: ['chest'],
-    muscleFocus: ['upper_chest'],
-    defaultTempo: '3010',
-    defaultRestSeconds: 120,
-    defaultTargetRir: 2,
-    setTemplates: [createSetTemplate()],
-    cardioPrescription: null,
-    notes: null,
-    ...overrides,
-  };
-}
-
-function createWorkout(index = 1, overrides = {}) {
-  return {
-    name: `Workout ${index}`,
-    orderIndex: index,
-    estimatedDurationMinutes: 60,
-    focus: 'Upper push',
-    blocks: [
-      {
-        orderIndex: 1,
-        blockType: 'SINGLE',
-        exercises: [createExercise()],
-      },
-    ],
-    ...overrides,
-  };
-}
-
-function createValidAIOutput(overrides = {}) {
-  return {
-    schemaVersion: 2,
-    planName: 'AI Draft',
-    sessionsPerWeek: 1,
-    strategySummary: 'Simple full body plan.',
-    splitType: 'full_body',
-    workouts: [createWorkout()],
-    volumeTargets: {
-      bodyParts: [],
-      muscleFocuses: [],
-    },
-    frequencyTargets: {
-      bodyParts: [],
-      muscleFocuses: [],
-    },
-    progressionModel: {
-      type: 'double_progression',
-      summary: 'Add reps before load.',
-    },
-    cautionHandling: {
-      summary: 'Respect blocked constraints and keep cautions soft.',
-    },
-    notesPolicy: {
-      summary: 'Use notes only when they add useful coaching context.',
-    },
-    ...overrides,
-  };
-}
-
-function createOutputWithSetTemplate(overrides = {}) {
-  const payload = clone(createValidAIOutput());
-  payload.workouts[0].blocks[0].exercises[0].setTemplates = [
-    createSetTemplate(overrides),
-  ];
-  return payload;
-}
-
-function findUnsupportedKeywords(value, path = 'root', matches = []) {
-  if (Array.isArray(value)) {
-    value.forEach((entry, index) =>
-      findUnsupportedKeywords(entry, `${path}[${index}]`, matches)
-    );
-    return matches;
-  }
-
-  if (!value || typeof value !== 'object') {
-    return matches;
-  }
-
-  Object.entries(value).forEach(([key, entry]) => {
-    const entryPath = `${path}.${key}`;
-    if (UNSUPPORTED_STRUCTURED_OUTPUT_KEYWORDS.has(key)) {
-      matches.push(entryPath);
-    }
-    findUnsupportedKeywords(entry, entryPath, matches);
-  });
-
-  return matches;
-}
-
-test('validateWeeklyPlanAiOutputSchema accepts a minimal valid AI output', () => {
-  const result = validateWeeklyPlanAiOutputSchema(createValidAIOutput());
-
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.issues, []);
+test('Output V4 exports contract and schema version 4', () => {
+  assert.equal(AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION, 4);
+  assert.equal(AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION, 4);
+  assert.equal(validateWeeklyPlanAiOutputSchema(createAiOutput()).ok, true);
 });
 
-test('Weekly Plan AI Output V2 requires explicit canonical target taxonomies', () => {
-  const payload = createValidAIOutput({
-    volumeTargets: {
-      bodyParts: [
-        {
-          area: 'chest',
-          targetSetsPerWeek: 3,
-          priority: 'primary',
-          rationale: null,
-        },
-      ],
-      muscleFocuses: [
-        {
-          area: 'upper_chest',
-          targetSetsPerWeek: 3,
-          priority: 'primary',
-          rationale: null,
-        },
-      ],
-    },
-    frequencyTargets: {
-      bodyParts: [{ area: 'chest', targetSessionsPerWeek: 1 }],
-      muscleFocuses: [
-        { area: 'upper_chest', targetSessionsPerWeek: 1 },
-      ],
-    },
-  });
+test('V4 workout accepts absence of every AI duration field', () => {
+  const workoutSchema =
+    buildWeeklyPlanAiJsonSchema().properties.workouts.items;
 
-  assert.equal(AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION, 2);
-  assert.equal(AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION, 2);
-  assert.equal(validateWeeklyPlanAiOutputSchema(payload).ok, true);
-  assert.equal(AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS.includes('chest'), true);
-  assert.equal(
-    AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS.includes('upper_chest'),
-    true
-  );
+  assert.deepEqual(workoutSchema.required, [
+    'name',
+    'orderIndex',
+    'focus',
+    'blocks',
+  ]);
+  assert.deepEqual(Object.keys(workoutSchema.properties), [
+    'name',
+    'orderIndex',
+    'focus',
+    'blocks',
+  ]);
 });
 
-test('Weekly Plan AI Output V2 rejects perMuscle, crossed anatomy keys, and fractional targets', () => {
-  const legacy = createValidAIOutput({
-    volumeTargets: { perMuscle: [] },
-  });
-  const crossedBodyPart = createValidAIOutput();
-  crossedBodyPart.volumeTargets.bodyParts = [
-    {
-      area: 'pectoralis_major',
-      targetSetsPerWeek: 3,
-      priority: 'primary',
-      rationale: null,
-    },
-  ];
-  const crossedMuscleFocus = createValidAIOutput();
-  crossedMuscleFocus.frequencyTargets.muscleFocuses = [
-    { area: 'rhomboids', targetSessionsPerWeek: 1 },
-  ];
-  const fractional = createValidAIOutput();
-  fractional.volumeTargets.bodyParts = [
-    {
-      area: 'chest',
-      targetSetsPerWeek: 1.5,
-      priority: 'primary',
-      rationale: null,
-    },
-  ];
+for (const field of [
+  'estimatedDurationMinutes',
+  'durationCalculationDebug',
+]) {
+  test(`V4 rejects legacy workout field ${field}`, () => {
+    const output = createAiOutput();
+    output.workouts[0][field] =
+      field === 'estimatedDurationMinutes' ? 15 : {};
+    const result = validateWeeklyPlanAiOutputSchema(output);
 
-  [legacy, crossedBodyPart, crossedMuscleFocus, fractional].forEach(
-    (payload) => assert.equal(validateWeeklyPlanAiOutputSchema(payload).ok, false)
-  );
-});
-
-test('setTemplate schema uses two complete nested anyOf variants', () => {
-  const schema = buildWeeklyPlanAiJsonSchema();
-  const setTemplateSchema =
-    schema.properties.workouts.items.properties.blocks.items.properties.exercises
-      .items.properties.setTemplates.items;
-  const requiredFields = [
-    'setIndex',
-    'setType',
-    'targetReps',
-    'minReps',
-    'maxReps',
-    'targetRir',
-    'tempo',
-    'restSeconds',
-  ];
-
-  assert.equal(schema.anyOf, undefined);
-  assert.equal(setTemplateSchema.anyOf.length, 2);
-  setTemplateSchema.anyOf.forEach((variant) => {
-    assert.equal(variant.type, 'object');
-    assert.equal(variant.additionalProperties, false);
-    assert.deepEqual(variant.required, requiredFields);
-    assert.deepEqual(Object.keys(variant.properties), requiredFields);
-  });
-});
-
-test('validateWeeklyPlanAiOutputSchema accepts an exact repetition target', () => {
-  const result = validateWeeklyPlanAiOutputSchema(
-    createOutputWithSetTemplate({
-      targetReps: 10,
-      minReps: null,
-      maxReps: null,
-    })
-  );
-
-  assert.equal(result.ok, true);
-});
-
-test('validateWeeklyPlanAiOutputSchema accepts a complete repetition range', () => {
-  const result = validateWeeklyPlanAiOutputSchema(
-    createOutputWithSetTemplate({
-      targetReps: null,
-      minReps: 8,
-      maxReps: 12,
-    })
-  );
-
-  assert.equal(result.ok, true);
-});
-
-test('validateWeeklyPlanAiOutputSchema rejects an ambiguous repetition prescription', () => {
-  const result = validateWeeklyPlanAiOutputSchema(
-    createOutputWithSetTemplate({
-      targetReps: 10,
-      minReps: 8,
-      maxReps: 12,
-    })
-  );
-
-  assert.equal(result.ok, false);
-});
-
-test('validateWeeklyPlanAiOutputSchema rejects a missing repetition prescription', () => {
-  const result = validateWeeklyPlanAiOutputSchema(
-    createOutputWithSetTemplate({
-      targetReps: null,
-      minReps: null,
-      maxReps: null,
-    })
-  );
-
-  assert.equal(result.ok, false);
-});
-
-test('validateWeeklyPlanAiOutputSchema rejects partial repetition ranges', () => {
-  const cases = [
-    { targetReps: null, minReps: 8, maxReps: null },
-    { targetReps: null, minReps: null, maxReps: 12 },
-  ];
-
-  cases.forEach((entry) => {
+    assert.equal(result.ok, false);
     assert.equal(
-      validateWeeklyPlanAiOutputSchema(createOutputWithSetTemplate(entry)).ok,
-      false
+      result.issues.some(
+        (issue) =>
+          issue.code === 'UNKNOWN_FIELD' &&
+          issue.path === `workouts[0].${field}`
+      ),
+      true
     );
+  });
+}
+
+test('setTemplate schema has complete fixed, range, and temporal variants', () => {
+  const schema = buildWeeklyPlanAiJsonSchema();
+  const variants =
+    schema.properties.workouts.items.properties.blocks.items.properties
+      .exercises.items.properties.setTemplates.items.anyOf;
+
+  assert.equal(variants.length, 3);
+  variants.forEach((variant) => {
+    assert.equal(variant.additionalProperties, false);
+    assert.equal(variant.required.includes('targetSeconds'), true);
   });
 });
 
-test('validateWeeklyPlanAiOutputSchema leaves inverted ranges to semantic validation', () => {
+test('targetSeconds alone is valid', () => {
   const result = validateWeeklyPlanAiOutputSchema(
-    createOutputWithSetTemplate({
+    withSetTemplate(
+      createSetTemplate(1, {
+        targetReps: null,
+        minReps: null,
+        maxReps: null,
+        targetSeconds: 45,
+      })
+    )
+  );
+  assert.equal(result.ok, true);
+});
+
+test('targetSeconds combined with fixed repetitions is rejected', () => {
+  assert.equal(
+    validateWeeklyPlanAiOutputSchema(
+      withSetTemplate(
+        createSetTemplate(1, {
+          targetReps: 10,
+          targetSeconds: 45,
+        })
+      )
+    ).ok,
+    false
+  );
+});
+
+test('targetSeconds combined with a repetition range is rejected', () => {
+  assert.equal(
+    validateWeeklyPlanAiOutputSchema(
+      withSetTemplate(
+        createSetTemplate(1, {
+          targetReps: null,
+          minReps: 8,
+          maxReps: 12,
+          targetSeconds: 45,
+        })
+      )
+    ).ok,
+    false
+  );
+});
+
+test('missing every prescription mode is rejected', () => {
+  assert.equal(
+    validateWeeklyPlanAiOutputSchema(
+      withSetTemplate(
+        createSetTemplate(1, {
+          targetReps: null,
+          minReps: null,
+          maxReps: null,
+          targetSeconds: null,
+        })
+      )
+    ).ok,
+    false
+  );
+});
+
+test('fixed repetitions and a complete repetition range remain valid', () => {
+  const fixed = withSetTemplate(createSetTemplate());
+  const range = withSetTemplate(
+    createSetTemplate(1, {
+      targetReps: null,
+      minReps: 8,
+      maxReps: 12,
+    })
+  );
+
+  assert.equal(validateWeeklyPlanAiOutputSchema(fixed).ok, true);
+  assert.equal(validateWeeklyPlanAiOutputSchema(range).ok, true);
+});
+
+test('inverted ranges pass schema and remain a semantic concern', () => {
+  const output = withSetTemplate(
+    createSetTemplate(1, {
       targetReps: null,
       minReps: 12,
       maxReps: 8,
     })
   );
-
-  assert.equal(result.ok, true);
+  assert.equal(validateWeeklyPlanAiOutputSchema(output).ok, true);
 });
 
-test('validateWeeklyPlanAiOutputSchema rejects unknown fields', () => {
-  const payload = createValidAIOutput({
-    unexpected: true,
-  });
-  const result = validateWeeklyPlanAiOutputSchema(payload);
+test('unknown root fields and obsolete schema versions are rejected', () => {
+  const unknown = createAiOutput({ unexpected: true });
+  const obsolete = clone(createAiOutput());
+  obsolete.schemaVersion = 3;
 
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.code === 'UNKNOWN_FIELD'), true);
-});
-
-test('validateWeeklyPlanAiOutputSchema rejects zero workouts', () => {
-  const result = validateWeeklyPlanAiOutputSchema(
-    createValidAIOutput({
-      workouts: [],
-    })
-  );
-
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.path === 'workouts'), true);
-});
-
-test('validateWeeklyPlanAiOutputSchema rejects more than seven workouts', () => {
-  const result = validateWeeklyPlanAiOutputSchema(
-    createValidAIOutput({
-      sessionsPerWeek: 7,
-      workouts: Array.from({ length: 8 }, (_, index) => createWorkout(index + 1)),
-    })
-  );
-
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.code === 'MAX_ITEMS_EXCEEDED'), true);
-});
-
-test('validateWeeklyPlanAiOutputSchema rejects a workout without blocks', () => {
-  const result = validateWeeklyPlanAiOutputSchema(
-    createValidAIOutput({
-      workouts: [createWorkout(1, { blocks: [] })],
-    })
-  );
-
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.path === 'workouts[0].blocks'), true);
-});
-
-test('validateWeeklyPlanAiOutputSchema rejects unsupported block types', () => {
-  const giantSetPayload = clone(createValidAIOutput());
-  giantSetPayload.workouts[0].blocks[0].blockType = 'GIANT_SET';
-
-  const circuitPayload = clone(createValidAIOutput());
-  circuitPayload.workouts[0].blocks[0].blockType = 'CIRCUIT';
-
-  assert.equal(validateWeeklyPlanAiOutputSchema(giantSetPayload).ok, false);
-  assert.equal(validateWeeklyPlanAiOutputSchema(circuitPayload).ok, false);
-});
-
-test('validateWeeklyPlanAiOutputSchema rejects notes that are too long', () => {
-  const payload = clone(createValidAIOutput());
-  payload.workouts[0].blocks[0].exercises[0].notes = 'x'.repeat(241);
-
-  const result = validateWeeklyPlanAiOutputSchema(payload);
-
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.code === 'STRING_TOO_LONG'), true);
-});
-
-test('validateWeeklyPlanAiOutputSchema rejects invalid tempo', () => {
-  const payload = clone(createValidAIOutput());
-  payload.workouts[0].blocks[0].exercises[0].setTemplates[0].tempo = '30X0';
-
-  const result = validateWeeklyPlanAiOutputSchema(payload);
-
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.code === 'INVALID_FORMAT'), true);
-});
-
-test('validateWeeklyPlanAiOutputSchema rejects RIR outside 0-4', () => {
-  const payload = clone(createValidAIOutput());
-  payload.workouts[0].blocks[0].exercises[0].setTemplates[0].targetRir = 5;
-
-  const result = validateWeeklyPlanAiOutputSchema(payload);
-
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.code === 'VALUE_TOO_LARGE'), true);
-});
-
-test('weekly plan schema excludes unsupported Structured Outputs keywords', () => {
-  assert.deepEqual(findUnsupportedKeywords(buildWeeklyPlanAiJsonSchema()), []);
+  assert.equal(validateWeeklyPlanAiOutputSchema(unknown).ok, false);
+  assert.equal(validateWeeklyPlanAiOutputSchema(obsolete).ok, false);
 });

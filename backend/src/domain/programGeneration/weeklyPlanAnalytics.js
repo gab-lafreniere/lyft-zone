@@ -1,5 +1,6 @@
 const {
   aggregateWeeklyPlanMetrics,
+  computeWeeklyPlanWorkoutDurationDetails,
   computeWeeklyPlanWorkoutMetrics,
 } = require('../weeklyPlans/weeklyPlanMetrics');
 const {
@@ -8,8 +9,11 @@ const {
   WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
   calculateDurationAlignment,
 } = require('./weeklyPlanEvaluationPolicy');
+const {
+  buildMuscleDistributionDebugAudit,
+} = require('./weeklyPlanAiValidation');
 
-const WEEKLY_PLAN_ANALYTICS_SCHEMA_VERSION = 2;
+const WEEKLY_PLAN_ANALYTICS_SCHEMA_VERSION = 3;
 const DIRECT_TAXONOMIES = Object.freeze([
   'target_muscle',
   'muscle_focus',
@@ -372,39 +376,19 @@ function buildExplicitTargetComparisonGroup({
   };
 }
 
-function buildTargetComparisons(generatedAIOutput, muscleMetrics) {
-  const projectionLookup = buildProjectionLookup(muscleMetrics);
+function buildTargetComparisons(_generatedAIOutput, muscleMetrics) {
+  void muscleMetrics;
+  const buildEmptyGroup = () => ({
+    items: [],
+    summary: summarizeTargetComparisons([]),
+  });
   const volume = {
-    bodyParts: buildExplicitTargetComparisonGroup({
-      targets: generatedAIOutput?.volumeTargets?.bodyParts,
-      projectionLookup,
-      taxonomy: 'body_part',
-      valueKey: 'directWorkingSets',
-      targetValueKey: 'targetSetsPerWeek',
-    }),
-    muscleFocuses: buildExplicitTargetComparisonGroup({
-      targets: generatedAIOutput?.volumeTargets?.muscleFocuses,
-      projectionLookup,
-      taxonomy: 'muscle_focus',
-      valueKey: 'directWorkingSets',
-      targetValueKey: 'targetSetsPerWeek',
-    }),
+    bodyParts: buildEmptyGroup(),
+    muscleFocuses: buildEmptyGroup(),
   };
   const frequency = {
-    bodyParts: buildExplicitTargetComparisonGroup({
-      targets: generatedAIOutput?.frequencyTargets?.bodyParts,
-      projectionLookup,
-      taxonomy: 'body_part',
-      valueKey: 'directWorkoutCount',
-      targetValueKey: 'targetSessionsPerWeek',
-    }),
-    muscleFocuses: buildExplicitTargetComparisonGroup({
-      targets: generatedAIOutput?.frequencyTargets?.muscleFocuses,
-      projectionLookup,
-      taxonomy: 'muscle_focus',
-      valueKey: 'directWorkoutCount',
-      targetValueKey: 'targetSessionsPerWeek',
-    }),
+    bodyParts: buildEmptyGroup(),
+    muscleFocuses: buildEmptyGroup(),
   };
 
   return {
@@ -447,7 +431,7 @@ function assertCanonicalEvaluationPolicy(context) {
   if (!hasCanonicalEvaluationPolicyIdentity(context?.evaluationPolicy)) {
     throw new WeeklyPlanAnalyticsError(
       'INVALID_WEEKLY_PLAN_EVALUATION_POLICY',
-      'Weekly Plan Analytics V2 requires the canonical evaluation policy identity'
+      'Weekly Plan Analytics V3 requires the canonical evaluation policy identity'
     );
   }
 }
@@ -464,6 +448,35 @@ function copyDurationAlignmentStatusCounts(statusCounts = {}) {
     counts[status] = statusCounts[status];
     return counts;
   }, {});
+}
+
+function normalizeDurationComponent(value) {
+  return Number.isFinite(value)
+    ? Number(value.toFixed(6))
+    : null;
+}
+
+function copyDurationCalculation(value = {}) {
+  return {
+    methodId: value.methodId || null,
+    blocks: toArray(value.blocks).map((block, index) => ({
+      blockOrderIndex: normalizeInt(block?.blockOrderIndex, index + 1),
+      movementSeconds: normalizeDurationComponent(block?.movementSeconds),
+      adjustedRestSeconds: normalizeDurationComponent(
+        block?.adjustedRestSeconds
+      ),
+      fixedSeconds: normalizeDurationComponent(block?.fixedSeconds),
+      cardioSeconds: normalizeDurationComponent(block?.cardioSeconds),
+      totalSeconds: normalizeDurationComponent(block?.totalSeconds),
+    })),
+    workoutTotalSeconds: normalizeDurationComponent(
+      value.workoutTotalSeconds
+    ),
+    calculatedDurationMinutes: normalizeInt(
+      value.calculatedDurationMinutes,
+      null
+    ),
+  };
 }
 
 function calculateWeeklyPlanAnalytics({
@@ -505,6 +518,8 @@ function calculateWeeklyPlanAnalytics({
   const workoutAnalytics = orderedWorkouts.map(({ value: workout, originalIndex }) => {
     const workoutOrderIndex = normalizeInt(workout?.orderIndex, originalIndex + 1);
     const historicalMetrics = computeWeeklyPlanWorkoutMetrics(workout);
+    const backendDurationDetails =
+      computeWeeklyPlanWorkoutDurationDetails(workout);
     const workoutProjectionAccumulator = createProjectionAccumulator();
     let workoutStrengthExerciseCount = 0;
     let workoutCardioExerciseCount = 0;
@@ -598,9 +613,6 @@ function calculateWeeklyPlanAnalytics({
       });
     });
 
-    const declaredEstimatedDurationMinutes = normalizeFiniteNumber(
-      workout?.estimatedDurationMinutes
-    );
     const calculatedDurationMinutes = historicalMetrics.estimatedDurationMinutes;
     const durationAlignment = calculateDurationAlignment({
       requestedDurationMinutes,
@@ -621,14 +633,10 @@ function calculateWeeklyPlanAnalytics({
       durationUtilizationRatio: durationAlignment.durationUtilizationRatio,
       durationAlignmentStatus: durationAlignment.durationAlignmentStatus,
       durationRequiresCorrection: durationAlignment.requiresCorrection,
-      declaredEstimatedDurationMinutes,
-      declaredDurationDifferenceMinutes:
-        declaredEstimatedDurationMinutes == null
-          ? null
-          : calculatedDurationMinutes - declaredEstimatedDurationMinutes,
       estimatedDurationMinutes: calculatedDurationMinutes,
       supersetCount: workoutSupersetCount,
       cardioDurationMinutes: workoutCardioDurationMinutes,
+      durationCalculation: copyDurationCalculation(backendDurationDetails),
       muscleProjections,
       muscleExposure: {
         direct: muscleProjections
@@ -646,13 +654,14 @@ function calculateWeeklyPlanAnalytics({
   );
   const muscleMetrics = finalizeMuscleMetrics(globalProjectionAccumulator);
   const targetComparisons = buildTargetComparisons(generatedAIOutput, muscleMetrics);
+  const muscleDistributionDebugAudit = buildMuscleDistributionDebugAudit({
+    generatedAIOutput,
+    analytics: { muscleMetrics },
+    context,
+  });
   const calculatedDurations = workoutAnalytics.map(
     (workout) => workout.calculatedDurationMinutes
   );
-  const declaredDurations = workoutAnalytics.map(
-    (workout) => workout.declaredEstimatedDurationMinutes
-  );
-  const hasCompleteDeclaredDuration = declaredDurations.every((value) => value != null);
   const calculatedDurationMinutesTotal = calculatedDurations.reduce(
     (sum, value) => sum + value,
     0
@@ -661,17 +670,10 @@ function calculateWeeklyPlanAnalytics({
   const requestedDurationMinutesTotal = hasValidRequestedDuration
     ? requestedDurationMinutesPerWorkout * workoutAnalytics.length
     : null;
-  const declaredEstimatedDurationMinutesTotal = hasCompleteDeclaredDuration
-    ? declaredDurations.reduce((sum, value) => sum + value, 0)
-    : null;
   const durationDifferenceMinutesTotal =
     requestedDurationMinutesTotal == null
       ? null
       : calculatedDurationMinutesTotal - requestedDurationMinutesTotal;
-  const declaredDurationDifferenceMinutesTotal =
-    declaredEstimatedDurationMinutesTotal == null
-      ? null
-      : calculatedDurationMinutesTotal - declaredEstimatedDurationMinutesTotal;
   const durationAlignmentStatusCounts = createDurationAlignmentStatusCounts();
   let correctionRequiredWorkoutCount = 0;
 
@@ -699,7 +701,7 @@ function calculateWeeklyPlanAnalytics({
       duration: 'historical_weekly_plan_metrics_v1',
       muscleVolume: 'full_direct_sets_separate_indirect_v1',
       frequency: 'deduplicated_workout_exposure_v1',
-      targetComparison: 'exact_match_no_tolerance_v1',
+      targetComparison: 'not_evaluated_no_generated_targets_v1',
     },
     plan: {
       workoutCount: workoutAnalytics.length,
@@ -714,9 +716,7 @@ function calculateWeeklyPlanAnalytics({
       requestedDurationMinutesTotal,
       calculatedDurationMinutesTotal,
       calculatedDurationMinutesAverage,
-      declaredEstimatedDurationMinutesTotal,
       durationDifferenceMinutesTotal,
-      declaredDurationDifferenceMinutesTotal,
       durationAlignmentStatusCounts,
       correctionRequiredWorkoutCount,
       estimatedDurationMinutesTotal: calculatedDurationMinutesTotal,
@@ -744,6 +744,7 @@ function calculateWeeklyPlanAnalytics({
       unresolvedExerciseIds: sortedUnresolvedExerciseIds,
     },
     targetComparisons,
+    muscleDistributionDebugAudit,
   };
 }
 
@@ -799,10 +800,7 @@ function buildWeeklyPlanAnalyticsAuditSummary(analytics) {
       requestedDurationMinutesTotal: plan.requestedDurationMinutesTotal,
       calculatedDurationMinutesTotal: plan.calculatedDurationMinutesTotal,
       calculatedDurationMinutesAverage: plan.calculatedDurationMinutesAverage,
-      declaredEstimatedDurationMinutesTotal: plan.declaredEstimatedDurationMinutesTotal,
       durationDifferenceMinutesTotal: plan.durationDifferenceMinutesTotal,
-      declaredDurationDifferenceMinutesTotal:
-        plan.declaredDurationDifferenceMinutesTotal,
       estimatedDurationMinutesTotal: plan.estimatedDurationMinutesTotal,
       estimatedDurationMinutesAverage: plan.estimatedDurationMinutesAverage,
       minWorkoutDurationMinutes: plan.minWorkoutDurationMinutes,

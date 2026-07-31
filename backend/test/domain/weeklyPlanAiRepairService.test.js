@@ -14,7 +14,7 @@ const {
 
 function createPromptDescriptor() {
   return {
-    promptVersion: 'ai-weekly-plan-repair-prompt-v1.1.0',
+    promptVersion: 'ai-weekly-plan-repair-prompt-v1.2.0',
     systemMessage: 'SYSTEM_MESSAGE_SENTINEL',
     userMessage: 'USER_MESSAGE_SENTINEL',
   };
@@ -94,7 +94,7 @@ test('repair configuration exports exact defaults and accepts positive safe inte
   assert.equal(DEFAULT_PROGRAM_REPAIR_MAX_OUTPUT_TOKENS, 24000);
   assert.equal(
     WEEKLY_PLAN_AI_REPAIR_RESPONSE_FORMAT_NAME,
-    'weekly_plan_ai_repair_v1'
+    'weekly_plan_ai_repair_v2'
   );
   assert.deepEqual(resolveProgramRepairConfig({}), {
     timeoutMs: 120000,
@@ -165,7 +165,7 @@ test('buildProgramRepairResponsesRequest creates the exact model-agnostic reques
     text: {
       format: {
         type: 'json_schema',
-        name: 'weekly_plan_ai_repair_v1',
+        name: 'weekly_plan_ai_repair_v2',
         strict: true,
         schema,
       },
@@ -218,7 +218,7 @@ test('repairWeeklyPlanAi routes program_repair and makes exactly one strict prov
     text: {
       format: {
         type: 'json_schema',
-        name: 'weekly_plan_ai_repair_v1',
+        name: 'weekly_plan_ai_repair_v2',
         strict: true,
         schema,
       },

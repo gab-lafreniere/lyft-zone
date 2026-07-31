@@ -99,6 +99,8 @@ async function runAIProgramRepair(options = {}, deps = {}) {
       generatedPlanDocument: options.generatedPlanDocument,
       analytics: options.analytics,
       initialReview: options.initialReview,
+      trigger: options.trigger,
+      debugContractValidation: options.debugContractValidation,
     });
   } catch (_error) {
     throw new AIProgramRepairError(
@@ -110,7 +112,6 @@ async function runAIProgramRepair(options = {}, deps = {}) {
   let promptDescriptor;
   try {
     promptDescriptor = (deps.buildProgramRepairPrompt || buildProgramRepairPrompt)({
-      doctrine: options.doctrine,
       repairContext,
     });
     assertPromptDescriptor(promptDescriptor);

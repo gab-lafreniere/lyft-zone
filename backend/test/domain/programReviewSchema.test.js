@@ -44,10 +44,10 @@ function createIssue(overrides = {}) {
 
 function createReview(overrides = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 3,
     decision: 'PASS',
     requiresRepair: false,
-    reviewSummary: 'The plan is coherent with the provided targets.',
+    reviewSummary: 'The plan is coherent with the supplied structure.',
     issues: [],
     ...overrides,
   };
@@ -76,10 +76,10 @@ function findUnsupportedKeywords(value, path = 'root', matches = []) {
   return matches;
 }
 
-test('program review exports the V1 contract constants and closed enums', () => {
-  assert.equal(PROGRAM_REVIEW_CONTRACT_VERSION, 1);
-  assert.equal(PROGRAM_REVIEW_OUTPUT_SCHEMA_VERSION, 1);
-  assert.equal(PROGRAM_REVIEW_RESPONSE_FORMAT_NAME, 'ai_program_review_v1');
+test('program review exports the V3 contract constants and closed enums', () => {
+  assert.equal(PROGRAM_REVIEW_CONTRACT_VERSION, 3);
+  assert.equal(PROGRAM_REVIEW_OUTPUT_SCHEMA_VERSION, 3);
+  assert.equal(PROGRAM_REVIEW_RESPONSE_FORMAT_NAME, 'ai_program_review_v3');
   assert.deepEqual(PROGRAM_REVIEW_DECISIONS, ['PASS', 'REPAIR_REQUIRED', 'FAIL']);
   assert.deepEqual(PROGRAM_REVIEW_SEVERITIES, ['INFO', 'LOW', 'MEDIUM', 'HIGH']);
   assert.deepEqual(PROGRAM_REVIEW_REPAIRABILITIES, [

@@ -41,7 +41,7 @@ test('loadWeeklyPlanBuilderDoctrine loads exactly the allowlisted classic runtim
   assert.equal(doctrine.id, 'bodybuilding_runtime_classic');
   assert.equal(
     doctrine.version,
-    'bodybuilding-hypertrophy-runtime-classic-v1.0.0'
+    'bodybuilding-hypertrophy-runtime-classic-v1.0.2'
   );
   assert.equal(
     doctrine.derivedFromDoctrineVersion,
@@ -61,6 +61,43 @@ test('loadWeeklyPlanBuilderDoctrine loads exactly the allowlisted classic runtim
   assert.doesNotMatch(
     doctrine.content,
     /Lyft Zone Longitudinal Bodybuilding Runtime Doctrine/
+  );
+  assert.match(doctrine.content, /^supportedPrimaryGoals: hypertrophy$/m);
+  assert.doesNotMatch(doctrine.content, /^supportedPrimaryGoals:.*mixed/m);
+  assert.doesNotMatch(doctrine.content, /mixed-goal programs|mixed program/i);
+});
+
+test('classic runtime defines every AI Weekly Plan Builder cardio role without cardio-only ambiguity', () => {
+  const doctrine = loadWeeklyPlanBuilderDoctrine();
+  const content = doctrine.content;
+
+  assert.match(
+    content,
+    /`None`: do not add any CARDIO block or generate any cardio\s+exercise/
+  );
+  assert.match(
+    content,
+    /`Warm-up Only`: add only brief, light preparatory cardio of\s+approximately 5 minutes at the beginning of relevant workouts;\s+do not add dedicated cardio after resistance training/
+  );
+  assert.match(
+    content,
+    /`Cardio Sessions`: despite the historical enum name, add a\s+dedicated cardio block only after the resistance-training portion\s+of relevant workouts when available time permits; never create a\s+cardio-only workout and never place dedicated cardio before\s+resistance training/
+  );
+  assert.match(
+    content,
+    /`Warm-up & Cardio`: add both brief, light preparatory cardio of\s+approximately 5 minutes at the beginning of relevant workouts and\s+dedicated cardio after the resistance-training portion; never\s+create a cardio-only workout/
+  );
+  assert.match(
+    content,
+    /does not create separate cardio sessions or an\s+independent cardio frequency/
+  );
+  assert.doesNotMatch(
+    content,
+    /account for dedicated cardio sessions when\s+they are explicitly included/
+  );
+  assert.doesNotMatch(
+    content,
+    /account for both preparatory cardio and\s+explicitly requested dedicated cardio sessions/
   );
 });
 

@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  resolvePromptPhysicalConsiderations,
   resolveMovementConstraints,
 } = require('../../src/domain/programGeneration/movementConstraintResolver');
 
@@ -37,6 +38,124 @@ test('resolveMovementConstraints does not derive from detected signals alone', (
   assert.deepEqual(result.blockedMovementPatterns, []);
   assert.deepEqual(result.cautionJointStressTags, []);
   assert.deepEqual(result.blockedJointStressTags, []);
+});
+
+test('resolvePromptPhysicalConsiderations keeps only analyzed monitor and caution data grouped by issue', () => {
+  const result = resolvePromptPhysicalConsiderations({
+    movementConstraints: {
+      painIssues: [
+        {
+          id: 'private_issue_id',
+          description: 'Private raw description',
+          analysisStatus: 'draft',
+          aiSummary: 'Draft summary',
+          detectedSignals: [
+            {
+              type: 'movementPattern',
+              value: 'horizontal_push',
+              recommendedDecision: 'caution',
+            },
+          ],
+          confirmedSignals: [
+            {
+              type: 'movementPattern',
+              value: 'horizontal_push',
+              decision: 'caution',
+            },
+          ],
+        },
+        {
+          id: 'private_analyzed_id',
+          description: 'Another private raw description',
+          analysisStatus: 'analyzed',
+          aiSummary: '  Pressing needs measured handling.  ',
+          detectedSignals: [
+            {
+              type: 'movementPattern',
+              value: 'vertical_push',
+              recommendedDecision: 'blocked',
+            },
+          ],
+          confirmedSignals: [
+            {
+              type: 'movementPattern',
+              value: 'horizontal_push',
+              decision: 'monitor',
+            },
+            {
+              type: 'jointStressTag',
+              value: 'overhead_shoulder_position',
+              decision: 'caution',
+            },
+            {
+              type: 'movementPattern',
+              value: 'vertical_push',
+              decision: 'blocked',
+            },
+            {
+              type: 'movementPattern',
+              value: 'horizontal_push',
+              decision: 'monitor',
+            },
+          ],
+        },
+        {
+          analysisStatus: 'analyzed',
+          aiSummary: 'Monitor only',
+          confirmedSignals: [
+            {
+              type: 'movementPattern',
+              value: 'horizontal_push',
+              decision: 'monitor',
+            },
+          ],
+        },
+        {
+          analysisStatus: 'analyzed',
+          aiSummary: 'Blocked only',
+          confirmedSignals: [
+            {
+              type: 'jointStressTag',
+              value: 'spinal_loading',
+              decision: 'blocked',
+            },
+          ],
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(result, [
+    {
+      aiSummary: 'Pressing needs measured handling.',
+      confirmedSignals: [
+        {
+          type: 'movementPattern',
+          value: 'horizontal_push',
+          decision: 'monitor',
+        },
+        {
+          type: 'jointStressTag',
+          value: 'overhead_shoulder_position',
+          decision: 'caution',
+        },
+      ],
+    },
+    {
+      aiSummary: 'Monitor only',
+      confirmedSignals: [
+        {
+          type: 'movementPattern',
+          value: 'horizontal_push',
+          decision: 'monitor',
+        },
+      ],
+    },
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /private|description|detected|recommended|blocked/i
+  );
 });
 
 test('resolveMovementConstraints ignores draft and needs_reanalysis issues', () => {

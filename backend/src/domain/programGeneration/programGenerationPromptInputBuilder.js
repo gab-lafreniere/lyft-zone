@@ -2,12 +2,12 @@ const {
   PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION,
 } = require('./programGenerationContextBuilder');
 const {
-  WEEKLY_PLAN_EVALUATION_POLICY_ID,
-  WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
-} = require('./weeklyPlanEvaluationPolicy');
-const {
   buildWeeklyPlanTrainingMetricsPromptProjection,
 } = require('./weeklyPlanTrainingMetricsPromptProjection');
+const {
+  buildEligibleExerciseCoverageCounts,
+  resolveEligibleExerciseCoverageLevel,
+} = require('./programGenerationPoolCoverage');
 const {
   getParentArea,
   isMicroFocus,
@@ -15,7 +15,22 @@ const {
 } = require('../trainingProfile/trainingProfileRules');
 const exerciseEnums = require('../../exercise-library/exercise-enums.json');
 
-const PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION = 2;
+const PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION = 5;
+const MAX_DURATION_PER_SESSION_MINUTES = 120;
+const MAX_POOL_COVERAGE_NOTES = 3;
+const CANONICAL_BODY_PARTS = Object.freeze([
+  ...(exerciseEnums.bodyParts || []),
+]);
+const CANONICAL_MUSCLE_FOCUSES = Object.freeze([
+  ...(exerciseEnums.muscleFocus || []),
+]);
+const BODY_PART_SET = new Set(CANONICAL_BODY_PARTS);
+const MUSCLE_FOCUS_SET = new Set(CANONICAL_MUSCLE_FOCUSES);
+const COVERAGE_LEVEL_ORDER = Object.freeze({
+  unavailable: 0,
+  severely_limited: 1,
+  limited: 2,
+});
 const ALLOWED_ACTIVATION_WEIGHTS = new Set(
   exerciseEnums.muscleActivationValues || []
 );
@@ -24,6 +39,16 @@ const CARDIO_ROLES = new Set([
   'warm_up_only',
   'cardio_sessions',
   'warm_up_and_cardio',
+]);
+const PHYSICAL_SIGNAL_TYPES = new Set([
+  'movementPattern',
+  'jointStressTag',
+]);
+const PHYSICAL_SIGNAL_DECISIONS = new Set(['monitor', 'caution']);
+const EXERCISE_PREFERENCES = new Set([
+  'machines',
+  'free_weights',
+  'no_preference',
 ]);
 
 class ProgramGenerationPromptInputError extends Error {
@@ -62,7 +87,10 @@ function copyArray(value) {
 }
 
 function assignNonEmpty(target, key, value) {
-  if (value == null || value === '') {
+  if (
+    value == null ||
+    (typeof value === 'string' && value.trim() === '')
+  ) {
     return;
   }
 
@@ -99,20 +127,15 @@ function assertProgramGenerationContext(context) {
   }
 
   if (
-    context.evaluationPolicy?.id !== WEEKLY_PLAN_EVALUATION_POLICY_ID ||
-    context.evaluationPolicy?.version !== WEEKLY_PLAN_EVALUATION_POLICY_VERSION
-  ) {
-    throw invalidContext('Canonical Evaluation Policy V1 is required');
-  }
-
-  if (
     !context.availability ||
     typeof context.availability !== 'object' ||
     Array.isArray(context.availability) ||
     !Number.isInteger(context.availability.sessionsPerWeek) ||
     context.availability.sessionsPerWeek <= 0 ||
     !Number.isInteger(context.availability.durationPerSession) ||
-    context.availability.durationPerSession <= 0
+    context.availability.durationPerSession <= 0 ||
+    context.availability.durationPerSession >
+      MAX_DURATION_PER_SESSION_MINUTES
   ) {
     throw invalidContext('ProgramGenerationContext availability is invalid');
   }
@@ -123,13 +146,84 @@ function assertProgramGenerationContext(context) {
 }
 
 function projectTrainingSchedule(context, trainingMetricsGuidance) {
-  const ranges = trainingMetricsGuidance.duration.ranges;
   return {
     sessionsPerWeek: context.availability.sessionsPerWeek,
-    approximateDurationMinutes: ranges.requestedMinutes,
-    acceptableDurationMinutes: { ...ranges.acceptableMinutes },
-    preferredDurationMinutes: { ...ranges.preferredMinutes },
+    approximateDurationMinutes: trainingMetricsGuidance.requestedMinutes,
   };
+}
+
+function projectConfirmedCautions(value) {
+  const cautions = [];
+  const seen = new Set();
+
+  toArray(value).forEach((issue) => {
+    toArray(issue?.confirmedSignals).forEach((signal) => {
+      const type = String(signal?.type || '').trim();
+      const signalValue = normalizeValue(signal?.value);
+      const decision = normalizeValue(signal?.decision);
+      if (
+        !PHYSICAL_SIGNAL_TYPES.has(type) ||
+        !signalValue ||
+        decision !== 'caution'
+      ) {
+        return;
+      }
+
+      const key = `${type}:${signalValue}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        cautions.push({ type, value: signalValue });
+      }
+    });
+  });
+
+  return cautions;
+}
+
+function projectAppliedConstraints(context) {
+  const movementConstraints = context.movementConstraints || {};
+  const equipmentContext = context.equipmentContext || {};
+  const result = {};
+
+  assignNonEmpty(
+    result,
+    'blockedMovementPatterns',
+    normalizeCanonicalArray(movementConstraints.blockedMovementPatterns)
+  );
+  assignNonEmpty(
+    result,
+    'blockedJointStressTags',
+    normalizeCanonicalArray(movementConstraints.blockedJointStressTags)
+  );
+  assignNonEmpty(
+    result,
+    'confirmedCautions',
+    projectConfirmedCautions(context.promptPhysicalConsiderations)
+  );
+  assignNonEmpty(
+    result,
+    'equipmentPreset',
+    normalizeValue(equipmentContext.equipmentPreset)
+  );
+  assignNonEmpty(
+    result,
+    'availableEquipment',
+    normalizeCanonicalArray(equipmentContext.availableEquipment)
+  );
+  assignNonEmpty(
+    result,
+    'cardioRole',
+    normalizeValue(context.cardioProfile?.cardioRole)
+  );
+
+  if (
+    Number.isSafeInteger(context.poolSummary?.excludedExercises) &&
+    context.poolSummary.excludedExercises >= 0
+  ) {
+    result.excludedExerciseCount = context.poolSummary.excludedExercises;
+  }
+
+  return result;
 }
 
 function projectMusclePriorities(value = {}) {
@@ -168,8 +262,13 @@ function projectMusclePriorities(value = {}) {
 function projectExercisePreference(equipmentContext = {}) {
   const preference = normalizeValue(equipmentContext.equipmentBias);
 
-  if (preference !== 'machines' && preference !== 'free_weights') {
+  if (!preference) {
     return null;
+  }
+  if (!EXERCISE_PREFERENCES.has(preference)) {
+    throw invalidContext(
+      'ProgramGenerationContext exercise preference is invalid'
+    );
   }
 
   return {
@@ -201,22 +300,52 @@ function projectCardioGuidance(cardioProfile = {}) {
   return result;
 }
 
-function projectMovementConsiderations(movementConstraints = {}) {
-  const cautionMovementPatterns = normalizeCanonicalArray(
-    movementConstraints.cautionMovementPatterns
-  );
-  const cautionJointStressTags = normalizeCanonicalArray(
-    movementConstraints.cautionJointStressTags
-  );
+function projectPhysicalConsiderations(value) {
+  return toArray(value)
+    .filter((issue) => issue && typeof issue === 'object' && !Array.isArray(issue))
+    .map((issue) => {
+      const confirmedSignals = [];
+      const seen = new Set();
 
-  if (!cautionMovementPatterns.length && !cautionJointStressTags.length) {
-    return null;
-  }
+      toArray(issue.confirmedSignals).forEach((signal) => {
+        if (!signal || typeof signal !== 'object' || Array.isArray(signal)) {
+          return;
+        }
 
-  const result = {};
-  assignNonEmpty(result, 'cautionMovementPatterns', cautionMovementPatterns);
-  assignNonEmpty(result, 'cautionJointStressTags', cautionJointStressTags);
-  return result;
+        const type = String(signal.type || '').trim();
+        const signalValue = normalizeValue(signal.value);
+        const decision = normalizeValue(signal.decision);
+
+        if (
+          !PHYSICAL_SIGNAL_TYPES.has(type) ||
+          !signalValue ||
+          !PHYSICAL_SIGNAL_DECISIONS.has(decision)
+        ) {
+          return;
+        }
+
+        const key = `${decision}:${type}:${signalValue}`;
+        if (seen.has(key)) {
+          return;
+        }
+
+        seen.add(key);
+        confirmedSignals.push({
+          type,
+          value: signalValue,
+          decision,
+        });
+      });
+
+      return {
+        aiSummary:
+          typeof issue.aiSummary === 'string' && issue.aiSummary.trim()
+            ? issue.aiSummary.trim()
+            : null,
+        confirmedSignals,
+      };
+    })
+    .filter((issue) => issue.confirmedSignals.length > 0);
 }
 
 function readMuscleActivation(value) {
@@ -256,7 +385,7 @@ function readMuscleActivation(value) {
   return result;
 }
 
-function projectMuscleContributions(item = {}) {
+function projectMuscles(item = {}) {
   const primaryMuscles = normalizeCanonicalArray(item.targetMuscles);
   const primarySet = new Set(primaryMuscles);
   const secondaryMuscles = normalizeCanonicalArray(item.secondaryMuscles).filter(
@@ -264,26 +393,23 @@ function projectMuscleContributions(item = {}) {
   );
   const classifiedMuscles = new Set([...primaryMuscles, ...secondaryMuscles]);
   const activation = readMuscleActivation(item.muscleActivation);
-  const contributions = [];
+  const primary = {};
+  const secondary = {};
 
   primaryMuscles.forEach((muscle) => {
-    contributions.push({
-      muscle,
-      role: 'primary',
-      activationWeight: activation.weights.get(muscle) ?? null,
-    });
+    primary[muscle] = activation.weights.get(muscle) ?? null;
   });
 
   secondaryMuscles.forEach((muscle) => {
-    contributions.push({
-      muscle,
-      role: 'secondary',
-      activationWeight: activation.weights.get(muscle) ?? null,
-    });
+    secondary[muscle] = activation.weights.get(muscle) ?? null;
   });
 
+  const muscles = {};
+  assignNonEmpty(muscles, 'primary', primary);
+  assignNonEmpty(muscles, 'secondary', secondary);
+
   return {
-    contributions,
+    muscles,
     diagnostics: {
       activationMusclesNotClassifiedCount: activation.validMuscles.filter(
         (muscle) => !classifiedMuscles.has(muscle)
@@ -315,15 +441,13 @@ function projectCautionMatches(item = {}) {
 
 function projectStrengthExercise(item, diagnostics) {
   const result = {
-    name: item.name,
     exerciseId: item.exerciseId,
-    trainingType: item.trainingType,
+    name: item.name,
   };
-  const muscleProjection = projectMuscleContributions(item);
+  const muscleProjection = projectMuscles(item);
   const cautionMatches = projectCautionMatches(item);
 
   assignNonEmpty(result, 'equipmentCategory', item.equipmentCategory);
-  assignNonEmpty(result, 'difficulty', item.difficulty);
   if (Number.isFinite(item.fatigueScore)) {
     result.fatigueScore = item.fatigueScore;
   }
@@ -334,7 +458,7 @@ function projectStrengthExercise(item, diagnostics) {
   assignNonEmpty(result, 'movementPattern', item.movementPattern);
   assignNonEmpty(result, 'bodyParts', copyArray(item.bodyParts));
   assignNonEmpty(result, 'muscleFocus', copyArray(item.muscleFocus));
-  result.muscleContributions = muscleProjection.contributions;
+  assignNonEmpty(result, 'muscles', muscleProjection.muscles);
   assignNonEmpty(result, 'unilateralType', item.unilateralType);
   assignNonEmpty(result, 'cautionMatches', cautionMatches);
 
@@ -344,9 +468,8 @@ function projectStrengthExercise(item, diagnostics) {
 
 function projectCardioExercise(item) {
   const result = {
-    name: item.name,
     exerciseId: item.exerciseId,
-    trainingType: item.trainingType,
+    name: item.name,
   };
   const fatigue = item.softSignals?.fatigue || {};
 
@@ -365,20 +488,144 @@ function projectCardioExercise(item) {
   return result;
 }
 
-function projectExercisePool(items) {
+function buildProgramGenerationExercisePoolPromptProjection(items) {
   const diagnostics = {
     activationMusclesNotClassifiedCount: 0,
     primaryMusclesMissingActivationCount: 0,
     secondaryMusclesMissingActivationCount: 0,
     invalidActivationEntryCount: 0,
   };
-  const exercises = items.map((item) =>
-    normalizeValue(item?.trainingType) === 'cardio'
-      ? projectCardioExercise(item || {})
-      : projectStrengthExercise(item || {}, diagnostics)
-  );
+  const strengthExercises = [];
+  const cardioExercises = [];
 
-  return { exercises, diagnostics };
+  items.forEach((item) => {
+    const trainingType = item?.trainingType;
+    if (trainingType === 'cardio') {
+      cardioExercises.push(projectCardioExercise(item || {}));
+      return;
+    }
+
+    if (trainingType === 'strength') {
+      strengthExercises.push(projectStrengthExercise(item || {}, diagnostics));
+      return;
+    }
+
+    throw invalidContext(
+      'ProgramGenerationContext exercise trainingType is invalid'
+    );
+  });
+
+  return {
+    exercises: {
+      strengthExercises,
+      cardioExercises,
+    },
+    diagnostics,
+  };
+}
+
+function buildCoverageNote(taxonomy, area, eligibleExerciseCount) {
+  const coverageLevel = resolveEligibleExerciseCoverageLevel(
+    eligibleExerciseCount
+  );
+  if (!coverageLevel) {
+    return null;
+  }
+
+  return {
+    taxonomy,
+    area,
+    eligibleExerciseCount,
+    coverageLevel,
+  };
+}
+
+function resolvePriorityTaxonomy(area) {
+  if (BODY_PART_SET.has(area)) {
+    return 'bodyPart';
+  }
+  if (MUSCLE_FOCUS_SET.has(area)) {
+    return 'muscleFocus';
+  }
+  return null;
+}
+
+function buildProgramGenerationPoolCoverageNotes({
+  eligibleExercisePool,
+  musclePriorities,
+} = {}) {
+  const exercises = [
+    ...(eligibleExercisePool?.strengthExercises || []),
+    ...(eligibleExercisePool?.cardioExercises || []),
+  ];
+  const bodyPartCounts = buildEligibleExerciseCoverageCounts(
+    exercises,
+    'bodyParts',
+    CANONICAL_BODY_PARTS
+  );
+  const muscleFocusCounts = buildEligibleExerciseCoverageCounts(
+    exercises,
+    'muscleFocus',
+    CANONICAL_MUSCLE_FOCUSES
+  );
+  const notes = [];
+  const seen = new Set();
+  const priorities = [
+    musclePriorities?.primary,
+    ...(musclePriorities?.secondary || []),
+  ].filter(Boolean);
+
+  priorities.forEach((area) => {
+    const taxonomy = resolvePriorityTaxonomy(area);
+    if (!taxonomy) {
+      return;
+    }
+
+    const key = `${taxonomy}:${area}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+
+    const eligibleExerciseCount =
+      taxonomy === 'bodyPart'
+        ? bodyPartCounts.get(area)
+        : muscleFocusCounts.get(area);
+    const note = buildCoverageNote(
+      taxonomy,
+      area,
+      eligibleExerciseCount
+    );
+    if (note) {
+      notes.push(note);
+    }
+  });
+
+  const deprioritizedArea = musclePriorities?.deprioritized || null;
+  const generalBodyPartNotes = CANONICAL_BODY_PARTS
+    .filter((area) => area !== deprioritizedArea)
+    .filter((area) => !seen.has(`bodyPart:${area}`))
+    .map((area, canonicalIndex) => ({
+      note: buildCoverageNote(
+        'bodyPart',
+        area,
+        bodyPartCounts.get(area)
+      ),
+      canonicalIndex,
+    }))
+    .filter(({ note }) => Boolean(note))
+    .sort(
+      (left, right) =>
+        COVERAGE_LEVEL_ORDER[left.note.coverageLevel] -
+          COVERAGE_LEVEL_ORDER[right.note.coverageLevel] ||
+        left.canonicalIndex - right.canonicalIndex
+    )
+    .map(({ note }) => note);
+
+  return [...notes, ...generalBodyPartNotes].slice(
+    0,
+    MAX_POOL_COVERAGE_NOTES
+  );
 }
 
 function buildProjectionResult(context) {
@@ -388,7 +635,6 @@ function buildProjectionResult(context) {
   try {
     trainingMetricsGuidance = buildWeeklyPlanTrainingMetricsPromptProjection({
       requestedDurationMinutes: context.availability.durationPerSession,
-      evaluationPolicy: context.evaluationPolicy,
     });
   } catch (_error) {
     throw invalidContext('Canonical Training Metrics Guidance is invalid');
@@ -398,12 +644,19 @@ function buildProjectionResult(context) {
   const musclePriorities = projectMusclePriorities(context.musclePriorityProfile);
   const exercisePreference = projectExercisePreference(context.equipmentContext);
   const cardio = projectCardioGuidance(context.cardioProfile);
-  const movementConsiderations = projectMovementConsiderations(
-    context.movementConstraints
+  const physicalConsiderations = projectPhysicalConsiderations(
+    context.promptPhysicalConsiderations
   );
   const physicalNotes =
     typeof context.physicalNotes === 'string' ? context.physicalNotes.trim() : '';
-  const poolProjection = projectExercisePool(context.exercisePoolItems);
+  const poolProjection =
+    buildProgramGenerationExercisePoolPromptProjection(
+      context.exercisePoolItems
+    );
+  const poolCoverageNotes = buildProgramGenerationPoolCoverageNotes({
+    eligibleExercisePool: poolProjection.exercises,
+    musclePriorities,
+  });
 
   assignNonEmpty(athleteBrief, 'primaryGoal', context.primaryGoal);
   assignNonEmpty(athleteBrief, 'experience', context.experience);
@@ -414,16 +667,24 @@ function buildProjectionResult(context) {
   assignNonEmpty(athleteBrief, 'musclePriorities', musclePriorities);
   assignNonEmpty(athleteBrief, 'exercisePreference', exercisePreference);
   assignNonEmpty(athleteBrief, 'cardio', cardio);
-  assignNonEmpty(athleteBrief, 'movementConsiderations', movementConsiderations);
+  assignNonEmpty(
+    athleteBrief,
+    'physicalConsiderations',
+    physicalConsiderations
+  );
   assignNonEmpty(athleteBrief, 'physicalNotes', physicalNotes);
 
+  const promptInput = {
+    schemaVersion: PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION,
+    athleteBrief,
+    trainingMetricsGuidance,
+    appliedConstraints: projectAppliedConstraints(context),
+    eligibleExercisePool: poolProjection.exercises,
+  };
+  assignNonEmpty(promptInput, 'poolCoverageNotes', poolCoverageNotes);
+
   return {
-    promptInput: {
-      schemaVersion: PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION,
-      athleteBrief,
-      trainingMetricsGuidance,
-      eligibleExercisePool: poolProjection.exercises,
-    },
+    promptInput,
     muscleContributionDiagnostics: poolProjection.diagnostics,
   };
 }
@@ -439,6 +700,8 @@ function buildProgramGenerationPromptInputDiagnostics(context) {
 module.exports = {
   PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION,
   ProgramGenerationPromptInputError,
+  buildProgramGenerationExercisePoolPromptProjection,
+  buildProgramGenerationPoolCoverageNotes,
   buildProgramGenerationPromptInput,
   buildProgramGenerationPromptInputDiagnostics,
 };

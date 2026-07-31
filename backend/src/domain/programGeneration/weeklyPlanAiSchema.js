@@ -1,13 +1,26 @@
 const Ajv = require('ajv');
-const exerciseEnums = require('../../exercise-library/exercise-enums.json');
 
-const AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION = 2;
-const AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION = 2;
-const AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS = Object.freeze([
-  ...exerciseEnums.bodyParts,
+const AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION = 4;
+const AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION = 4;
+const AI_WEEKLY_PLAN_BODY_PARTS = Object.freeze([
+  'abs',
+  'back',
+  'biceps',
+  'calves',
+  'chest',
+  'glutes',
+  'hamstrings',
+  'quadriceps',
+  'shoulders',
+  'triceps',
 ]);
-const AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS = Object.freeze([
-  ...exerciseEnums.muscleFocus,
+const AI_WEEKLY_PLAN_OMISSION_REASON_CODES = Object.freeze([
+  'explicit_deprioritization',
+  'confirmed_constraint',
+  'limited_by_eligible_pool',
+  'specialization_tradeoff',
+  'session_structure_tradeoff',
+  'other',
 ]);
 
 const AI_WEEKLY_PLAN_LIMITS = Object.freeze({
@@ -25,6 +38,8 @@ const AI_WEEKLY_PLAN_LIMITS = Object.freeze({
   targetRirMax: 4,
   repsMin: 1,
   repsMax: 100,
+  explanationMaxLength: 600,
+  durationSecondsMax: 86400,
 });
 
 const AI_WEEKLY_PLAN_BLOCK_TYPES = Object.freeze(['SINGLE', 'SUPERSET', 'CARDIO']);
@@ -42,12 +57,6 @@ const AI_WEEKLY_PLAN_PROGRESSION_TYPES = Object.freeze([
   'linear_progression',
   'rir_based',
   'maintenance',
-]);
-const AI_WEEKLY_PLAN_TARGET_PRIORITIES = Object.freeze([
-  'primary',
-  'secondary',
-  'maintenance',
-  'deprioritized',
 ]);
 const AI_WEEKLY_PLAN_HEART_RATE_TARGET_MODES = Object.freeze(['none', 'avg_bpm', 'zone']);
 
@@ -102,7 +111,7 @@ function buildCardioPrescriptionSchema() {
       durationMinutes: {
         type: 'integer',
         minimum: 1,
-        maximum: 240,
+        maximum: 120,
       },
       heartRateTargetMode: {
         type: 'string',
@@ -141,6 +150,7 @@ function buildSetTemplateVariant(repTargetProperties) {
       'targetReps',
       'minReps',
       'maxReps',
+      'targetSeconds',
       'targetRir',
       'tempo',
       'restSeconds',
@@ -181,11 +191,23 @@ function buildSetTemplateSchema() {
         targetReps: buildRepCountSchema(),
         minReps: { type: 'null' },
         maxReps: { type: 'null' },
+        targetSeconds: { type: 'null' },
       }),
       buildSetTemplateVariant({
         targetReps: { type: 'null' },
         minReps: buildRepCountSchema(),
         maxReps: buildRepCountSchema(),
+        targetSeconds: { type: 'null' },
+      }),
+      buildSetTemplateVariant({
+        targetReps: { type: 'null' },
+        minReps: { type: 'null' },
+        maxReps: { type: 'null' },
+        targetSeconds: {
+          type: 'integer',
+          minimum: 1,
+          maximum: AI_WEEKLY_PLAN_LIMITS.durationSecondsMax,
+        },
       }),
     ],
   };
@@ -279,18 +301,13 @@ function buildWorkoutSchema() {
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['name', 'orderIndex', 'estimatedDurationMinutes', 'focus', 'blocks'],
+    required: ['name', 'orderIndex', 'focus', 'blocks'],
     properties: {
       name: buildStringSchema(1, 80),
       orderIndex: {
         type: 'integer',
         minimum: 1,
         maximum: AI_WEEKLY_PLAN_LIMITS.workoutMaxCount,
-      },
-      estimatedDurationMinutes: {
-        type: 'integer',
-        minimum: 1,
-        maximum: 240,
       },
       focus: buildStringSchema(1, 160),
       blocks: {
@@ -303,92 +320,42 @@ function buildWorkoutSchema() {
   };
 }
 
-function buildVolumeTargetItemSchema(areaValues) {
+function buildOmittedBodyPartSchema() {
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['area', 'targetSetsPerWeek', 'priority', 'rationale'],
+    required: ['area', 'reasonCode', 'explanation'],
     properties: {
       area: {
         type: 'string',
-        enum: areaValues,
+        enum: AI_WEEKLY_PLAN_BODY_PARTS,
       },
-      targetSetsPerWeek: {
-        type: 'integer',
-        minimum: 0,
-        maximum: 50,
-      },
-      priority: {
+      reasonCode: {
         type: 'string',
-        enum: AI_WEEKLY_PLAN_TARGET_PRIORITIES,
+        enum: AI_WEEKLY_PLAN_OMISSION_REASON_CODES,
       },
-      rationale: nullable(buildStringSchema(1, 240)),
+      explanation: buildStringSchema(
+        1,
+        AI_WEEKLY_PLAN_LIMITS.explanationMaxLength
+      ),
     },
   };
 }
 
-function buildVolumeTargetsSchema() {
+function buildMuscleDistributionDebugSchema() {
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['bodyParts', 'muscleFocuses'],
+    required: ['rationale', 'omittedBodyParts'],
     properties: {
-      bodyParts: {
+      rationale: buildStringSchema(
+        1,
+        AI_WEEKLY_PLAN_LIMITS.explanationMaxLength
+      ),
+      omittedBodyParts: {
         type: 'array',
-        maxItems: AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS.length,
-        items: buildVolumeTargetItemSchema(
-          AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS
-        ),
-      },
-      muscleFocuses: {
-        type: 'array',
-        maxItems: AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS.length,
-        items: buildVolumeTargetItemSchema(
-          AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS
-        ),
-      },
-    },
-  };
-}
-
-function buildFrequencyTargetItemSchema(areaValues) {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    required: ['area', 'targetSessionsPerWeek'],
-    properties: {
-      area: {
-        type: 'string',
-        enum: areaValues,
-      },
-      targetSessionsPerWeek: {
-        type: 'integer',
-        minimum: 0,
-        maximum: AI_WEEKLY_PLAN_LIMITS.workoutMaxCount,
-      },
-    },
-  };
-}
-
-function buildFrequencyTargetsSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    required: ['bodyParts', 'muscleFocuses'],
-    properties: {
-      bodyParts: {
-        type: 'array',
-        maxItems: AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS.length,
-        items: buildFrequencyTargetItemSchema(
-          AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS
-        ),
-      },
-      muscleFocuses: {
-        type: 'array',
-        maxItems: AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS.length,
-        items: buildFrequencyTargetItemSchema(
-          AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS
-        ),
+        maxItems: AI_WEEKLY_PLAN_BODY_PARTS.length,
+        items: buildOmittedBodyPartSchema(),
       },
     },
   };
@@ -431,8 +398,7 @@ function buildWeeklyPlanAiJsonSchema() {
       'strategySummary',
       'splitType',
       'workouts',
-      'volumeTargets',
-      'frequencyTargets',
+      'muscleDistributionDebug',
       'progressionModel',
       'cautionHandling',
       'notesPolicy',
@@ -459,8 +425,7 @@ function buildWeeklyPlanAiJsonSchema() {
         maxItems: AI_WEEKLY_PLAN_LIMITS.workoutMaxCount,
         items: buildWorkoutSchema(),
       },
-      volumeTargets: buildVolumeTargetsSchema(),
-      frequencyTargets: buildFrequencyTargetsSchema(),
+      muscleDistributionDebug: buildMuscleDistributionDebugSchema(),
       progressionModel: buildProgressionModelSchema(),
       cautionHandling: buildSummaryPolicySchema(),
       notesPolicy: buildSummaryPolicySchema(),
@@ -563,9 +528,9 @@ function validateWeeklyPlanAiOutputSchema(payload = {}) {
 
 module.exports = {
   AI_WEEKLY_PLAN_BLOCK_TYPES,
-  AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS,
+  AI_WEEKLY_PLAN_BODY_PARTS,
   AI_WEEKLY_PLAN_LIMITS,
-  AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS,
+  AI_WEEKLY_PLAN_OMISSION_REASON_CODES,
   AI_WEEKLY_PLAN_OUTPUT_CONTRACT_VERSION,
   AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION,
   AI_WEEKLY_PLAN_SET_TYPES,

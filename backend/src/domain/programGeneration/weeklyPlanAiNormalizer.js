@@ -105,7 +105,7 @@ function normalizeSetTemplate(setTemplate = {}) {
     targetReps: normalizeInt(setTemplate.targetReps),
     minReps: normalizeInt(setTemplate.minReps),
     maxReps: normalizeInt(setTemplate.maxReps),
-    targetSeconds: null,
+    targetSeconds: normalizeInt(setTemplate.targetSeconds),
     targetRir: normalizeNumber(setTemplate.targetRir),
     targetRpe: null,
     tempo: normalizeOptionalString(setTemplate.tempo),
@@ -160,6 +160,7 @@ function normalizeCardioExercise(aiExercise = {}, poolItem = null, path = 'cardi
 
 function normalizeBlock(aiBlock = {}, poolItemByExerciseId = new Map(), workoutIndex, blockIndex) {
   const blockType = String(aiBlock.blockType || '').trim().toUpperCase();
+  const blockRestSeconds = deriveAIBlockRestSeconds(aiBlock);
   const exercises = toArray(aiBlock.exercises)
     .slice()
     .sort((left, right) => left.orderIndex - right.orderIndex);
@@ -189,7 +190,20 @@ function normalizeBlock(aiBlock = {}, poolItemByExerciseId = new Map(), workoutI
 
   const normalizedExercises = exercises.map((exercise) => {
     const exerciseId = normalizeOptionalString(exercise.exerciseId);
-    return normalizeStrengthExercise(exercise, poolItemByExerciseId.get(exerciseId));
+    const normalizedExercise = normalizeStrengthExercise(
+      exercise,
+      poolItemByExerciseId.get(exerciseId)
+    );
+
+    if (
+      blockType === 'SUPERSET' &&
+      normalizedExercise.orderIndex === 2 &&
+      normalizedExercise.defaultRestSeconds == null
+    ) {
+      normalizedExercise.defaultRestSeconds = blockRestSeconds;
+    }
+
+    return normalizedExercise;
   });
 
   return {
@@ -198,7 +212,7 @@ function normalizeBlock(aiBlock = {}, poolItemByExerciseId = new Map(), workoutI
     label: null,
     roundCount: deriveAIBlockRoundCount(aiBlock),
     restStrategy: deriveAIBlockRestStrategy(blockType),
-    restSeconds: deriveAIBlockRestSeconds(aiBlock),
+    restSeconds: blockRestSeconds,
     notes: null,
     exercises: normalizedExercises,
   };
@@ -208,7 +222,7 @@ function normalizeWorkout(aiWorkout = {}, poolItemByExerciseId = new Map(), work
   return {
     name: String(aiWorkout.name || '').trim(),
     orderIndex: normalizeInt(aiWorkout.orderIndex),
-    estimatedDurationMinutes: normalizeInt(aiWorkout.estimatedDurationMinutes),
+    estimatedDurationMinutes: null,
     notes: normalizeOptionalString(aiWorkout.focus),
     blocks: toArray(aiWorkout.blocks)
       .slice()
@@ -242,8 +256,6 @@ function buildWeeklyPlanAiGenerationMetadata(aiOutput = {}) {
     aiOutputSchemaVersion: aiOutput.schemaVersion ?? null,
     strategySummary: aiOutput.strategySummary || null,
     splitType: aiOutput.splitType || null,
-    volumeTargets: aiOutput.volumeTargets || null,
-    frequencyTargets: aiOutput.frequencyTargets || null,
     progressionModel: aiOutput.progressionModel || null,
     cautionHandling: aiOutput.cautionHandling || null,
     notesPolicy: aiOutput.notesPolicy || null,

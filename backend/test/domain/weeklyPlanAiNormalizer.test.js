@@ -65,7 +65,7 @@ function createCardioExercise(overrides = {}) {
 
 function createAIOutput() {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     planName: 'AI Draft',
     sessionsPerWeek: 1,
     strategySummary: 'Simple full body plan.',
@@ -76,6 +76,17 @@ function createAIOutput() {
         orderIndex: 1,
         estimatedDurationMinutes: 60,
         focus: 'Balanced strength plus easy cardio',
+        durationCalculationDebug: {
+          methodId: 'historical_weekly_plan_metrics_v1',
+          blocks: [
+            { blockOrderIndex: 1, movementSeconds: 120, adjustedRestSeconds: 120, fixedSeconds: 30, cardioSeconds: 0, totalSeconds: 270 },
+            { blockOrderIndex: 2, movementSeconds: 240, adjustedRestSeconds: 240, fixedSeconds: 30, cardioSeconds: 0, totalSeconds: 510 },
+            { blockOrderIndex: 3, movementSeconds: 0, adjustedRestSeconds: 0, fixedSeconds: 0, cardioSeconds: 2820, totalSeconds: 2820 },
+          ],
+          workoutTotalSeconds: 3600,
+          calculatedDurationMinutes: 60,
+          explanation: 'The structured block totals produce a sixty-minute workout.',
+        },
         blocks: [
           {
             orderIndex: 1,
@@ -107,13 +118,9 @@ function createAIOutput() {
         ],
       },
     ],
-    volumeTargets: {
-      bodyParts: [],
-      muscleFocuses: [],
-    },
-    frequencyTargets: {
-      bodyParts: [],
-      muscleFocuses: [],
+    muscleDistributionDebug: {
+      rationale: 'The workout distributes direct work across the selected strength areas.',
+      omittedBodyParts: [],
     },
     progressionModel: {
       type: 'double_progression',
@@ -171,6 +178,9 @@ test('normalizeWeeklyPlanAiOutput maps AI output to createWeeklyPlan document', 
   assert.equal(document.workouts[0].notes, 'Balanced strength plus easy cardio');
   assert.equal(document.strategySummary, undefined);
   assert.equal(document.volumeTargets, undefined);
+  assert.equal(document.frequencyTargets, undefined);
+  assert.equal(document.workouts[0].durationCalculationDebug, undefined);
+  assert.equal(document.muscleDistributionDebug, undefined);
 });
 
 test('normalizeWeeklyPlanAiOutput maps SINGLE, SUPERSET, and CARDIO blocks', () => {
@@ -301,6 +311,40 @@ test('normalizer materializes lane A rest without mutation and preserves equal S
   assert.deepEqual(aiOutput, before);
 });
 
+test('normalizer materializes null SUPERSET lane B rest from lane A without mutating AI output', () => {
+  const aiOutput = createAIOutput();
+  const superset = aiOutput.workouts[0].blocks[1];
+  superset.exercises[0].defaultRestSeconds = 105;
+  superset.exercises[1].defaultRestSeconds = null;
+  const before = structuredClone(aiOutput);
+
+  const document = normalizeWeeklyPlanAiOutput(aiOutput, {
+    context: createContext(),
+  });
+  const normalizedSuperset = document.workouts[0].blocks[1];
+
+  assert.equal(normalizedSuperset.restSeconds, 105);
+  assert.equal(normalizedSuperset.exercises[0].defaultRestSeconds, 105);
+  assert.equal(normalizedSuperset.exercises[1].defaultRestSeconds, 105);
+  assert.deepEqual(aiOutput, before);
+});
+
+test('existing SUPERSET lane B rest is preserved but never replaces lane A block rest', () => {
+  const aiOutput = createAIOutput();
+  const superset = aiOutput.workouts[0].blocks[1];
+  superset.exercises[0].defaultRestSeconds = 120;
+  superset.exercises[1].defaultRestSeconds = 60;
+
+  const document = normalizeWeeklyPlanAiOutput(aiOutput, {
+    context: createContext(),
+  });
+  const normalizedSuperset = document.workouts[0].blocks[1];
+
+  assert.equal(normalizedSuperset.restSeconds, 120);
+  assert.equal(normalizedSuperset.exercises[0].defaultRestSeconds, 120);
+  assert.equal(normalizedSuperset.exercises[1].defaultRestSeconds, 60);
+});
+
 test('normalizeWeeklyPlanAiOutput prefers canonical pool metadata when available', () => {
   const document = normalizeWeeklyPlanAiOutput(createAIOutput(), {
     context: createContext(),
@@ -315,8 +359,8 @@ test('normalizeWeeklyPlanAiOutput prefers canonical pool metadata when available
 test('buildWeeklyPlanAiGenerationMetadata extracts audit fields without raw output', () => {
   const metadata = buildWeeklyPlanAiGenerationMetadata(createAIOutput());
 
-  assert.equal(metadata.aiContractVersion, 2);
-  assert.equal(metadata.aiOutputSchemaVersion, 2);
+  assert.equal(metadata.aiContractVersion, 4);
+  assert.equal(metadata.aiOutputSchemaVersion, 3);
   assert.equal(metadata.strategySummary, 'Simple full body plan.');
   assert.equal(metadata.splitType, 'full_body');
   assert.equal(metadata.workouts, undefined);

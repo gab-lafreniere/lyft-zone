@@ -40,6 +40,7 @@ async function readJsonResponse(response) {
     );
     error.code = json?.error?.code || json?.code || null;
     error.details = json?.error?.details || null;
+    error.status = response.status;
     throw error;
   }
 
@@ -224,6 +225,18 @@ export async function createWeeklyPlanDraft(programPayload) {
       ...programPayload,
       userId,
     }),
+  });
+
+  return readJsonResponse(response);
+}
+
+export async function createAIWeeklyPlanDraft({ signal } = {}) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(`${BACKEND_URL}/api/weekly-plans/ai-drafts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId }),
+    ...(signal ? { signal } : {}),
   });
 
   return readJsonResponse(response);

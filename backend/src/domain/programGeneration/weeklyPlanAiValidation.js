@@ -1,16 +1,17 @@
 const { normalizeCardioPrescription } = require('../../../services/cardioPrescription');
 const {
   AI_WEEKLY_PLAN_BLOCK_TYPES,
-  AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS,
-  AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS,
+  AI_WEEKLY_PLAN_BODY_PARTS,
 } = require('./weeklyPlanAiSchema');
+const {
+  validateCompleteSentenceText,
+} = require('./completeSentenceValidation');
+const {
+  buildEligibleExerciseCoverageCounts,
+  resolveEligibleExerciseCoverageLevel,
+} = require('./programGenerationPoolCoverage');
 
-const BODY_PART_TARGET_AREA_SET = new Set(
-  AI_WEEKLY_PLAN_BODY_PART_TARGET_AREAS
-);
-const MUSCLE_FOCUS_TARGET_AREA_SET = new Set(
-  AI_WEEKLY_PLAN_MUSCLE_FOCUS_TARGET_AREAS
-);
+const AI_WEEKLY_PLAN_BODY_PART_SET = new Set(AI_WEEKLY_PLAN_BODY_PARTS);
 
 function toArray(value) {
   return Array.isArray(value) ? value : [];
@@ -93,24 +94,32 @@ function validateRepTargetContract(setTemplate = {}, path, issues) {
   const hasTargetReps = setTemplate.targetReps != null;
   const hasMinReps = setTemplate.minReps != null;
   const hasMaxReps = setTemplate.maxReps != null;
+  const hasTargetSeconds = setTemplate.targetSeconds != null;
   const hasRange = hasMinReps || hasMaxReps;
+  const modeCount =
+    (hasTargetReps ? 1 : 0) +
+    (hasRange ? 1 : 0) +
+    (hasTargetSeconds ? 1 : 0);
 
-  if (hasTargetReps && hasRange) {
+  if (modeCount > 1) {
     pushIssue(
       issues,
       path,
-      'AMBIGUOUS_REP_TARGET',
-      'Set template must use either targetReps or minReps/maxReps, not both'
+      'AMBIGUOUS_PRESCRIPTION_TARGET',
+      'Set template must use exactly one of targetReps, minReps/maxReps, or targetSeconds'
     );
     return;
   }
 
-  if (!hasTargetReps && !(hasMinReps && hasMaxReps)) {
+  if (
+    modeCount === 0 ||
+    (hasRange && !(hasMinReps && hasMaxReps))
+  ) {
     pushIssue(
       issues,
       path,
-      'MISSING_REP_TARGET',
-      'Set template must include targetReps or both minReps and maxReps'
+      'MISSING_PRESCRIPTION_TARGET',
+      'Set template must include targetReps, both minReps and maxReps, or targetSeconds'
     );
     return;
   }
@@ -132,7 +141,12 @@ function validateRepTargetContract(setTemplate = {}, path, issues) {
   }
 }
 
-function validateStrengthExercise(exercise = {}, path, issues) {
+function validateStrengthExercise(
+  exercise = {},
+  path,
+  issues,
+  { defaultRestSecondsRequired = true } = {}
+) {
   if (!normalizeOptionalString(exercise.exerciseId)) {
     pushIssue(issues, `${path}.exerciseId`, 'REQUIRED', 'exerciseId is required');
   }
@@ -141,7 +155,7 @@ function validateStrengthExercise(exercise = {}, path, issues) {
     pushIssue(issues, `${path}.defaultTempo`, 'REQUIRED', 'defaultTempo is required for strength exercises');
   }
 
-  if (exercise.defaultRestSeconds == null) {
+  if (defaultRestSecondsRequired && exercise.defaultRestSeconds == null) {
     pushIssue(
       issues,
       `${path}.defaultRestSeconds`,
@@ -179,7 +193,7 @@ function validateStrengthExercise(exercise = {}, path, issues) {
         issues,
         `${setPath}.setType`,
         'INVALID_SET_TYPE',
-        'setType must be WORKING in AI Weekly Plan Output V2',
+        'setType must be WORKING in AI Weekly Plan Output V4',
         {
           expected: 'WORKING',
           actual: setTemplate.setType,
@@ -239,7 +253,7 @@ function validateBlockExercises(block = {}, blockPath, issues, notesStats) {
       issues,
       `${blockPath}.blockType`,
       'UNSUPPORTED_BLOCK_TYPE',
-      'Block type is not supported in AI Weekly Plan Output V2',
+      'Block type is not supported in AI Weekly Plan Output V4',
       {
         expected: AI_WEEKLY_PLAN_BLOCK_TYPES,
         actual: block.blockType,
@@ -297,7 +311,11 @@ function validateBlockExercises(block = {}, blockPath, issues, notesStats) {
   const supersetSetTemplateCounts = [];
   exercises.forEach((exercise, exerciseIndex) => {
     const exercisePath = `${blockPath}.exercises[${exerciseIndex}]`;
-    validateStrengthExercise(exercise, exercisePath, issues);
+    const isSupersetLaneB =
+      block.blockType === 'SUPERSET' && exercise?.orderIndex === 2;
+    validateStrengthExercise(exercise, exercisePath, issues, {
+      defaultRestSecondsRequired: !isSupersetLaneB,
+    });
 
     notesStats.strengthExerciseCount += 1;
     if (normalizeOptionalString(exercise.notes)) {
@@ -328,146 +346,67 @@ function validateBlockExercises(block = {}, blockPath, issues, notesStats) {
   }
 }
 
-function validateNotesPolicy(notesStats, issues) {
+function validateNotesPolicy(notesStats) {
   const allowedExerciseNotes = Math.min(
     5,
     Math.max(1, Math.ceil(notesStats.strengthExerciseCount * 0.3))
   );
 
-  if (notesStats.strengthExerciseNoteCount > allowedExerciseNotes) {
-    pushIssue(
-      issues,
-      'notesPolicy',
-      'NOTES_POLICY_VIOLATION',
-      'Too many strength exercise notes for AI Weekly Plan Output V2',
-      {
-        expected: {
-          allowedExerciseNotes,
-        },
-        actual: {
-          strengthExerciseNoteCount: notesStats.strengthExerciseNoteCount,
-        },
-      }
-    );
-  }
-
   return {
     ...notesStats,
     allowedExerciseNotes,
+    exceedsRecommendedExerciseNotes:
+      notesStats.strengthExerciseNoteCount > allowedExerciseNotes,
   };
 }
 
-function validateTargetArray({
-  targets,
-  path,
-  canonicalAreas,
-  valueKey,
-  sessionsPerWeek,
-  issues,
-}) {
-  const seenAreas = new Set();
+function appendCompleteSentenceIssues(value, path, issues) {
+  const result = validateCompleteSentenceText(value, { path });
+  issues.push(...result.issues);
+}
 
-  toArray(targets).forEach((target, index) => {
-    const targetPath = `${path}[${index}]`;
-    const area = normalizeOptionalString(target?.area);
-    const value = target?.[valueKey];
+function validateMuscleDistributionDebug(aiOutput, issues) {
+  const debug = aiOutput?.muscleDistributionDebug || {};
+  const omittedBodyParts = toArray(debug.omittedBodyParts);
+  const seen = new Set();
 
-    if (!area || !canonicalAreas.has(area)) {
+  appendCompleteSentenceIssues(
+    debug.rationale,
+    'muscleDistributionDebug.rationale',
+    issues
+  );
+
+  omittedBodyParts.forEach((omission, index) => {
+    const path = `muscleDistributionDebug.omittedBodyParts[${index}]`;
+    const area = normalizeOptionalString(omission?.area);
+
+    if (!AI_WEEKLY_PLAN_BODY_PART_SET.has(area)) {
       pushIssue(
         issues,
-        `${targetPath}.area`,
-        'INVALID_TARGET_AREA',
-        `area must be a canonical ${path.includes('bodyParts') ? 'bodyParts' : 'muscleFocus'} key`,
-        { actual: target?.area }
+        `${path}.area`,
+        'INVALID_OMITTED_BODY_PART',
+        'Omitted area must be a canonical AI Weekly Plan body part',
+        { actual: omission?.area }
       );
-    } else if (seenAreas.has(area)) {
+    } else if (seen.has(area)) {
       pushIssue(
         issues,
-        `${targetPath}.area`,
-        'DUPLICATE_TARGET_AREA',
-        'Target areas must be unique within their explicit taxonomy',
+        `${path}.area`,
+        'DUPLICATE_OMITTED_BODY_PART',
+        'Each omitted body part may be declared only once',
         { actual: area }
       );
     }
-
     if (area) {
-      seenAreas.add(area);
+      seen.add(area);
     }
 
-    if (!Number.isSafeInteger(value) || value < 0) {
-      pushIssue(
-        issues,
-        `${targetPath}.${valueKey}`,
-        'INVALID_TARGET_VALUE',
-        `${valueKey} must be a non-negative integer`,
-        { actual: value }
-      );
-    }
-
-    if (
-      valueKey === 'targetSessionsPerWeek' &&
-      Number.isSafeInteger(value) &&
-      Number.isSafeInteger(sessionsPerWeek) &&
-      value > sessionsPerWeek
-    ) {
-      pushIssue(
-        issues,
-        `${targetPath}.${valueKey}`,
-        'TARGET_FREQUENCY_EXCEEDS_SESSIONS',
-        'targetSessionsPerWeek must not exceed sessionsPerWeek',
-        { expected: sessionsPerWeek, actual: value }
-      );
-    }
-  });
-}
-
-function validateTargetContract(aiOutput, issues) {
-  const targetGroups = [
-    {
-      targets: aiOutput?.volumeTargets?.bodyParts,
-      path: 'volumeTargets.bodyParts',
-      canonicalAreas: BODY_PART_TARGET_AREA_SET,
-      valueKey: 'targetSetsPerWeek',
-    },
-    {
-      targets: aiOutput?.volumeTargets?.muscleFocuses,
-      path: 'volumeTargets.muscleFocuses',
-      canonicalAreas: MUSCLE_FOCUS_TARGET_AREA_SET,
-      valueKey: 'targetSetsPerWeek',
-    },
-    {
-      targets: aiOutput?.frequencyTargets?.bodyParts,
-      path: 'frequencyTargets.bodyParts',
-      canonicalAreas: BODY_PART_TARGET_AREA_SET,
-      valueKey: 'targetSessionsPerWeek',
-    },
-    {
-      targets: aiOutput?.frequencyTargets?.muscleFocuses,
-      path: 'frequencyTargets.muscleFocuses',
-      canonicalAreas: MUSCLE_FOCUS_TARGET_AREA_SET,
-      valueKey: 'targetSessionsPerWeek',
-    },
-  ];
-
-  if (
-    Object.prototype.hasOwnProperty.call(aiOutput?.volumeTargets || {}, 'perMuscle') ||
-    Object.prototype.hasOwnProperty.call(aiOutput?.frequencyTargets || {}, 'perMuscle')
-  ) {
-    pushIssue(
-      issues,
-      'volumeTargets',
-      'LEGACY_TARGET_SHAPE_UNSUPPORTED',
-      'perMuscle is not supported by AI Weekly Plan Output V2'
+    appendCompleteSentenceIssues(
+      omission?.explanation,
+      `${path}.explanation`,
+      issues
     );
-  }
-
-  targetGroups.forEach((group) =>
-    validateTargetArray({
-      ...group,
-      sessionsPerWeek: aiOutput?.sessionsPerWeek,
-      issues,
-    })
-  );
+  });
 }
 
 function validateWeeklyPlanAiOutputSemantics(aiOutput = {}) {
@@ -491,7 +430,7 @@ function validateWeeklyPlanAiOutputSemantics(aiOutput = {}) {
     );
   }
 
-  validateTargetContract(aiOutput, issues);
+  validateMuscleDistributionDebug(aiOutput, issues);
 
   validateSequentialOrderIndexes(workouts, 'workouts', issues);
 
@@ -500,7 +439,6 @@ function validateWeeklyPlanAiOutputSemantics(aiOutput = {}) {
     const blocks = toArray(workout.blocks);
 
     validateSequentialOrderIndexes(blocks, `${workoutPath}.blocks`, issues);
-
     blocks.forEach((block, blockIndex) => {
       validateBlockExercises(
         block,
@@ -511,7 +449,7 @@ function validateWeeklyPlanAiOutputSemantics(aiOutput = {}) {
     });
   });
 
-  const notesPolicy = validateNotesPolicy(notesStats, issues);
+  const notesPolicy = validateNotesPolicy(notesStats);
 
   return {
     ok: issues.length === 0,
@@ -544,8 +482,105 @@ function validateGeneratedExerciseIdsAgainstPool(document = {}, poolSnapshot = {
   };
 }
 
+function buildMuscleDistributionDebugAudit({
+  generatedAIOutput = {},
+  analytics = {},
+  context = {},
+} = {}) {
+  const bodyPartMetricByKey = new Map(
+    toArray(analytics?.muscleMetrics)
+      .filter((entry) => entry?.taxonomy === 'body_part')
+      .map((entry) => [entry.key, entry])
+  );
+  const actualZeroDirectBodyParts = AI_WEEKLY_PLAN_BODY_PARTS.filter(
+    (area) =>
+      !bodyPartMetricByKey.has(area) ||
+      bodyPartMetricByKey.get(area)?.directWorkingSets === 0
+  );
+  const omissions = toArray(
+    generatedAIOutput?.muscleDistributionDebug?.omittedBodyParts
+  );
+  const declaredOmittedBodyParts = AI_WEEKLY_PLAN_BODY_PARTS.filter((area) =>
+    omissions.some((omission) => omission?.area === area)
+  );
+  const missingOmissionExplanations = actualZeroDirectBodyParts.filter(
+    (area) => !declaredOmittedBodyParts.includes(area)
+  );
+  const falselyDeclaredOmissions = declaredOmittedBodyParts.filter(
+    (area) => !actualZeroDirectBodyParts.includes(area)
+  );
+  const eligibleBodyPartCounts = buildEligibleExerciseCoverageCounts(
+    toArray(context?.exercisePoolItems),
+    'bodyParts',
+    AI_WEEKLY_PLAN_BODY_PARTS
+  );
+  const unsupportedPoolLimitationClaims = omissions
+    .filter(
+      (omission) =>
+        omission?.reasonCode === 'limited_by_eligible_pool' &&
+        resolveEligibleExerciseCoverageLevel(
+          eligibleBodyPartCounts.get(omission?.area)
+        ) === null
+    )
+    .map((omission) => omission.area);
+
+  return {
+    actualZeroDirectBodyParts,
+    declaredOmittedBodyParts,
+    missingOmissionExplanations,
+    falselyDeclaredOmissions,
+    unsupportedPoolLimitationClaims,
+    omissionDeclarationMatchesActualCoverage:
+      missingOmissionExplanations.length === 0 &&
+      falselyDeclaredOmissions.length === 0,
+    poolLimitationClaimsVerified:
+      unsupportedPoolLimitationClaims.length === 0,
+  };
+}
+
+function validateWeeklyPlanAiDebugContractAgainstAnalytics(options = {}) {
+  const audit = buildMuscleDistributionDebugAudit(options);
+  const issues = [];
+
+  audit.missingOmissionExplanations.forEach((area) => {
+    pushIssue(
+      issues,
+      'muscleDistributionDebug.omittedBodyParts',
+      'MISSING_OMISSION_EXPLANATION',
+      'Every body part with zero direct working sets must be declared and explained',
+      { actual: area }
+    );
+  });
+  audit.falselyDeclaredOmissions.forEach((area) => {
+    pushIssue(
+      issues,
+      'muscleDistributionDebug.omittedBodyParts',
+      'FALSE_OMISSION_DECLARATION',
+      'A declared omission must have zero direct working sets in backend Analytics',
+      { actual: area }
+    );
+  });
+  audit.unsupportedPoolLimitationClaims.forEach((area) => {
+    pushIssue(
+      issues,
+      'muscleDistributionDebug.omittedBodyParts',
+      'UNSUPPORTED_POOL_LIMITATION_CLAIM',
+      'limited_by_eligible_pool requires unavailable, severely_limited, or limited canonical eligible-pool coverage',
+      { actual: area }
+    );
+  });
+
+  return {
+    ok: issues.length === 0,
+    issues,
+    audit,
+  };
+}
+
 module.exports = {
+  buildMuscleDistributionDebugAudit,
   collectGeneratedExerciseIds,
+  validateWeeklyPlanAiDebugContractAgainstAnalytics,
   validateWeeklyPlanAiOutputSemantics,
   validateGeneratedExerciseIdsAgainstPool,
 };

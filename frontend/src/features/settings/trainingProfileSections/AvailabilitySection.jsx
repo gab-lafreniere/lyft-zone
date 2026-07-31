@@ -34,7 +34,7 @@ export default function AvailabilitySection({ draft, onChange, fieldErrors }) {
           description="Choose the session length you can sustain most weeks."
           value={draft?.availability?.durationPerSession ?? ""}
           min={15}
-          max={240}
+          max={120}
           step={15}
           onChange={(value) =>
             setDraftField(draft, onChange, ["availability", "durationPerSession"], value)

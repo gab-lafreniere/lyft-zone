@@ -3,7 +3,7 @@ const path = require('node:path');
 
 const WEEKLY_PLAN_BUILDER_DOCTRINE_ID = 'bodybuilding_runtime_classic';
 const WEEKLY_PLAN_BUILDER_DOCTRINE_VERSION =
-  'bodybuilding-hypertrophy-runtime-classic-v1.0.0';
+  'bodybuilding-hypertrophy-runtime-classic-v1.0.2';
 const WEEKLY_PLAN_BUILDER_DERIVED_FROM_DOCTRINE_VERSION =
   'bodybuilding-hypertrophy-v1.0.0';
 

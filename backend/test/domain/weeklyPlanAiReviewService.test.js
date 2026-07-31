@@ -121,7 +121,7 @@ test('reviewWeeklyPlanAi builds a strict Responses API request without SDK retri
     text: {
       format: {
         type: 'json_schema',
-        name: 'ai_program_review_v1',
+        name: 'ai_program_review_v3',
         strict: true,
         schema,
       },

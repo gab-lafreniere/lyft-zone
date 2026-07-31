@@ -10,6 +10,8 @@ const SUPPORTED_BODY_PARTS = [
   { key: "calves", label: "Calves" },
   { key: "abs", label: "Abs" },
 ];
+const WORKOUT_WARMUP_SECONDS = 600;
+const STRENGTH_BLOCK_OVERHEAD_SECONDS = 120;
 
 function roundDisplayMinutes(totalSeconds) {
   if (totalSeconds <= 0) {
@@ -130,6 +132,7 @@ export function computeWorkoutMetrics(workout) {
   let setCount = 0;
   let totalTUTSeconds = 0;
   let totalDurationSeconds = 0;
+  let hasValidDurationBlock = false;
   const distribution = createDistributionAccumulator();
 
   workout.blocks.forEach((block) => {
@@ -138,8 +141,11 @@ export function computeWorkoutMetrics(workout) {
         return;
       }
 
+      const cardioDurationSeconds = getCardioDurationSeconds(block);
       exerciseCount += 1;
-      totalDurationSeconds += getCardioDurationSeconds(block);
+      totalDurationSeconds += cardioDurationSeconds;
+      hasValidDurationBlock =
+        hasValidDurationBlock || cardioDurationSeconds > 0;
       return;
     }
 
@@ -164,10 +170,11 @@ export function computeWorkoutMetrics(workout) {
       exerciseCount += 1;
       setCount += blockSetCount;
       totalTUTSeconds += blockTUTSeconds;
+      hasValidDurationBlock = true;
       totalDurationSeconds +=
         blockTUTSeconds +
-        parseRestToSeconds(block.rest) * Math.max(0, blockSetCount - 1) * 1.15 +
-        90;
+        parseRestToSeconds(block.rest) * Math.max(0, blockSetCount - 1) +
+        STRENGTH_BLOCK_OVERHEAD_SECONDS;
 
       addDistributionContribution(distribution, block.bodyParts, blockSetCount);
       return;
@@ -203,15 +210,20 @@ export function computeWorkoutMetrics(workout) {
     exerciseCount += populatedLaneCount;
     setCount += supersetSetCount * populatedLaneCount;
     totalTUTSeconds += blockTUTSeconds;
+    hasValidDurationBlock = true;
     totalDurationSeconds +=
       blockTUTSeconds +
-      parseRestToSeconds(block.rest) * Math.max(0, supersetSetCount - 1) * 1.15 +
-      90;
+      parseRestToSeconds(block.rest) * Math.max(0, supersetSetCount - 1) +
+      STRENGTH_BLOCK_OVERHEAD_SECONDS;
 
     populatedExercises.forEach((exercise) => {
       addDistributionContribution(distribution, exercise.bodyParts, supersetSetCount);
     });
   });
+
+  if (hasValidDurationBlock) {
+    totalDurationSeconds += WORKOUT_WARMUP_SECONDS;
+  }
 
   return {
     exerciseCount,

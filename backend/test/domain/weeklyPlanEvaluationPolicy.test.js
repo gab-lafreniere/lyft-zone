@@ -63,19 +63,24 @@ test('Evaluation Policy V1 exports the exact deterministic identity and duration
   );
   assert.equal(
     WEEKLY_PLAN_DURATION_METHOD_DESCRIPTOR.blocks.SINGLE.restIntervalMultiplier,
-    1.15
+    1
   );
   assert.equal(
     WEEKLY_PLAN_DURATION_METHOD_DESCRIPTOR.blocks.SINGLE.fixedBlockSeconds,
-    90
+    120
   );
   assert.equal(
     WEEKLY_PLAN_DURATION_METHOD_DESCRIPTOR.blocks.SUPERSET.restIntervalMultiplier,
-    1.15
+    1
   );
   assert.equal(
     WEEKLY_PLAN_DURATION_METHOD_DESCRIPTOR.blocks.SUPERSET.fixedBlockSeconds,
-    90
+    120
+  );
+  assert.equal(WEEKLY_PLAN_DURATION_METHOD_DESCRIPTOR.workout.warmupSeconds, 600);
+  assert.equal(
+    WEEKLY_PLAN_DURATION_METHOD_DESCRIPTOR.workout.warmupOccurrences,
+    'once_when_at_least_one_supported_block_is_valid'
   );
   assert.equal(
     WEEKLY_PLAN_DURATION_METHOD_DESCRIPTOR.blocks.CARDIO.secondsPerMinute,
@@ -211,6 +216,40 @@ test('calculateDurationAlignment classifies every requested boundary exactly', (
       }
     );
   });
+});
+
+test('Evaluation Policy V1 keeps the exact rounded-minute boundaries for a 90-minute request', () => {
+  const expected = new Map([
+    [76, 'correction_required_under_target'],
+    [77, 'acceptable_under_target'],
+    [80, 'acceptable_under_target'],
+    [81, 'preferred'],
+    [90, 'preferred'],
+    [91, 'acceptable_over_target'],
+    [94, 'acceptable_over_target'],
+    [95, 'correction_required_over_target'],
+  ]);
+
+  expected.forEach((status, calculatedDurationMinutes) => {
+    assert.equal(
+      calculateDurationAlignment({
+        requestedDurationMinutes: 90,
+        calculatedDurationMinutes,
+      }).durationAlignmentStatus,
+      status
+    );
+  });
+});
+
+test('Evaluation Policy V1 remains available for every supported session target', () => {
+  for (const requestedDurationMinutes of [30, 45, 60, 75, 120]) {
+    const alignment = calculateDurationAlignment({
+      requestedDurationMinutes,
+      calculatedDurationMinutes: requestedDurationMinutes,
+    });
+    assert.equal(alignment.durationAlignmentStatus, 'preferred');
+    assert.equal(alignment.requiresCorrection, false);
+  }
 });
 
 test('calculateDurationAlignment returns unavailable for invalid requested duration', () => {

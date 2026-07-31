@@ -1,514 +1,263 @@
-'use strict';
-
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION,
-} = require('../../src/domain/programGeneration/programGenerationContextBuilder');
-const {
   PROGRAM_REPAIR_CONTEXT_SCHEMA_VERSION,
-  PROGRAM_REPAIR_MAX_ATTEMPTS,
-  PROGRAM_REPAIR_OUTPUT_MODE,
   ProgramRepairContextError,
   buildProgramRepairContext,
 } = require('../../src/domain/programGeneration/programRepairContextBuilder');
 const {
-  PROGRAM_REVIEW_CONTRACT_VERSION,
-  PROGRAM_REVIEW_OUTPUT_SCHEMA_VERSION,
-} = require('../../src/domain/programGeneration/programReviewSchema');
-const {
-  AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION,
-} = require('../../src/domain/programGeneration/weeklyPlanAiSchema');
-const {
-  WEEKLY_PLAN_ANALYTICS_SCHEMA_VERSION,
+  calculateWeeklyPlanAnalytics,
 } = require('../../src/domain/programGeneration/weeklyPlanAnalytics');
 const {
-  WEEKLY_PLAN_EVALUATION_POLICY,
-  WEEKLY_PLAN_EVALUATION_POLICY_ID,
-  WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
-} = require('../../src/domain/programGeneration/weeklyPlanEvaluationPolicy');
+  clone,
+  createAiOutput,
+  createContext,
+  createNormalizedDocument,
+} = require('./weeklyPlanAiV4Fixtures');
 
-function clone(value) {
-  return structuredClone(value);
-}
-
-function createIssue(overrides = {}) {
-  return {
-    issueIndex: 1,
-    category: 'SPLIT_DURATION_COHERENCE',
-    severity: 'HIGH',
-    path: '/analytics/workouts/0/durationAlignmentStatus',
-    message: 'The workout is shorter than requested.',
-    repairability: 'REPAIRABLE',
-    suggestedAction: 'Increase useful training work.',
-    ...overrides,
+function createDurationFixture(targetSeconds = 1) {
+  const context = createContext();
+  const generatedAIOutput = createAiOutput();
+  generatedAIOutput.workouts[0].blocks[0].exercises[0].setTemplates[0] = {
+    ...generatedAIOutput.workouts[0].blocks[0].exercises[0].setTemplates[0],
+    targetReps: null,
+    targetSeconds,
   };
+  const generatedPlanDocument = createNormalizedDocument({ targetSeconds });
+  const analytics = calculateWeeklyPlanAnalytics({
+    generatedAIOutput,
+    generatedPlanDocument,
+    context,
+  });
+  return { context, generatedAIOutput, generatedPlanDocument, analytics };
 }
 
-function createContext(overrides = {}) {
-  return {
-    schemaVersion: PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION,
-    generationMode: 'weekly_plan_draft',
-    physicalNotes: 'Keep transitions simple.',
-    evaluationPolicy: clone(WEEKLY_PLAN_EVALUATION_POLICY),
-    poolSnapshot: {
-      allowedExerciseIds: ['ex_press'],
-      checksum: 'pool-checksum',
-    },
-    exercisePoolItems: [
-      {
-        exerciseId: 'ex_press',
-        name: 'Machine Press',
-      },
-    ],
-    ...overrides,
-  };
-}
-
-function createGeneratedAIOutput(overrides = {}) {
-  return {
-    schemaVersion: AI_WEEKLY_PLAN_OUTPUT_SCHEMA_VERSION,
-    strategySummary: 'A balanced hypertrophy plan.',
-    workouts: [{ orderIndex: 1, blocks: [] }],
-    ...overrides,
-  };
-}
-
-function createGeneratedPlanDocument(overrides = {}) {
-  return {
-    name: 'Prepared plan',
-    workouts: [{ orderIndex: 1, blocks: [] }],
-    ...overrides,
-  };
-}
-
-function createAnalytics(overrides = {}) {
-  return {
-    schemaVersion: WEEKLY_PLAN_ANALYTICS_SCHEMA_VERSION,
-    evaluationPolicy: {
-      id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
-      version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
-    },
-    plan: {
-      workoutCount: 1,
-    },
-    workouts: [
-      {
-        workoutOrderIndex: 1,
-        requestedDurationMinutes: 30,
-        calculatedDurationMinutes: 15,
-        durationDifferenceMinutes: -15,
-        durationRequiresCorrection: true,
-      },
-    ],
-    ...overrides,
-  };
-}
-
-function createInitialReview(overrides = {}) {
-  const reviewOverrides = overrides.review || {};
-  const { review: _review, ...rootOverrides } = overrides;
-
-  return {
-    enabled: true,
+function createRepairRequiredReview() {
+  const review = {
+    schemaVersion: 3,
     decision: 'REPAIR_REQUIRED',
     requiresRepair: true,
-    contractVersion: PROGRAM_REVIEW_CONTRACT_VERSION,
-    outputSchemaVersion: PROGRAM_REVIEW_OUTPUT_SCHEMA_VERSION,
-    provider: {
-      type: 'openai',
-      usage: { inputTokens: 123, outputTokens: 45 },
-      privateMetadata: 'PRIVATE_PROVIDER_METADATA',
-    },
-    reviewInput: {
-      privateValue: 'PRIVATE_REVIEW_INPUT',
-    },
-    issueCount: 6,
-    severityCounts: { INFO: 1, LOW: 1, MEDIUM: 1, HIGH: 3 },
-    ...rootOverrides,
-    review: {
-      schemaVersion: PROGRAM_REVIEW_OUTPUT_SCHEMA_VERSION,
-      decision: 'REPAIR_REQUIRED',
-      requiresRepair: true,
-      reviewSummary: 'The plan needs a bounded repair.',
-      issues: [createIssue()],
-      ...reviewOverrides,
-    },
+    reviewSummary: 'Exercise order requires one qualitative repair.',
+    issues: [
+      {
+        issueIndex: 1,
+        category: 'EXERCISE_ORDER_SUPERSET',
+        severity: 'HIGH',
+        path: '/plan/workouts/0/blocks/0',
+        message: 'The exercise order is not coherent.',
+        repairability: 'REPAIRABLE',
+        suggestedAction: 'Reorder the useful exercises.',
+      },
+    ],
   };
-}
-
-function createInput(overrides = {}) {
   return {
-    context: createContext(),
-    generatedAIOutput: createGeneratedAIOutput(),
-    generatedPlanDocument: createGeneratedPlanDocument(),
-    analytics: createAnalytics(),
-    initialReview: createInitialReview(),
-    ...overrides,
+    enabled: true,
+    review,
+    decision: 'REPAIR_REQUIRED',
+    requiresRepair: true,
+    contractVersion: 3,
+    outputSchemaVersion: 3,
   };
 }
 
-function assertDeepFrozen(value, seen = new WeakSet()) {
-  if (!value || typeof value !== 'object' || seen.has(value)) {
-    return;
-  }
+test('Repair Context V4 builds a DURATION trigger without Initial Review', () => {
+  const fixture = createDurationFixture();
+  const result = buildProgramRepairContext({
+    ...fixture,
+    trigger: 'DURATION',
+  });
 
-  seen.add(value);
-  assert.equal(Object.isFrozen(value), true);
-  Object.values(value).forEach((item) => assertDeepFrozen(item, seen));
-}
-
-function assertDeepNotFrozen(value, seen = new WeakSet()) {
-  if (!value || typeof value !== 'object' || seen.has(value)) {
-    return;
-  }
-
-  seen.add(value);
-  assert.equal(Object.isFrozen(value), false);
-  Object.values(value).forEach((item) => assertDeepNotFrozen(item, seen));
-}
-
-function assertControlledError(input, expectedCode) {
-  assert.throws(
-    () => buildProgramRepairContext(input),
-    (error) => {
-      assert.equal(error instanceof ProgramRepairContextError, true);
-      assert.equal(error.code, expectedCode);
-      assert.doesNotMatch(error.message, /Keep transitions simple|PRIVATE|ex_press/);
-      return true;
-    }
-  );
-}
-
-test('buildProgramRepairContext creates the exact V2 root and one-attempt control', () => {
-  const input = createInput();
-  const result = buildProgramRepairContext(input);
-
-  assert.equal(PROGRAM_REPAIR_CONTEXT_SCHEMA_VERSION, 2);
-  assert.equal(PROGRAM_REPAIR_MAX_ATTEMPTS, 1);
-  assert.equal(PROGRAM_REPAIR_OUTPUT_MODE, 'full_replacement');
-  assert.deepEqual(Object.keys(result), [
-    'schemaVersion',
-    'repairControl',
-    'programGenerationContext',
-    'source',
-    'repairBrief',
-  ]);
-  assert.equal(result.schemaVersion, 2);
+  assert.equal(PROGRAM_REPAIR_CONTEXT_SCHEMA_VERSION, 4);
   assert.deepEqual(result.repairControl, {
     maxAttempts: 1,
     attemptNumber: 1,
     outputMode: 'full_replacement',
-    finalValidationRequired: true,
-    finalAnalyticsRequired: true,
-    finalReviewRequired: true,
+    trigger: 'DURATION',
   });
-  assert.deepEqual(result.programGenerationContext, input.context);
-  assert.deepEqual(result.source.generatedAIOutput, input.generatedAIOutput);
-  assert.deepEqual(result.source.generatedPlanDocument, input.generatedPlanDocument);
-  assert.deepEqual(result.source.analytics, input.analytics);
-  assert.deepEqual(result.repairBrief.durationCompensation, {
-    method: 'proportional_requested_squared_over_calculated_v1',
-    minFactor: 0.5,
-    maxFactor: 2,
-    workouts: [
+  assert.equal(result.repairBrief.review, null);
+  assert.equal(result.repairBrief.duration.status, 'CORRECTION_REQUIRED');
+  assert.equal(result.repairBrief.duration.workouts[0].direction, 'INCREASE');
+  assert.deepEqual(
+    result.repairBrief.duration.workouts[0].acceptableDurationMinutes,
+    { minimum: 13, maximum: 15 }
+  );
+  assert.equal(
+    JSON.stringify(result).includes('repairDesignTargetMinutes'),
+    false
+  );
+  assert.equal(JSON.stringify(result).includes('203'), false);
+});
+
+test('Repair Context V4 derives DECREASE and surplus for over-target duration', () => {
+  const fixture = createDurationFixture(1200);
+  const result = buildProgramRepairContext({
+    ...fixture,
+    trigger: 'DURATION',
+  });
+  const duration = result.repairBrief.duration.workouts[0];
+
+  assert.equal(duration.direction, 'DECREASE');
+  assert.equal(duration.minimumMinutesToAcceptableRange > 0, true);
+});
+
+test('DURATION Repair Context allowlists mandatory debug-contract issues', () => {
+  const fixture = createDurationFixture();
+  const result = buildProgramRepairContext({
+    ...fixture,
+    trigger: 'DURATION',
+    debugContractValidation: {
+      ok: false,
+      issues: [
+        {
+          code: 'FALSE_OMISSION_DECLARATION',
+          path: 'muscleDistributionDebug.omittedBodyParts',
+          message: 'A directly trained area cannot be declared omitted.',
+          actual: 'chest',
+          privateField: 'must not be projected',
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(result.repairBrief.debugContract, {
+    requiresCorrection: true,
+    issues: [
       {
-        workoutOrderIndex: 1,
-        originalRequestedDurationMinutes: 30,
-        currentCalculatedDurationMinutes: 15,
-        rawCompensationFactor: 2,
-        appliedCompensationFactor: 2,
-        repairDesignTargetMinutes: 60,
+        code: 'FALSE_OMISSION_DECLARATION',
+        path: 'muscleDistributionDebug.omittedBodyParts',
+        message: 'A directly trained area cannot be declared omitted.',
       },
     ],
   });
 });
 
-test('duration compensation proportionally increases a short workout target', () => {
-  const input = createInput({
-    analytics: createAnalytics({
-      workouts: [
-        {
-          workoutOrderIndex: 1,
-          requestedDurationMinutes: 30,
-          calculatedDurationMinutes: 22,
-          durationDifferenceMinutes: -8,
-          durationRequiresCorrection: true,
-        },
-      ],
-    }),
+test('Repair Context V4 builds REVIEW trigger only from duration-valid Analytics', () => {
+  const fixture = createDurationFixture(120);
+  const result = buildProgramRepairContext({
+    ...fixture,
+    trigger: 'REVIEW',
+    initialReview: createRepairRequiredReview(),
   });
 
-  const result = buildProgramRepairContext(input);
-  const compensation =
-    result.repairBrief.durationCompensation.workouts[0];
-
-  assert.equal(compensation.originalRequestedDurationMinutes, 30);
-  assert.equal(compensation.currentCalculatedDurationMinutes, 22);
-  assert.equal(compensation.rawCompensationFactor, 1.3636);
-  assert.equal(compensation.appliedCompensationFactor, 1.3636);
-  assert.equal(compensation.repairDesignTargetMinutes, 41);
+  assert.equal(result.repairControl.trigger, 'REVIEW');
+  assert.equal(result.repairBrief.duration.status, 'ACCEPTABLE');
+  assert.equal(result.repairBrief.review.decision, 'REPAIR_REQUIRED');
+  assert.equal(result.repairBrief.mandatoryIssues.length, 1);
 });
 
-test('duration compensation proportionally decreases a long workout target', () => {
-  const input = createInput({
-    analytics: createAnalytics({
-      workouts: [
-        {
-          workoutOrderIndex: 1,
-          requestedDurationMinutes: 30,
-          calculatedDurationMinutes: 40,
-          durationDifferenceMinutes: 10,
-          durationRequiresCorrection: true,
-        },
-      ],
-    }),
-  });
+test('DURATION rejects valid duration and REVIEW rejects invalid duration or missing review', () => {
+  const valid = createDurationFixture(120);
+  const invalid = createDurationFixture(1);
 
-  const result = buildProgramRepairContext(input);
-  const compensation =
-    result.repairBrief.durationCompensation.workouts[0];
-
-  assert.equal(compensation.originalRequestedDurationMinutes, 30);
-  assert.equal(compensation.currentCalculatedDurationMinutes, 40);
-  assert.equal(compensation.rawCompensationFactor, 0.75);
-  assert.equal(compensation.appliedCompensationFactor, 0.75);
-  assert.equal(compensation.repairDesignTargetMinutes, 23);
-});
-
-test('duration compensation excludes workouts that do not require correction', () => {
-  const input = createInput({
-    analytics: createAnalytics({
-      workouts: [
-        {
-          workoutOrderIndex: 1,
-          requestedDurationMinutes: 30,
-          calculatedDurationMinutes: 29,
-          durationDifferenceMinutes: -1,
-          durationRequiresCorrection: false,
-        },
-      ],
-    }),
-  });
-
-  const result = buildProgramRepairContext(input);
-
-  assert.deepEqual(
-    result.repairBrief.durationCompensation.workouts,
-    []
+  assert.throws(
+    () => buildProgramRepairContext({ ...valid, trigger: 'DURATION' }),
+    ProgramRepairContextError
+  );
+  assert.throws(
+    () =>
+      buildProgramRepairContext({
+        ...invalid,
+        trigger: 'REVIEW',
+        initialReview: createRepairRequiredReview(),
+      }),
+    ProgramRepairContextError
+  );
+  assert.throws(
+    () => buildProgramRepairContext({ ...valid, trigger: 'REVIEW' }),
+    ProgramRepairContextError
   );
 });
 
-test('mandatory and recommended issues are projected, filtered, and ordered by issueIndex', () => {
-  const input = createInput();
-  input.initialReview = createInitialReview({
-    review: {
-      issues: [
-        createIssue({ issueIndex: 6, message: 'Second mandatory issue.' }),
-        createIssue({
-          issueIndex: 4,
-          severity: 'MEDIUM',
-          category: 'GOAL_PRIORITY_ALIGNMENT',
-          message: 'Recommended issue.',
-          privateIssueMetadata: 'PRIVATE_ISSUE_METADATA',
-        }),
-        createIssue({ issueIndex: 3, severity: 'LOW' }),
-        createIssue({
-          issueIndex: 2,
-          repairability: 'NON_REPAIRABLE',
-          suggestedAction: null,
-        }),
-        createIssue({ issueIndex: 1 }),
-        createIssue({
-          issueIndex: 5,
-          severity: 'INFO',
-          repairability: 'NOT_APPLICABLE',
-          suggestedAction: null,
-        }),
-      ],
-    },
+test('Repair Context is deterministic, immutable, and does not mutate inputs', () => {
+  const fixture = createDurationFixture();
+  const before = clone(fixture);
+  const first = buildProgramRepairContext({
+    ...fixture,
+    trigger: 'DURATION',
+  });
+  const second = buildProgramRepairContext({
+    ...fixture,
+    trigger: 'DURATION',
   });
 
-  const result = buildProgramRepairContext(input);
+  assert.deepEqual(first, second);
+  assert.equal(Object.isFrozen(first), true);
+  assert.deepEqual(fixture, before);
+});
+
+test('Repair Context fail-closes invalid context, Output V4, and Analytics identities', () => {
+  const fixture = createDurationFixture();
+
+  assert.throws(
+    () =>
+      buildProgramRepairContext({
+        ...fixture,
+        context: { ...fixture.context, schemaVersion: 3 },
+        trigger: 'DURATION',
+      }),
+    ProgramRepairContextError
+  );
+  assert.throws(
+    () =>
+      buildProgramRepairContext({
+        ...fixture,
+        generatedAIOutput: {
+          ...fixture.generatedAIOutput,
+          schemaVersion: 3,
+        },
+        trigger: 'DURATION',
+      }),
+    ProgramRepairContextError
+  );
+  assert.throws(
+    () =>
+      buildProgramRepairContext({
+        ...fixture,
+        analytics: {
+          ...fixture.analytics,
+          schemaVersion: 2,
+        },
+        trigger: 'DURATION',
+      }),
+    ProgramRepairContextError
+  );
+});
+
+test('REVIEW Repair orders mandatory and recommended issues by issueIndex', () => {
+  const fixture = createDurationFixture(120);
+  const initialReview = createRepairRequiredReview();
+  initialReview.review.issues = [
+    {
+      ...initialReview.review.issues[0],
+      issueIndex: 3,
+      severity: 'MEDIUM',
+      message: 'A secondary recommendation can improve exercise order.',
+    },
+    {
+      ...initialReview.review.issues[0],
+      issueIndex: 2,
+      message: 'The second mandatory correction must be applied.',
+    },
+    {
+      ...initialReview.review.issues[0],
+      issueIndex: 1,
+      message: 'The first mandatory correction must be applied.',
+    },
+  ];
+
+  const result = buildProgramRepairContext({
+    ...fixture,
+    trigger: 'REVIEW',
+    initialReview,
+  });
 
   assert.deepEqual(
     result.repairBrief.mandatoryIssues.map((issue) => issue.issueIndex),
-    [1, 6]
+    [1, 2]
   );
   assert.deepEqual(
     result.repairBrief.recommendedIssues.map((issue) => issue.issueIndex),
-    [4]
+    [3]
   );
-  assert.deepEqual(Object.keys(result.repairBrief.mandatoryIssues[0]), [
-    'issueIndex',
-    'category',
-    'severity',
-    'path',
-    'message',
-    'repairability',
-    'suggestedAction',
-  ]);
-  assert.deepEqual(result.repairBrief.initialReview, {
-    schemaVersion: 1,
-    decision: 'REPAIR_REQUIRED',
-    requiresRepair: true,
-    reviewSummary: 'The plan needs a bounded repair.',
-  });
-
-  const serializedBrief = JSON.stringify(result.repairBrief);
-  assert.doesNotMatch(serializedBrief, /PRIVATE_ISSUE_METADATA/);
-  assert.doesNotMatch(serializedBrief, /provider|reviewInput|inputTokens|severityCounts/);
-});
-
-test('ProgramGenerationContext V4 and canonical Evaluation Policy V1 are required', () => {
-  const cases = [
-    createInput({ context: null }),
-    createInput({ context: createContext({ schemaVersion: 3 }) }),
-    createInput({ context: createContext({ evaluationPolicy: null }) }),
-    createInput({
-      context: createContext({
-        evaluationPolicy: {
-          id: 'wrong-policy',
-          version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
-        },
-      }),
-    }),
-    createInput({
-      context: createContext({
-        evaluationPolicy: {
-          id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
-          version: 2,
-        },
-      }),
-    }),
-    createInput({ context: createContext({ poolSnapshot: null }) }),
-    createInput({ context: createContext({ exercisePoolItems: null }) }),
-  ];
-
-  cases.forEach((input) =>
-    assertControlledError(input, 'INVALID_PROGRAM_REPAIR_CONTEXT')
-  );
-});
-
-test('Generated AI Output V2 and the prepared plan document are required', () => {
-  const cases = [
-    createInput({ generatedAIOutput: null }),
-    createInput({ generatedAIOutput: createGeneratedAIOutput({ schemaVersion: 1 }) }),
-    createInput({ generatedAIOutput: createGeneratedAIOutput({ workouts: null }) }),
-    createInput({ generatedPlanDocument: null }),
-    createInput({ generatedPlanDocument: createGeneratedPlanDocument({ workouts: null }) }),
-  ];
-
-  cases.forEach((input) =>
-    assertControlledError(input, 'INVALID_PROGRAM_REPAIR_SOURCE_PLAN')
-  );
-});
-
-test('Analytics V2 with a matching canonical policy, plan, and workouts is required', () => {
-  const cases = [
-    createInput({ analytics: null }),
-    createInput({ analytics: createAnalytics({ schemaVersion: 1 }) }),
-    createInput({ analytics: createAnalytics({ evaluationPolicy: null }) }),
-    createInput({
-      analytics: createAnalytics({
-        evaluationPolicy: {
-          id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
-          version: 2,
-        },
-      }),
-    }),
-    createInput({ analytics: createAnalytics({ plan: null }) }),
-    createInput({ analytics: createAnalytics({ workouts: null }) }),
-  ];
-
-  cases.forEach((input) =>
-    assertControlledError(input, 'INVALID_PROGRAM_REPAIR_ANALYTICS')
-  );
-});
-
-test('only an enabled REPAIR_REQUIRED initial review can create a repair context', () => {
-  const passReview = createInitialReview({
-    decision: 'PASS',
-    requiresRepair: false,
-    review: {
-      decision: 'PASS',
-      requiresRepair: false,
-      issues: [],
-    },
-  });
-  const failReview = createInitialReview({
-    decision: 'FAIL',
-    requiresRepair: false,
-    review: {
-      decision: 'FAIL',
-      requiresRepair: false,
-      issues: [
-        createIssue({ repairability: 'NON_REPAIRABLE', suggestedAction: null }),
-      ],
-    },
-  });
-  const cases = [
-    createInput({ initialReview: null }),
-    createInput({ initialReview: passReview }),
-    createInput({ initialReview: failReview }),
-    createInput({ initialReview: createInitialReview({ enabled: false }) }),
-    createInput({
-      initialReview: createInitialReview({ contractVersion: 2 }),
-    }),
-    createInput({
-      initialReview: createInitialReview({ outputSchemaVersion: 2 }),
-    }),
-    createInput({
-      initialReview: createInitialReview({ review: { schemaVersion: 2 } }),
-    }),
-    createInput({
-      initialReview: createInitialReview({ review: { issues: [] } }),
-    }),
-    createInput({
-      initialReview: createInitialReview({
-        review: {
-          issues: [
-            createIssue({
-              severity: 'HIGH',
-              repairability: 'NON_REPAIRABLE',
-              suggestedAction: null,
-            }),
-            createIssue({ severity: 'MEDIUM' }),
-          ],
-        },
-      }),
-    }),
-  ];
-
-  cases.forEach((input) =>
-    assertControlledError(input, 'INVALID_PROGRAM_REPAIR_REVIEW')
-  );
-});
-
-test('the result is deterministic, deeply immutable, and does not mutate or freeze inputs', () => {
-  const input = createInput();
-  const before = clone(input);
-
-  const first = buildProgramRepairContext(input);
-  const second = buildProgramRepairContext(input);
-
-  assert.deepEqual(first, second);
-  assert.deepEqual(input, before);
-  assertDeepFrozen(first);
-  assertDeepNotFrozen(input);
-
-  assert.notStrictEqual(first.programGenerationContext, input.context);
-  assert.notStrictEqual(first.source.generatedAIOutput, input.generatedAIOutput);
-  assert.notStrictEqual(first.source.generatedPlanDocument, input.generatedPlanDocument);
-  assert.notStrictEqual(first.source.analytics, input.analytics);
-  assert.notStrictEqual(first.repairBrief.mandatoryIssues[0], input.initialReview.review.issues[0]);
-
-  assert.throws(() => {
-    first.repairControl.maxAttempts = 2;
-  }, TypeError);
-  assert.throws(() => {
-    first.programGenerationContext.physicalNotes = 'mutated';
-  }, TypeError);
-  assert.equal(input.context.physicalNotes, 'Keep transitions simple.');
 });

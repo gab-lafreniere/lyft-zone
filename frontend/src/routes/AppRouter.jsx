@@ -16,7 +16,9 @@ import ManualBuilderMulti from "../pages/ManualBuilderMulti";
 import Train from "../pages/Train";
 import Progress from "../pages/Progress";
 import AICoach from "../pages/AICoach";
+import AIWeeklyPlanBuilder from "../pages/AIWeeklyPlanBuilder";
 import Wizard from "../pages/Wizard/Wizard";
+import { getAIWeeklyPlanBuilderPath } from "../features/weeklyPlans/routes";
 
 export default function AppRouter() {
   return (
@@ -39,6 +41,7 @@ export default function AppRouter() {
           <Route path="/program/manual-builder-multi" element={<ManualBuilderMulti />} />
           <Route path="/train" element={<Train />} />
           <Route path="/progress" element={<Progress />} />
+          <Route path={getAIWeeklyPlanBuilderPath()} element={<AIWeeklyPlanBuilder />} />
           <Route path="/ai" element={<AICoach />} />
         </Route>
 

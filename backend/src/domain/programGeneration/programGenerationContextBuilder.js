@@ -9,8 +9,8 @@ const {
   createPoolSummary,
 } = require('./poolSnapshot');
 const {
-  WEEKLY_PLAN_EVALUATION_POLICY,
-} = require('./weeklyPlanEvaluationPolicy');
+  resolvePromptPhysicalConsiderations,
+} = require('./movementConstraintResolver');
 
 const PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION = 4;
 
@@ -50,6 +50,11 @@ async function buildProgramGenerationContext(userId, options = {}, deps = {}) {
   );
   const profile = snapshot.profile;
   const poolSnapshot = createPoolSnapshot(poolResult);
+  const includeEvaluationPolicy = options.includeEvaluationPolicy !== false;
+  const evaluationPolicy = includeEvaluationPolicy
+    ? deps.evaluationPolicy ||
+      require('./weeklyPlanEvaluationPolicy').WEEKLY_PLAN_EVALUATION_POLICY
+    : null;
 
   return {
     schemaVersion: PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION,
@@ -64,10 +69,12 @@ async function buildProgramGenerationContext(userId, options = {}, deps = {}) {
       sessionsPerWeek: profile.availability?.sessionsPerWeek ?? null,
       durationPerSession: profile.availability?.durationPerSession ?? null,
     },
-    evaluationPolicy: WEEKLY_PLAN_EVALUATION_POLICY,
+    evaluationPolicy,
     musclePriorityProfile: poolResult.context?.musclePriorityProfile || {},
     equipmentContext: poolResult.context?.equipmentContext || {},
     movementConstraints: poolResult.context?.movementConstraints || {},
+    promptPhysicalConsiderations:
+      resolvePromptPhysicalConsiderations(profile),
     cardioProfile: poolResult.context?.cardioProfile || {
       cardioRole: null,
       preferredModalities: [],

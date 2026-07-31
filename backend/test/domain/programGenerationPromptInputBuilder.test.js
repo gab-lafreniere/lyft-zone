@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION,
   ProgramGenerationPromptInputError,
+  buildProgramGenerationExercisePoolPromptProjection,
   buildProgramGenerationPromptInput,
   buildProgramGenerationPromptInputDiagnostics,
 } = require('../../src/domain/programGeneration/programGenerationPromptInputBuilder');
@@ -21,7 +22,25 @@ const MOCK_DOCTRINE = {
   id: 'bodybuilding_runtime_classic',
   version: 'bodybuilding-hypertrophy-runtime-classic-v1.0.0',
   derivedFromDoctrineVersion: 'bodybuilding-hypertrophy-v1.0.0',
-  content: 'Mock classic doctrine.',
+  content: [
+    '# Mock classic doctrine',
+    '## 2. Authoritative Inputs',
+    'Legacy authority.',
+    '## 3. Initial-Generation Limits',
+    'Initial only.',
+    '### Cardio Profile Interpretation',
+    'Legacy cardio.',
+    '## 6. Muscle Priority Allocation',
+    'Priorities.',
+    '## 20. Final Generation Sequence',
+    '2. use only the supplied eligible exercise pool',
+    '## 21. Final Validation',
+    '- every selected exercise exists in the supplied pool',
+    '- no exercise identifier was invented',
+    '## 22. Prohibited Behaviours',
+    '- invent exercises or exercise identifiers',
+    '- select exercises outside the supplied eligible pool',
+  ].join('\n\n'),
 };
 
 function createContext(overrides = {}) {
@@ -72,6 +91,43 @@ function createContext(overrides = {}) {
       blockedMovementPatterns: ['vertical_push'],
       blockedJointStressTags: ['spinal_loading'],
     },
+    promptPhysicalConsiderations: [
+      {
+        aiSummary: '  Pressing needs measured handling.  ',
+        confirmedSignals: [
+          {
+            type: 'jointStressTag',
+            value: 'overhead_shoulder_position',
+            decision: 'caution',
+          },
+          {
+            type: 'movementPattern',
+            value: 'horizontal_push',
+            decision: 'monitor',
+          },
+          {
+            type: 'movementPattern',
+            value: 'vertical_push',
+            decision: 'blocked',
+          },
+          {
+            type: 'movementPattern',
+            value: 'horizontal_push',
+            decision: 'monitor',
+          },
+        ],
+      },
+      {
+        aiSummary: 'Blocked only',
+        confirmedSignals: [
+          {
+            type: 'jointStressTag',
+            value: 'spinal_loading',
+            decision: 'blocked',
+          },
+        ],
+      },
+    ],
     cardioProfile: {
       cardioRole: 'warm_up_and_cardio',
       preferredModalities: ['stationary_bike'],
@@ -211,21 +267,29 @@ function collectKeys(value, keys = []) {
   return keys;
 }
 
-test('buildProgramGenerationPromptInput projects a compact V2 athlete brief, Training Metrics Guidance, and canonical 30-minute ranges', () => {
+function flattenEligibleExercisePool(pool) {
+  return [...pool.strengthExercises, ...pool.cardioExercises];
+}
+
+function flattenMuscleWeights(pool) {
+  return pool.strengthExercises.flatMap((item) =>
+    Object.values(item.muscles || {}).flatMap((role) => Object.values(role))
+  );
+}
+
+test('buildProgramGenerationPromptInput projects a compact athlete brief, safe constraints, pool coverage, and qualitative duration guidance', () => {
   const input = buildProgramGenerationPromptInput(createContext());
 
   assert.equal(
     PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION,
-    2
+    5
   );
-  assert.equal(input.schemaVersion, 2);
+  assert.equal(input.schemaVersion, 5);
   assert.equal(input.athleteBrief.primaryGoal, 'HYPERTROPHY');
   assert.equal(input.athleteBrief.experience, 'intermediate');
   assert.deepEqual(input.athleteBrief.trainingSchedule, {
     sessionsPerWeek: 2,
     approximateDurationMinutes: 30,
-    acceptableDurationMinutes: { minimum: 26, maximum: 31 },
-    preferredDurationMinutes: { minimum: 27, maximum: 30 },
   });
   assert.deepEqual(input.athleteBrief.musclePriorities, {
     primary: 'upper_chest',
@@ -244,58 +308,132 @@ test('buildProgramGenerationPromptInput projects a compact V2 athlete brief, Tra
     role: 'warm_up_and_cardio',
     preferredModalities: ['stationary_bike'],
   });
-  assert.deepEqual(input.athleteBrief.movementConsiderations, {
-    cautionMovementPatterns: ['horizontal_push'],
-    cautionJointStressTags: ['shoulder_load'],
-  });
+  assert.deepEqual(input.athleteBrief.physicalConsiderations, [
+    {
+      aiSummary: 'Pressing needs measured handling.',
+      confirmedSignals: [
+        {
+          type: 'jointStressTag',
+          value: 'overhead_shoulder_position',
+          decision: 'caution',
+        },
+        {
+          type: 'movementPattern',
+          value: 'horizontal_push',
+          decision: 'monitor',
+        },
+      ],
+    },
+  ]);
   assert.equal(input.athleteBrief.physicalNotes, 'Keep setup changes simple.');
-  assert.equal(input.trainingMetricsGuidance.schemaVersion, 2);
-  assert.equal(
-    input.trainingMetricsGuidance.duration.methodId,
-    'historical_weekly_plan_metrics_v1'
-  );
-  assert.deepEqual(input.trainingMetricsGuidance.duration.ranges, {
+  assert.deepEqual(input.trainingMetricsGuidance, {
     requestedMinutes: 30,
-    acceptableMinutes: { minimum: 26, maximum: 31 },
-    preferredMinutes: { minimum: 27, maximum: 30 },
+    durationIntent:
+      'Use the available session time productively without padding or unnecessary work.',
   });
-  assert.deepEqual(input.trainingMetricsGuidance.duration.budgets, {
-    planningOnly: true,
-    acceptableSeconds: { minimum: 1560, maximum: 1860 },
-    preferredSeconds: { minimum: 1620, maximum: 1800 },
+  assert.deepEqual(input.appliedConstraints, {
+    blockedMovementPatterns: ['vertical_push'],
+    blockedJointStressTags: ['spinal_loading'],
+    confirmedCautions: [
+      {
+        type: 'jointStressTag',
+        value: 'overhead_shoulder_position',
+      },
+    ],
+    equipmentPreset: 'full_gym',
+    availableEquipment: ['dumbbells', 'cable_machine'],
+    cardioRole: 'warm_up_and_cardio',
   });
+  assert.deepEqual(input.poolCoverageNotes, [
+    {
+      taxonomy: 'muscleFocus',
+      area: 'upper_chest',
+      eligibleExerciseCount: 1,
+      coverageLevel: 'severely_limited',
+    },
+    {
+      taxonomy: 'muscleFocus',
+      area: 'rear_delts',
+      eligibleExerciseCount: 0,
+      coverageLevel: 'unavailable',
+    },
+    {
+      taxonomy: 'bodyPart',
+      area: 'back',
+      eligibleExerciseCount: 1,
+      coverageLevel: 'severely_limited',
+    },
+  ]);
 });
 
-test('muscle contributions use canonical activation weights, primary precedence, null fallback, and exact diagnostics', () => {
+test('poolCoverageNotes is omitted when every analyzed area has at least three eligible exercises', () => {
+  const exercisePoolItems = Array.from({ length: 3 }, (_, index) => ({
+    exerciseId: `ex_full_${index}`,
+    name: `Full Coverage ${index}`,
+    trainingType: 'strength',
+    bodyParts: [
+      'chest',
+      'back',
+      'shoulders',
+      'biceps',
+      'triceps',
+      'quadriceps',
+      'hamstrings',
+      'glutes',
+      'calves',
+      'abs',
+    ],
+    muscleFocus: ['upper_chest', 'rear_delts'],
+    targetMuscles: [],
+    secondaryMuscles: [],
+  }));
+  const input = buildProgramGenerationPromptInput(
+    createContext({ exercisePoolItems })
+  );
+
+  assert.equal('poolCoverageNotes' in input, false);
+  assert.deepEqual(
+    input.eligibleExercisePool.strengthExercises.map(
+      (exercise) => exercise.exerciseId
+    ),
+    ['ex_full_0', 'ex_full_1', 'ex_full_2']
+  );
+});
+
+test('muscles use canonical activation weights, primary precedence, null fallback, and exact diagnostics', () => {
   const context = createContext();
   const input = buildProgramGenerationPromptInput(context);
   const diagnostics = buildProgramGenerationPromptInputDiagnostics(context);
 
-  assert.deepEqual(input.eligibleExercisePool[0].muscleContributions, [
-    { muscle: 'pectoralis_major', role: 'primary', activationWeight: 1 },
-    { muscle: 'shared_muscle', role: 'primary', activationWeight: 0.75 },
-    { muscle: 'triceps_long_head', role: 'secondary', activationWeight: 0.5 },
-  ]);
-  assert.deepEqual(input.eligibleExercisePool[1].muscleContributions, [
-    { muscle: 'latissimus_dorsi', role: 'primary', activationWeight: 1 },
-    { muscle: 'rhomboids', role: 'primary', activationWeight: null },
-    { muscle: 'biceps_brachii', role: 'secondary', activationWeight: 0.5 },
-    { muscle: 'brachialis', role: 'secondary', activationWeight: null },
-  ]);
-  assert.deepEqual(input.eligibleExercisePool[2].muscleContributions, [
-    { muscle: 'quadriceps', role: 'primary', activationWeight: null },
-    { muscle: 'gluteus_maximus', role: 'secondary', activationWeight: null },
-  ]);
-  assert.equal('muscleContributions' in input.eligibleExercisePool[3], false);
-  input.eligibleExercisePool
-    .flatMap((item) => item.muscleContributions || [])
-    .forEach((contribution) => {
-      assert.deepEqual(Object.keys(contribution), [
-        'muscle',
-        'role',
-        'activationWeight',
-      ]);
-    });
+  const strength = input.eligibleExercisePool.strengthExercises;
+  assert.deepEqual(strength[0].muscles, {
+    primary: {
+      pectoralis_major: 1,
+      shared_muscle: 0.75,
+    },
+    secondary: {
+      triceps_long_head: 0.5,
+    },
+  });
+  assert.deepEqual(strength[1].muscles, {
+    primary: {
+      latissimus_dorsi: 1,
+      rhomboids: null,
+    },
+    secondary: {
+      biceps_brachii: 0.5,
+      brachialis: null,
+    },
+  });
+  assert.deepEqual(strength[2].muscles, {
+    primary: {
+      quadriceps: null,
+    },
+    secondary: {
+      gluteus_maximus: null,
+    },
+  });
+  assert.equal('muscles' in input.eligibleExercisePool.cardioExercises[0], false);
   assert.deepEqual(diagnostics, {
     activationMusclesNotClassifiedCount: 1,
     primaryMusclesMissingActivationCount: 2,
@@ -305,64 +443,97 @@ test('muscle contributions use canonical activation weights, primary precedence,
   assert.equal('muscleContributionDiagnostics' in input, false);
 });
 
-test('strength and cardio projections use closed allowlists and preserve every exerciseId in order', () => {
+test('strength and cardio projections use closed allowlists and preserve every exerciseId in deterministic stable partitions', () => {
   const context = createContext();
   const input = buildProgramGenerationPromptInput(context);
   const sourceIds = context.exercisePoolItems.map((item) => item.exerciseId);
-  const projectedIds = input.eligibleExercisePool.map((item) => item.exerciseId);
+  const projectedIds = flattenEligibleExercisePool(
+    input.eligibleExercisePool
+  ).map((item) => item.exerciseId);
 
   assert.deepEqual(projectedIds, sourceIds);
-  input.eligibleExercisePool
-    .filter((item) => item.trainingType === 'strength')
-    .forEach((item) => {
-      assert.deepEqual(Object.keys(item).slice(0, 3), [
-        'name',
-        'exerciseId',
-        'trainingType',
-      ]);
-    });
-  assert.deepEqual(Object.keys(input.eligibleExercisePool[0]), [
-    'name',
+  assert.deepEqual(Object.keys(input.eligibleExercisePool), [
+    'strengthExercises',
+    'cardioExercises',
+  ]);
+  input.eligibleExercisePool.strengthExercises.forEach((item) => {
+    assert.deepEqual(Object.keys(item).slice(0, 2), [
+      'exerciseId',
+      'name',
+    ]);
+  });
+  assert.deepEqual(Object.keys(input.eligibleExercisePool.strengthExercises[0]), [
     'exerciseId',
-    'trainingType',
+    'name',
     'equipmentCategory',
-    'difficulty',
     'fatigueScore',
     'isSupersetFriendly',
     'mechanicType',
     'movementPattern',
     'bodyParts',
     'muscleFocus',
-    'muscleContributions',
+    'muscles',
     'unilateralType',
     'cautionMatches',
   ]);
-  assert.deepEqual(input.eligibleExercisePool[0].cautionMatches, [
+  assert.deepEqual(input.eligibleExercisePool.strengthExercises[0].cautionMatches, [
     'horizontal_push',
     'shoulder_load',
   ]);
-  assert.equal('cautionMatches' in input.eligibleExercisePool[1], false);
-  assert.deepEqual(input.eligibleExercisePool[3], {
-    name: 'Stationary Bike',
+  assert.equal(
+    'cautionMatches' in input.eligibleExercisePool.strengthExercises[1],
+    false
+  );
+  assert.deepEqual(input.eligibleExercisePool.cardioExercises[0], {
     exerciseId: 'ex_bike',
-    trainingType: 'cardio',
+    name: 'Stationary Bike',
     cardioModality: 'stationary_bike',
     cardioFatigueScore: 2,
     lowerBodyFatigueBias: 'moderate',
     cardioImpactLevel: 'low',
   });
-  assert.deepEqual(Object.keys(input.eligibleExercisePool[3]), [
-    'name',
+  assert.deepEqual(Object.keys(input.eligibleExercisePool.cardioExercises[0]), [
     'exerciseId',
-    'trainingType',
+    'name',
     'cardioModality',
     'cardioFatigueScore',
     'lowerBodyFatigueBias',
     'cardioImpactLevel',
   ]);
+  flattenEligibleExercisePool(input.eligibleExercisePool).forEach((item) => {
+    assert.equal('difficulty' in item, false);
+    assert.equal('trainingType' in item, false);
+  });
 });
 
-test('projection removes internal context, raw muscle, equipment, blocked, and soft-signal fields', () => {
+test('exercise pool projection fails closed for absent, empty, and unknown trainingType values', () => {
+  const invalidTrainingTypes = [undefined, null, '', 'mobility', 'Strength'];
+
+  invalidTrainingTypes.forEach((trainingType) => {
+    assert.throws(
+      () =>
+        buildProgramGenerationExercisePoolPromptProjection([
+          {
+            exerciseId: 'private_exercise_id',
+            name: 'Private exercise name',
+            trainingType,
+          },
+        ]),
+      (error) => {
+        assert.equal(error instanceof ProgramGenerationPromptInputError, true);
+        assert.equal(error.code, 'INVALID_PROGRAM_GENERATION_CONTEXT');
+        assert.equal(
+          error.message,
+          'ProgramGenerationContext exercise trainingType is invalid'
+        );
+        assert.doesNotMatch(error.message, /private/i);
+        return true;
+      }
+    );
+  });
+});
+
+test('projection removes private internals while retaining the safe applied constraints allowlist', () => {
   const input = buildProgramGenerationPromptInput(createContext());
   const keys = new Set(collectKeys(input));
   const forbiddenKeys = [
@@ -375,12 +546,8 @@ test('projection removes internal context, raw muscle, equipment, blocked, and s
     'poolSummary',
     'poolSnapshot',
     'allowedExerciseIds',
-    'equipmentPreset',
-    'availableEquipment',
     'hardConstraints',
     'blockedExerciseIds',
-    'blockedMovementPatterns',
-    'blockedJointStressTags',
     'equipmentNeeded',
     'softSignals',
     'painContext',
@@ -394,7 +561,7 @@ test('projection removes internal context, raw muscle, equipment, blocked, and s
   forbiddenKeys.forEach((key) => assert.equal(keys.has(key), false, key));
 });
 
-test('neutral exercise preference and absent cautions or notes are omitted', () => {
+test('neutral exercise preference remains explicit while absent physical considerations and notes are omitted', () => {
   const context = createContext({
     equipmentContext: {
       equipmentPreset: 'full_gym',
@@ -407,13 +574,86 @@ test('neutral exercise preference and absent cautions or notes are omitted', () 
       cautionJointStressTags: [],
       blockedExerciseIds: ['ex_blocked'],
     },
+    promptPhysicalConsiderations: [],
     physicalNotes: '   ',
   });
   const input = buildProgramGenerationPromptInput(context);
 
-  assert.equal('exercisePreference' in input.athleteBrief, false);
-  assert.equal('movementConsiderations' in input.athleteBrief, false);
+  assert.deepEqual(input.athleteBrief.exercisePreference, {
+    preference: 'no_preference',
+    isSoftPreference: true,
+  });
+  assert.equal('physicalConsiderations' in input.athleteBrief, false);
   assert.equal('physicalNotes' in input.athleteBrief, false);
+});
+
+test('physical consideration projection includes monitor and caution while excluding detected, blocked, invalid, and duplicate signals', () => {
+  const input = buildProgramGenerationPromptInput(
+    createContext({
+      promptPhysicalConsiderations: [
+        {
+          aiSummary: '   ',
+          detectedSignals: [
+            {
+              type: 'movementPattern',
+              value: 'vertical_push',
+              recommendedDecision: 'caution',
+            },
+          ],
+          confirmedSignals: [
+            {
+              type: 'movementPattern',
+              value: 'horizontal_push',
+              decision: 'monitor',
+            },
+            {
+              type: 'movementPattern',
+              value: 'horizontal_push',
+              decision: 'monitor',
+            },
+            {
+              type: 'jointStressTag',
+              value: 'overhead_shoulder_position',
+              decision: 'caution',
+            },
+            {
+              type: 'jointStressTag',
+              value: 'spinal_loading',
+              decision: 'blocked',
+            },
+            {
+              type: 'exerciseId',
+              value: 'ex_private',
+              decision: 'monitor',
+            },
+          ],
+        },
+      ],
+    })
+  );
+
+  assert.deepEqual(input.athleteBrief.physicalConsiderations, [
+    {
+      aiSummary: null,
+      confirmedSignals: [
+        {
+          type: 'movementPattern',
+          value: 'horizontal_push',
+          decision: 'monitor',
+        },
+        {
+          type: 'jointStressTag',
+          value: 'overhead_shoulder_position',
+          decision: 'caution',
+        },
+      ],
+    },
+  ]);
+  const serialized = JSON.stringify(input.athleteBrief.physicalConsiderations);
+  assert.doesNotMatch(
+    serialized,
+    /detected|recommended|ignored|blocked|spinal_loading|ex_private/
+  );
 });
 
 test('machine and free-weight preferences stay soft and canonical', () => {
@@ -437,6 +677,26 @@ test('machine and free-weight preferences stay soft and canonical', () => {
     preference: 'free_weights',
     isSoftPreference: true,
   });
+});
+
+test('unknown exercise preferences fail closed without exposing the private value', () => {
+  const privateUnknownPreference = 'future_private_preference';
+  assert.throws(
+    () =>
+      buildProgramGenerationPromptInput(
+        createContext({
+          equipmentContext: {
+            equipmentBias: privateUnknownPreference,
+          },
+        })
+      ),
+    (error) => {
+      assert.equal(error instanceof ProgramGenerationPromptInputError, true);
+      assert.equal(error.code, 'INVALID_PROGRAM_GENERATION_CONTEXT');
+      assert.equal(error.message.includes(privateUnknownPreference), false);
+      return true;
+    }
+  );
 });
 
 test('canonical cardio roles project their intended guidance inputs without leaking modalities for none', () => {
@@ -512,30 +772,27 @@ test('projection is deterministic, owns its arrays and objects, and never mutate
     firstContext.exercisePoolItems
   );
   assert.notStrictEqual(
-    first.eligibleExercisePool[0].bodyParts,
+    first.eligibleExercisePool.strengthExercises[0].bodyParts,
     firstContext.exercisePoolItems[0].bodyParts
   );
 
-  first.eligibleExercisePool[0].bodyParts.push('projection_only');
-  assert.deepEqual(firstContext.exercisePoolItems[0].bodyParts, ['chest']);
-  first.trainingMetricsGuidance.duration.repetitions.valuePrecedence.push(
+  first.eligibleExercisePool.strengthExercises[0].bodyParts.push(
     'projection_only'
   );
-  assert.deepEqual(
-    firstContext.evaluationPolicy.duration.calculation.repetitions.valuePrecedence,
-    ['targetReps', 'maxReps', 'minReps', 'zero']
-  );
+  assert.deepEqual(firstContext.exercisePoolItems[0].bodyParts, ['chest']);
+  first.appliedConstraints.availableEquipment.push('projection_only');
+  assert.deepEqual(firstContext.equipmentContext.availableEquipment, [
+    'dumbbells',
+    'cable_machine',
+  ]);
 });
 
-test('builder requires ProgramGenerationContext V4, canonical policy, availability, and pool items', () => {
+test('builder requires ProgramGenerationContext V4, availability, and pool items without an Evaluation Policy', () => {
   const cases = [
     null,
     createContext({ schemaVersion: 3 }),
-    createContext({ evaluationPolicy: undefined }),
-    createContext({
-      evaluationPolicy: { ...WEEKLY_PLAN_EVALUATION_POLICY, version: 2 },
-    }),
     createContext({ availability: { sessionsPerWeek: 2, durationPerSession: null } }),
+    createContext({ availability: { sessionsPerWeek: 2, durationPerSession: 121 } }),
     createContext({ exercisePoolItems: null }),
   ];
 
@@ -549,6 +806,12 @@ test('builder requires ProgramGenerationContext V4, canonical policy, availabili
       }
     );
   });
+
+  assert.doesNotThrow(() =>
+    buildProgramGenerationPromptInput(
+      createContext({ evaluationPolicy: undefined })
+    )
+  );
 });
 
 test('representative fixture reports prompt reduction, ID preservation, contribution coverage, and count-only diagnostics', (t) => {
@@ -564,30 +827,34 @@ test('representative fixture reports prompt reduction, ID preservation, contribu
     stableStringify(context),
   ].join('\n');
   const prompt = buildProgramGenerationPrompt({ doctrine: MOCK_DOCTRINE, context });
+  const athleteProfileEnd = prompt.userMessage.indexOf(
+    '\n\nNON-NEGOTIABLE TECHNICAL RULES'
+  );
+  const athleteProfile = prompt.userMessage.slice(0, athleteProfileEnd);
   const input = buildProgramGenerationPromptInput(context);
   const diagnostics = buildProgramGenerationPromptInputDiagnostics(context);
   const sourceIds = context.exercisePoolItems.map((item) => item.exerciseId);
-  const projectedIds = input.eligibleExercisePool.map((item) => item.exerciseId);
-  const contributions = input.eligibleExercisePool.flatMap(
-    (item) => item.muscleContributions || []
-  );
+  const projectedIds = flattenEligibleExercisePool(
+    input.eligibleExercisePool
+  ).map((item) => item.exerciseId);
+  const activationWeights = flattenMuscleWeights(input.eligibleExercisePool);
   const compactPool = serializeEligibleExercisePool(input.eligibleExercisePool);
   const prettyPool = serializeEligibleExercisePoolPretty(input.eligibleExercisePool);
   const metrics = {
     legacyUserMessageCharacters: legacyUserMessage.length,
-    projectedUserMessageCharacters: prompt.userMessage.length,
+    projectedAthleteProfileCharacters: athleteProfile.length,
     reductionPercentage: Number(
-      ((1 - prompt.userMessage.length / legacyUserMessage.length) * 100).toFixed(2)
+      ((1 - athleteProfile.length / legacyUserMessage.length) * 100).toFixed(2)
     ),
     exercisesBefore: sourceIds.length,
     exercisesAfter: projectedIds.length,
     allExerciseIdsPreserved: JSON.stringify(sourceIds) === JSON.stringify(projectedIds),
-    muscleContributions: contributions.length,
-    contributionsWithActivationWeight: contributions.filter(
-      (entry) => entry.activationWeight != null
+    muscleContributions: activationWeights.length,
+    contributionsWithActivationWeight: activationWeights.filter(
+      (weight) => weight != null
     ).length,
-    contributionsWithNullActivationWeight: contributions.filter(
-      (entry) => entry.activationWeight == null
+    contributionsWithNullActivationWeight: activationWeights.filter(
+      (weight) => weight == null
     ).length,
     compactPoolCharacters: compactPool.length,
     prettyPoolCharacters: prettyPool.length,
@@ -598,7 +865,10 @@ test('representative fixture reports prompt reduction, ID preservation, contribu
     diagnostics,
   };
 
-  assert.ok(metrics.projectedUserMessageCharacters < metrics.legacyUserMessageCharacters);
+  assert.ok(
+    metrics.projectedAthleteProfileCharacters <
+      metrics.legacyUserMessageCharacters
+  );
   assert.ok(metrics.compactPoolCharacters < metrics.prettyPoolCharacters);
   assert.deepEqual(JSON.parse(compactPool), JSON.parse(prettyPool));
   assert.equal(metrics.exercisesBefore, metrics.exercisesAfter);

@@ -712,12 +712,12 @@ function validateTrainingProfileInput(payload) {
     );
   }
 
-  if (durationPerSession == null || durationPerSession < 15 || durationPerSession > 240) {
+  if (durationPerSession == null || durationPerSession < 15 || durationPerSession > 120) {
     pushIssue(
       issues,
       'availability.durationPerSession',
       'INVALID_RANGE',
-      'durationPerSession must be an integer between 15 and 240'
+      'durationPerSession must be an integer between 15 and 120'
     );
   }
 

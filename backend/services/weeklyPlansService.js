@@ -161,6 +161,21 @@ function formatRestLabel(value) {
 }
 
 function formatRepsLabel(setTemplates = []) {
+  const secondsValues = setTemplates
+    .map((setTemplate) => normalizeInt(setTemplate?.targetSeconds, null))
+    .filter((value) => value != null && value > 0);
+
+  if (
+    secondsValues.length > 0 &&
+    secondsValues.length === setTemplates.length
+  ) {
+    const minimum = Math.min(...secondsValues);
+    const maximum = Math.max(...secondsValues);
+    return minimum === maximum
+      ? `${minimum}s`
+      : `${minimum}-${maximum}s`;
+  }
+
   const repsValues = setTemplates.map(getSetReps).filter((value) => value > 0);
 
   if (!repsValues.length) {
@@ -621,7 +636,13 @@ function mapVersionToBuilderPayload(parent, version) {
                 block.restSeconds ?? exercise?.defaultRestSeconds ?? setTemplates[0]?.restSeconds ?? 120
               ) || '120s',
               sets: setTemplates.map((setTemplate) => ({
-                reps: getSetReps(setTemplate),
+                reps:
+                  setTemplate.targetSeconds == null
+                    ? getSetReps(setTemplate)
+                    : null,
+                targetSeconds: setTemplate.targetSeconds ?? null,
+                minReps: setTemplate.minReps ?? null,
+                maxReps: setTemplate.maxReps ?? null,
                 rpe: getSetRir(setTemplate),
               })),
               notes: block.notes || exercise?.notes || '',
@@ -644,7 +665,13 @@ function mapVersionToBuilderPayload(parent, version) {
               '3010'
             ).replace(/\D/g, '').slice(0, 4),
             sets: exercise.setTemplates.map((setTemplate) => ({
-              reps: getSetReps(setTemplate),
+              reps:
+                setTemplate.targetSeconds == null
+                  ? getSetReps(setTemplate)
+                  : null,
+              targetSeconds: setTemplate.targetSeconds ?? null,
+              minReps: setTemplate.minReps ?? null,
+              maxReps: setTemplate.maxReps ?? null,
               rpe: getSetRir(setTemplate),
             })),
             notes: exercise.notes || '',

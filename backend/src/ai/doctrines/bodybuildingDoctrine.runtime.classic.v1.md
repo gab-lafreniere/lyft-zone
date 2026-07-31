@@ -1,11 +1,11 @@
 # Lyft Zone Bodybuilding Runtime Doctrine
 
-runtimeVersion: bodybuilding-hypertrophy-runtime-classic-v1.0.0
+runtimeVersion: bodybuilding-hypertrophy-runtime-classic-v1.0.2
 derivedFromDoctrine: bodybuilding-hypertrophy-v1.0.0
 operatingContext: initial
 outputTarget: static-weekly-plan
 scope: natural-hypertrophy-training
-supportedPrimaryGoals: hypertrophy, mixed
+supportedPrimaryGoals: hypertrophy
 
 ## 1. Purpose
 
@@ -24,13 +24,12 @@ across previous training phases.
 This runtime is intended for:
 
 - hypertrophy-primary programs
-- mixed-goal programs where hypertrophy remains a major objective
 
 It must not be used as the sole programming doctrine for a
 strength-primary, cardio-primary or mobility-primary program.
 
-Strength-oriented work can be included within a mixed program, but
-strength-specific programming decisions require separate rules.
+Strength-oriented work can support hypertrophy, but strength-specific
+programming decisions require separate rules.
 
 ## 2. Authoritative Inputs
 
@@ -258,13 +257,20 @@ on assumptions about cardio.
 
 Interpret the cardio role as follows:
 
-- `None`: do not add cardio work
-- `Warm-up Only`: allow only brief, low-intensity preparatory
-  cardio before the relevant resistance-training session
-- `Cardio Sessions`: account for dedicated cardio sessions when
-  they are explicitly included in the requested weekly structure
-- `Warm-up & Cardio`: account for both preparatory cardio and
-  explicitly requested dedicated cardio sessions
+- `None`: do not add any CARDIO block or generate any cardio
+  exercise
+- `Warm-up Only`: add only brief, light preparatory cardio of
+  approximately 5 minutes at the beginning of relevant workouts;
+  do not add dedicated cardio after resistance training
+- `Cardio Sessions`: despite the historical enum name, add a
+  dedicated cardio block only after the resistance-training portion
+  of relevant workouts when available time permits; never create a
+  cardio-only workout and never place dedicated cardio before
+  resistance training
+- `Warm-up & Cardio`: add both brief, light preparatory cardio of
+  approximately 5 minutes at the beginning of relevant workouts and
+  dedicated cardio after the resistance-training portion; never
+  create a cardio-only workout
 
 A warm-up cardio segment should prepare the trainee without
 meaningfully fatiguing the muscles or reducing performance on
@@ -278,7 +284,7 @@ Do not assume that normal cardio participation causes muscle loss
 or invalidates a hypertrophy-focused program.
 
 Do not reduce resistance-training volume solely because the cardio
-role includes dedicated cardio sessions.
+role includes dedicated cardio blocks.
 
 Adjust resistance-training organization or workload only when the
 known cardio demands are substantial enough to affect available
@@ -319,12 +325,10 @@ and hypertrophy is the primary goal:
 - dedicated cardio should not reduce performance on important
   resistance-training work
 
-When cardio and resistance training occur on the same day in
-separate sessions, separation can be useful when practical,
-especially for demanding or high-impact lower-body cardio.
-
-Do not invent a required separation interval when no separate
-cardio rules or scheduling inputs are available.
+This builder does not create separate cardio sessions or an
+independent cardio frequency. If the profile describes external
+cardio performed separately, treat it only as recovery context and
+do not turn it into an additional generated workout.
 
 When organizing the weekly schedule, avoid distributing demanding
 lower-body cardio and resistance training in a way that leaves no
@@ -333,16 +337,19 @@ meaningful lower-body recovery days.
 When cardio duration and placement are explicitly provided,
 account for that time before assigning resistance-training volume.
 
-When cardio duration or placement is not provided:
+When cardio duration is not provided:
 
 - do not subtract an invented amount of time from a
   resistance-training session
 - do not assume the cardio is high intensity
 - do not assume substantial interference
-- do not invent a cardio schedule
+- follow the placement required by the selected cardio role
+- do not invent separate cardio sessions or an independent cardio
+  frequency
 
-When cardio is performed in a separate session, do not subtract its
-duration from an unrelated resistance-training session.
+When external cardio is performed in a separate session, do not
+subtract its duration from an unrelated resistance-training
+session.
 
 Still consider known muscular overlap and recovery demands.
 
@@ -352,12 +359,12 @@ Preferred modalities can inform likely muscular overlap and
 exercise scheduling, but they do not provide enough information to
 determine exact fatigue without duration, frequency and intensity.
 
-This runtime does not independently design a complete cardio
-prescription.
+This runtime does not independently design cardio-only workouts or
+a separate cardio schedule.
 
-Unless cardio duration, frequency, intensity and placement are
-explicitly provided or governed by separate cardio rules, do not
-invent them.
+For a CARDIO block permitted by the selected role, use conservative
+duration and intensity that fit the available workout time, protect
+resistance-training quality and respect the supplied profile.
 
 When detailed cardio programming is outside the supported output,
 account only for the cardio information that was explicitly

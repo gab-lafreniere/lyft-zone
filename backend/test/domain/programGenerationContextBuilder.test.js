@@ -33,7 +33,40 @@ function createProfile(overrides = {}) {
       availableEquipment: ['dumbbells', 'bench'],
     },
     movementConstraints: {
-      painIssues: [],
+      painIssues: [
+        {
+          id: 'private_issue_id',
+          description: 'Private raw shoulder description',
+          affectedArea: 'shoulder',
+          painSeverity: 'moderate',
+          analysisStatus: 'analyzed',
+          aiSummary: 'Overhead work needs measured handling.',
+          detectedSignals: [
+            {
+              type: 'movementPattern',
+              value: 'vertical_push',
+              recommendedDecision: 'blocked',
+            },
+          ],
+          confirmedSignals: [
+            {
+              type: 'movementPattern',
+              value: 'horizontal_push',
+              decision: 'monitor',
+            },
+            {
+              type: 'jointStressTag',
+              value: 'overhead_shoulder_position',
+              decision: 'caution',
+            },
+            {
+              type: 'movementPattern',
+              value: 'vertical_push',
+              decision: 'blocked',
+            },
+          ],
+        },
+      ],
       manualBlockedExerciseIds: [],
     },
     exercisePreference: {
@@ -202,6 +235,27 @@ test('buildProgramGenerationContext builds profile context, compact pool items, 
   assert.equal(context.primaryGoal, 'HYPERTROPHY');
   assert.equal(context.experience, 'intermediate');
   assert.equal(context.physicalNotes, 'Keep setup changes simple.');
+  assert.deepEqual(context.promptPhysicalConsiderations, [
+    {
+      aiSummary: 'Overhead work needs measured handling.',
+      confirmedSignals: [
+        {
+          type: 'movementPattern',
+          value: 'horizontal_push',
+          decision: 'monitor',
+        },
+        {
+          type: 'jointStressTag',
+          value: 'overhead_shoulder_position',
+          decision: 'caution',
+        },
+      ],
+    },
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(context.promptPhysicalConsiderations),
+    /private_issue_id|Private raw shoulder description|detectedSignals|blocked/
+  );
   assert.deepEqual(context.poolSnapshot.allowedExerciseIds, ['ex_db_bench']);
   assert.equal(context.poolSummary.availableExercises, 1);
   assert.equal(context.poolSummary.excludedExercises, 1);
@@ -233,6 +287,7 @@ test('buildProgramGenerationContext builds profile context, compact pool items, 
     'poolSummary',
     'primaryGoal',
     'profileSchemaVersion',
+    'promptPhysicalConsiderations',
     'schemaVersion',
     'userId',
   ]);
@@ -256,6 +311,19 @@ test('buildProgramGenerationContext builds profile context, compact pool items, 
   assert.strictEqual(secondContext.evaluationPolicy, WEEKLY_PLAN_EVALUATION_POLICY);
   assert.equal(profileQueryCount, 2);
   assert.equal(exerciseQueryCount, 2);
+
+  const textualContext = await buildProgramGenerationContext(
+    'user_123',
+    { includeEvaluationPolicy: false },
+    {
+      prisma,
+      now: new Date('2026-06-01T12:00:00.000Z'),
+    }
+  );
+
+  assert.equal(textualContext.evaluationPolicy, null);
+  assert.equal(profileQueryCount, 3);
+  assert.equal(exerciseQueryCount, 3);
 });
 
 test('attachCoachInputsToProgramGenerationContext adds compact metadata without doctrine content', () => {

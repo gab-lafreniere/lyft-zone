@@ -6,7 +6,7 @@ const { getModelForTask } = require('../src/ai/aiRouter');
 const DEFAULT_PROGRAM_REPAIR_TIMEOUT_MS = 120000;
 const DEFAULT_PROGRAM_REPAIR_MAX_OUTPUT_TOKENS = 24000;
 const WEEKLY_PLAN_AI_REPAIR_RESPONSE_FORMAT_NAME =
-  'weekly_plan_ai_repair_v1';
+  'weekly_plan_ai_repair_v2';
 
 function hasOwn(object, key) {
   return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);

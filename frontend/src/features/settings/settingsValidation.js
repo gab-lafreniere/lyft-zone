@@ -279,12 +279,12 @@ export function validateTrainingProfileDraft(trainingProfileDraft) {
     );
   }
 
-  if (durationPerSession == null || durationPerSession < 15 || durationPerSession > 240) {
+  if (durationPerSession == null || durationPerSession < 15 || durationPerSession > 120) {
     pushFieldError(
       fieldErrors,
       formErrors,
       "availability.durationPerSession",
-      "Duration per session must be an integer between 15 and 240 minutes."
+      "Duration per session must be an integer between 15 and 120 minutes."
     );
   }
 

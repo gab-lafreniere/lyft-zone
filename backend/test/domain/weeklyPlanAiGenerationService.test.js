@@ -1,14 +1,19 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const OpenAI = require('openai');
 
 const {
   DEFAULT_PROGRAM_GENERATION_MAX_OUTPUT_TOKENS,
   DEFAULT_PROGRAM_GENERATION_TIMEOUT_MS,
+  WEEKLY_PLAN_AI_RESPONSE_FORMAT_NAME,
   generateWeeklyPlanAiOutput,
   parseWeeklyPlanAiResponse,
   resolveProgramGenerationConfig,
 } = require('../../services/weeklyPlanAiGenerationService');
+const {
+  buildWeeklyPlanAiJsonSchema,
+} = require('../../src/domain/programGeneration/weeklyPlanAiSchema');
 
 function createPromptDescriptor() {
   return {
@@ -76,6 +81,19 @@ function createTimerDeps(capture = {}) {
   };
 }
 
+test('provider format name is V4 with the canonical Output V4 JSON Schema', () => {
+  const schema = buildWeeklyPlanAiJsonSchema();
+  const schemaHash = createHash('sha256')
+    .update(JSON.stringify(schema))
+    .digest('hex');
+
+  assert.equal(WEEKLY_PLAN_AI_RESPONSE_FORMAT_NAME, 'weekly_plan_ai_v4');
+  assert.equal(
+    schemaHash,
+    'e8c0e9dea8ab27bf96a2aeb45989e45911df3229875a970dcf32bb4f8ec32883'
+  );
+});
+
 test('generateWeeklyPlanAiOutput builds the model-agnostic Responses API request', async () => {
   const capture = {};
   let routedTask = null;
@@ -109,7 +127,7 @@ test('generateWeeklyPlanAiOutput builds the model-agnostic Responses API request
     text: {
       format: {
         type: 'json_schema',
-        name: 'weekly_plan_ai_v1',
+        name: 'weekly_plan_ai_v4',
         strict: true,
         schema,
       },

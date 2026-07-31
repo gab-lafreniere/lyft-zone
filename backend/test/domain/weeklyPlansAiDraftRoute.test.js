@@ -1,16 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-let createAIWeeklyPlanDraft;
-
-require.cache[require.resolve('../../services/programGenerationService')] = {
-  id: require.resolve('../../services/programGenerationService'),
-  filename: require.resolve('../../services/programGenerationService'),
-  loaded: true,
-  exports: {
-    createAIWeeklyPlanDraft: (...args) => createAIWeeklyPlanDraft(...args),
-  },
-};
+const programGenerationServicePath = require.resolve(
+  '../../services/programGenerationService'
+);
+delete require.cache[programGenerationServicePath];
 
 const weeklyPlansRouter = require('../../routes/weeklyPlans');
 
@@ -23,7 +17,6 @@ function findRoute(path, method) {
 async function invokeAIDraftsRoute(reqOverrides = {}) {
   const route = findRoute('/ai-drafts', 'post');
   assert.ok(route);
-
   const req = {
     body: {
       userId: 'user_123',
@@ -48,201 +41,30 @@ async function invokeAIDraftsRoute(reqOverrides = {}) {
   return res;
 }
 
-test('POST /api/weekly-plans/ai-drafts returns the service response on success', async () => {
-  createAIWeeklyPlanDraft = async (payload) => ({
-    weeklyPlanParentId: 'parent_123',
-    weeklyPlanVersionId: 'version_123',
-    status: 'DRAFT',
-    source: 'ai',
-    builderPayload: {
-      programName: `AI Draft for ${payload.userId}`,
-    },
-  });
-
+test('POST /api/weekly-plans/ai-drafts returns the controlled disabled response', async () => {
   const res = await invokeAIDraftsRoute();
 
-  assert.equal(res.statusCode, 201);
-  assert.equal(res.body.source, 'ai');
-  assert.equal(res.body.builderPayload.programName, 'AI Draft for user_123');
-});
-
-test('POST /api/weekly-plans/ai-drafts maps controlled provider errors', async (t) => {
-  const cases = [
-    {
-      name: 'timeout',
-      status: 504,
-      code: 'AI_WEEKLY_PLAN_GENERATION_TIMEOUT',
-      message: 'AI weekly plan generation timed out',
-    },
-    {
-      name: 'provider unavailable',
-      status: 503,
-      code: 'AI_WEEKLY_PLAN_PROVIDER_UNAVAILABLE',
-      message: 'AI weekly plan provider is unavailable',
-    },
-    {
-      name: 'refusal',
-      status: 502,
-      code: 'AI_WEEKLY_PLAN_REFUSED',
-      message: 'AI weekly plan generation could not be completed',
-    },
-    {
-      name: 'max output tokens',
-      status: 502,
-      code: 'AI_WEEKLY_PLAN_MAX_OUTPUT_TOKENS',
-      message: 'AI weekly plan generation exceeded its output limit',
-    },
-  ];
-
-  for (const entry of cases) {
-    await t.test(entry.name, async () => {
-      createAIWeeklyPlanDraft = async () => {
-        const error = new Error(entry.message);
-        error.status = entry.status;
-        error.code = entry.code;
-        throw error;
-      };
-
-      const res = await invokeAIDraftsRoute();
-
-      assert.equal(res.statusCode, entry.status);
-      assert.deepEqual(res.body, {
-        error: {
-          code: entry.code,
-          message: entry.message,
-          details: undefined,
-        },
-      });
-      assert.doesNotMatch(JSON.stringify(res.body), /prompt|doctrine|provider raw|stack/i);
-    });
-  }
-});
-
-test('POST /api/weekly-plans/ai-drafts returns only compact public details for blocked AI reviews', async (t) => {
-  const cases = [
-    {
-      name: 'repair required',
-      code: 'AI_WEEKLY_PLAN_REVIEW_REQUIRES_REPAIR',
-      message: 'AI weekly plan review requires a repair before persistence',
-      details: {
-        decision: 'REPAIR_REQUIRED',
-        issueCount: 2,
-        severityCounts: {
-          INFO: 0,
-          LOW: 1,
-          MEDIUM: 0,
-          HIGH: 1,
-        },
-        categoryCounts: {
-          EXERCISE_REDUNDANCY: 1,
-          PRESCRIPTION_PARAMETERS: 1,
-        },
-      },
-    },
-    {
-      name: 'review failed',
-      code: 'AI_WEEKLY_PLAN_REVIEW_FAILED',
-      message: 'AI weekly plan review rejected the generated plan',
-      details: {
-        decision: 'FAIL',
-        issueCount: 1,
-        severityCounts: {
-          INFO: 0,
-          LOW: 0,
-          MEDIUM: 0,
-          HIGH: 1,
-        },
-        categoryCounts: {
-          CAUTION_HANDLING: 1,
-        },
-      },
-    },
-  ];
-
-  for (const entry of cases) {
-    await t.test(entry.name, async () => {
-      createAIWeeklyPlanDraft = async () => {
-        const error = new Error(entry.message);
-        error.status = 422;
-        error.code = entry.code;
-        error.details = entry.details;
-        throw error;
-      };
-
-      const res = await invokeAIDraftsRoute();
-
-      assert.equal(res.statusCode, 422);
-      assert.deepEqual(res.body, {
-        error: {
-          code: entry.code,
-          message: entry.message,
-          details: entry.details,
-        },
-      });
-      assert.deepEqual(Object.keys(res.body.error.details).sort(), [
-        'categoryCounts',
-        'decision',
-        'issueCount',
-        'severityCounts',
-      ]);
-      assert.doesNotMatch(
-        JSON.stringify(res.body),
-        /suggestedAction|review input|output raw|prompt|doctrine|notes|pool|reasoning|\/plan\//i
-      );
-    });
-  }
-});
-
-test('POST /api/weekly-plans/ai-drafts maps temporarily unsupported goals with details', async () => {
-  createAIWeeklyPlanDraft = async () => {
-    const error = new Error(
-      'AI Weekly Plan Builder V1 currently supports HYPERTROPHY only'
-    );
-    error.status = 422;
-    error.code = 'AI_WEEKLY_PLAN_UNSUPPORTED_PRIMARY_GOAL';
-    error.details = {
-      primaryGoal: 'STRENGTH',
-      supportedPrimaryGoals: ['HYPERTROPHY'],
-    };
-    throw error;
-  };
-
-  const res = await invokeAIDraftsRoute();
-
-  assert.equal(res.statusCode, 422);
+  assert.equal(res.statusCode, 503);
   assert.deepEqual(res.body, {
     error: {
-      code: 'AI_WEEKLY_PLAN_UNSUPPORTED_PRIMARY_GOAL',
-      message: 'AI Weekly Plan Builder V1 currently supports HYPERTROPHY only',
-      details: {
-        primaryGoal: 'STRENGTH',
-        supportedPrimaryGoals: ['HYPERTROPHY'],
-      },
+      code: 'AI_WEEKLY_PLAN_BUILDER_DISABLED',
+      message: 'AI weekly plan builder is not enabled',
     },
   });
 });
 
-test('POST /api/weekly-plans/ai-drafts maps missing userId validation errors', async () => {
-  createAIWeeklyPlanDraft = async (payload) => {
-    assert.equal(payload.userId, undefined);
-    const error = new Error('userId is required');
-    error.status = 400;
-    error.code = 'VALIDATION_ERROR';
-    throw error;
-  };
+test('disabled endpoint does not load the generation runtime or inspect its body', async () => {
+  const body = new Proxy(
+    {},
+    {
+      get() {
+        throw new Error('request body must not be inspected');
+      },
+    }
+  );
 
-  const res = await invokeAIDraftsRoute({
-    body: {
-      options: {},
-    },
-  });
+  const res = await invokeAIDraftsRoute({ body });
 
-  assert.equal(res.statusCode, 400);
-  assert.deepEqual(res.body, {
-    error: {
-      code: 'VALIDATION_ERROR',
-      message: 'userId is required',
-      details: undefined,
-    },
-  });
+  assert.equal(res.statusCode, 503);
+  assert.equal(require.cache[programGenerationServicePath], undefined);
 });

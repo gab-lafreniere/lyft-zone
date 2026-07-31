@@ -81,6 +81,30 @@ test('validateTrainingProfileInput accepts a valid canonical onboarding payload'
   ]);
 });
 
+test('validateTrainingProfileInput accepts 120 minutes and rejects 121 without clamping', () => {
+  const maximum = createValidPayload();
+  maximum.availability.durationPerSession = 120;
+  const aboveMaximum = createValidPayload();
+  aboveMaximum.availability.durationPerSession = 121;
+
+  const validResult = validateTrainingProfileInput(maximum);
+  const invalidResult = validateTrainingProfileInput(aboveMaximum);
+
+  assert.equal(validResult.ok, true);
+  assert.equal(validResult.value.availability.durationPerSession, 120);
+  assert.equal(invalidResult.ok, false);
+  assert.deepEqual(
+    invalidResult.issues.find(
+      (issue) => issue.path === 'availability.durationPerSession'
+    ),
+    {
+      path: 'availability.durationPerSession',
+      code: 'INVALID_RANGE',
+      message: 'durationPerSession must be an integer between 15 and 120',
+    }
+  );
+});
+
 test('validateTrainingProfileInput keeps STRENGTH and MIXED in the product contract', () => {
   ['STRENGTH', 'MIXED'].forEach((primaryGoal) => {
     const result = validateTrainingProfileInput({

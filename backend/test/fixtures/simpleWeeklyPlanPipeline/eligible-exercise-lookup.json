@@ -1,0 +1,210 @@
+{
+  "exr_incline_barbell_bench_press": {
+    "exerciseId": "exr_incline_barbell_bench_press",
+    "name": "Incline Barbell Bench Press",
+    "bodyParts": ["chest"],
+    "muscleFocus": ["upper_chest"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_chest_supported_cable_row": {
+    "exerciseId": "exr_chest_supported_cable_row",
+    "name": "Chest Supported Cable Row",
+    "bodyParts": ["back"],
+    "muscleFocus": ["mid_back", "lats"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_incline_dumbbell_press": {
+    "exerciseId": "exr_incline_dumbbell_press",
+    "name": "Incline Dumbbell Press",
+    "bodyParts": ["chest"],
+    "muscleFocus": ["upper_chest"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_cable_rear_delt_fly": {
+    "exerciseId": "exr_cable_rear_delt_fly",
+    "name": "Cable Rear Delt Fly",
+    "bodyParts": ["shoulders", "back"],
+    "muscleFocus": ["rear_delts"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_neutral_grip_lat_pulldown": {
+    "exerciseId": "exr_neutral_grip_lat_pulldown",
+    "name": "Neutral Grip Lat Pulldown",
+    "bodyParts": ["back"],
+    "muscleFocus": ["lats"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_cable_lateral_raise": {
+    "exerciseId": "exr_cable_lateral_raise",
+    "name": "Cable Lateral Raise",
+    "bodyParts": ["shoulders"],
+    "muscleFocus": ["side_delts"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_incline_cable_fly": {
+    "exerciseId": "exr_incline_cable_fly",
+    "name": "Incline Cable Fly",
+    "bodyParts": ["chest"],
+    "muscleFocus": ["upper_chest"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_cable_overhead_triceps_extension": {
+    "exerciseId": "exr_cable_overhead_triceps_extension",
+    "name": "Cable Overhead Triceps Extension",
+    "bodyParts": ["triceps"],
+    "muscleFocus": ["triceps_long_head"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_bayesian_cable_curl": {
+    "exerciseId": "exr_bayesian_cable_curl",
+    "name": "Bayesian Cable Curl",
+    "bodyParts": ["biceps"],
+    "muscleFocus": ["biceps_long_head"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_barbell_standing_calf_raise": {
+    "exerciseId": "exr_barbell_standing_calf_raise",
+    "name": "Barbell Standing Calf Raise",
+    "bodyParts": ["calves"],
+    "muscleFocus": [],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_romanian_deadlift": {
+    "exerciseId": "exr_romanian_deadlift",
+    "name": "Romanian Deadlift",
+    "bodyParts": ["hamstrings", "glutes"],
+    "muscleFocus": ["glute_max"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_barbell_hip_thrust": {
+    "exerciseId": "exr_barbell_hip_thrust",
+    "name": "Barbell Hip Thrust",
+    "bodyParts": ["glutes", "hamstrings"],
+    "muscleFocus": ["glute_max"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_close_neutral_grip_pulldown": {
+    "exerciseId": "exr_close_neutral_grip_pulldown",
+    "name": "Close Neutral Grip Pulldown",
+    "bodyParts": ["back"],
+    "muscleFocus": ["lats"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_single_arm_rear_delt_cable_fly": {
+    "exerciseId": "exr_single_arm_rear_delt_cable_fly",
+    "name": "Single Arm Rear Delt Cable Fly",
+    "bodyParts": ["shoulders", "back"],
+    "muscleFocus": ["rear_delts"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_cable_glute_kickback": {
+    "exerciseId": "exr_cable_glute_kickback",
+    "name": "Cable Glute Kickback",
+    "bodyParts": ["glutes"],
+    "muscleFocus": ["glute_max"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_cable_hip_abduction": {
+    "exerciseId": "exr_cable_hip_abduction",
+    "name": "Cable Hip Abduction",
+    "bodyParts": ["glutes"],
+    "muscleFocus": ["glute_med"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_seated_dumbbell_calf_raise": {
+    "exerciseId": "exr_seated_dumbbell_calf_raise",
+    "name": "Seated Dumbbell Calf Raise",
+    "bodyParts": ["calves"],
+    "muscleFocus": [],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_ab_wheel_rollout": {
+    "exerciseId": "exr_ab_wheel_rollout",
+    "name": "Ab Wheel Rollout",
+    "bodyParts": ["abs"],
+    "muscleFocus": ["upper_abs"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_chin_up": {
+    "exerciseId": "exr_chin_up",
+    "name": "Chin Up",
+    "bodyParts": ["back", "biceps"],
+    "muscleFocus": ["lats", "biceps_short_head"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_deficit_romanian_deadlift": {
+    "exerciseId": "exr_deficit_romanian_deadlift",
+    "name": "Deficit Romanian Deadlift",
+    "bodyParts": ["hamstrings", "glutes"],
+    "muscleFocus": [],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_single_arm_landmine_press": {
+    "exerciseId": "exr_single_arm_landmine_press",
+    "name": "Single Arm Landmine Press",
+    "bodyParts": ["chest", "shoulders"],
+    "muscleFocus": ["front_delts", "upper_chest"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_cable_high_row": {
+    "exerciseId": "exr_cable_high_row",
+    "name": "Cable High Row",
+    "bodyParts": ["back"],
+    "muscleFocus": ["upper_back", "rear_delts"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_chest_supported_rear_delt_fly": {
+    "exerciseId": "exr_chest_supported_rear_delt_fly",
+    "name": "Chest Supported Rear Delt Fly",
+    "bodyParts": ["shoulders", "back"],
+    "muscleFocus": ["rear_delts"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_rope_triceps_pushdown": {
+    "exerciseId": "exr_rope_triceps_pushdown",
+    "name": "Rope Triceps Pushdown",
+    "bodyParts": ["triceps"],
+    "muscleFocus": ["triceps_lateral_head"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_incline_dumbbell_curl": {
+    "exerciseId": "exr_incline_dumbbell_curl",
+    "name": "Incline Dumbbell Curl",
+    "bodyParts": ["biceps"],
+    "muscleFocus": ["biceps_long_head"],
+    "trainingType": "strength",
+    "cardioModality": null
+  },
+  "exr_single_leg_standing_calf_raise": {
+    "exerciseId": "exr_single_leg_standing_calf_raise",
+    "name": "Single Leg Standing Calf Raise",
+    "bodyParts": ["calves"],
+    "muscleFocus": [],
+    "trainingType": "strength",
+    "cardioModality": null
+  }
+}

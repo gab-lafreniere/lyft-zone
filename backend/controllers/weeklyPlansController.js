@@ -1,8 +1,5 @@
 const { ApiError } = require('../services/usersService');
 const {
-  createAIWeeklyPlanDraft,
-} = require('../services/programGenerationService');
-const {
   createWeeklyPlan,
   deleteWeeklyPlan,
   getWeeklyPlanDetails,
@@ -43,12 +40,12 @@ async function createWeeklyPlanHandler(req, res) {
 }
 
 async function createAIWeeklyPlanDraftHandler(req, res) {
-  try {
-    const weeklyPlan = await createAIWeeklyPlanDraft(req.body || {});
-    return res.status(201).json(weeklyPlan);
-  } catch (error) {
-    return handleError(res, error);
-  }
+  return res.status(503).json({
+    error: {
+      code: 'AI_WEEKLY_PLAN_BUILDER_DISABLED',
+      message: 'AI weekly plan builder is not enabled',
+    },
+  });
 }
 
 async function listWeeklyPlansHandler(req, res) {

@@ -1,4 +1,5 @@
 import {
+  createAIWeeklyPlanDraft,
   fetchExercises,
   fetchUserExercisePool,
   fetchUserExercisePoolResponse,
@@ -135,5 +136,81 @@ describe("fetchUserExercisePool", () => {
     expect(requestUrl.searchParams.get("q")).toBe("press");
     expect(requestUrl.searchParams.get("limit")).toBe("15");
     expect(result).toEqual([{ exerciseId: "ex_pool_1", name: "Pool Exercise" }]);
+  });
+});
+
+describe("createAIWeeklyPlanDraft", () => {
+  beforeEach(() => {
+    global.fetch = jest.fn();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("posts only the current userId, forwards the signal, and returns the response unchanged", async () => {
+    const responseBody = {
+      weeklyPlanParentId: "weekly_parent_ai_1",
+      weeklyPlanVersionId: "weekly_version_ai_1",
+      status: "DRAFT",
+      source: "ai",
+      builderPayload: {
+        programName: "AI Weekly Plan",
+        sessionsPerWeek: 4,
+        workouts: [],
+      },
+    };
+    const controller = new AbortController();
+
+    global.fetch.mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => responseBody,
+    });
+
+    const result = await createAIWeeklyPlanDraft({
+      signal: controller.signal,
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const [requestUrl, requestOptions] = global.fetch.mock.calls[0];
+    expect(new URL(requestUrl).pathname).toBe("/api/weekly-plans/ai-drafts");
+    expect(requestOptions.method).toBe("POST");
+    expect(requestOptions.headers).toEqual({
+      "Content-Type": "application/json",
+    });
+    expect(requestOptions.signal).toBe(controller.signal);
+
+    const requestBody = JSON.parse(requestOptions.body);
+    expect(Object.keys(requestBody)).toEqual(["userId"]);
+    expect(requestBody.userId).toEqual(expect.any(String));
+    expect(requestBody.userId).not.toBe("");
+    expect(result).toBe(responseBody);
+  });
+
+  test("preserves controlled error code, details, and HTTP status", async () => {
+    const details = {
+      primaryGoal: "STRENGTH",
+      supportedPrimaryGoals: ["HYPERTROPHY"],
+    };
+
+    global.fetch.mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        error: {
+          code: "AI_WEEKLY_PLAN_UNSUPPORTED_PRIMARY_GOAL",
+          message: "AI Weekly Plan Builder V1 currently supports HYPERTROPHY only",
+          details,
+        },
+      }),
+    });
+
+    await expect(createAIWeeklyPlanDraft()).rejects.toMatchObject({
+      code: "AI_WEEKLY_PLAN_UNSUPPORTED_PRIMARY_GOAL",
+      details,
+      status: 422,
+    });
   });
 });

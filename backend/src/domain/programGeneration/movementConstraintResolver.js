@@ -29,6 +29,62 @@ function normalizeSignalType(value) {
   return normalized || null;
 }
 
+const PROMPT_SIGNAL_TYPES = new Set(['movementPattern', 'jointStressTag']);
+const PROMPT_SIGNAL_DECISIONS = new Set(['monitor', 'caution']);
+
+function resolvePromptPhysicalConsiderations(normalizedProfile = {}) {
+  const painIssues = normalizedProfile.movementConstraints?.painIssues;
+
+  return toArray(painIssues)
+    .filter(
+      (issue) =>
+        issue &&
+        typeof issue === 'object' &&
+        !Array.isArray(issue) &&
+        normalizeValue(issue.analysisStatus) === 'analyzed'
+    )
+    .map((issue) => {
+      const confirmedSignals = [];
+      const seen = new Set();
+
+      toArray(issue.confirmedSignals).forEach((signal) => {
+        if (!signal || typeof signal !== 'object' || Array.isArray(signal)) {
+          return;
+        }
+
+        const type = normalizeSignalType(signal.type);
+        const value = normalizeValue(signal.value);
+        const decision = normalizeValue(signal.decision);
+
+        if (
+          !PROMPT_SIGNAL_TYPES.has(type) ||
+          !value ||
+          !PROMPT_SIGNAL_DECISIONS.has(decision)
+        ) {
+          return;
+        }
+
+        const key = `${decision}:${type}:${value}`;
+        if (seen.has(key)) {
+          return;
+        }
+
+        seen.add(key);
+        confirmedSignals.push({
+          type,
+          value,
+          decision,
+        });
+      });
+
+      return {
+        aiSummary: normalizeOptionalString(issue.aiSummary),
+        confirmedSignals,
+      };
+    })
+    .filter((issue) => issue.confirmedSignals.length > 0);
+}
+
 function normalizeDetectedSignals(value) {
   const signals = [];
   const seen = new Set();
@@ -292,5 +348,6 @@ function resolveMovementConstraints(normalizedProfile = {}) {
 }
 
 module.exports = {
+  resolvePromptPhysicalConsiderations,
   resolveMovementConstraints,
 };

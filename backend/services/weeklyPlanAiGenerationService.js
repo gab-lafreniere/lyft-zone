@@ -5,7 +5,7 @@ const { getModelForTask } = require('../src/ai/aiRouter');
 
 const DEFAULT_PROGRAM_GENERATION_TIMEOUT_MS = 120000;
 const DEFAULT_PROGRAM_GENERATION_MAX_OUTPUT_TOKENS = 24000;
-const WEEKLY_PLAN_AI_RESPONSE_FORMAT_NAME = 'weekly_plan_ai_v1';
+const WEEKLY_PLAN_AI_RESPONSE_FORMAT_NAME = 'weekly_plan_ai_v4';
 
 function hasOwn(object, key) {
   return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);

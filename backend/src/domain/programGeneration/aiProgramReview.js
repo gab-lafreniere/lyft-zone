@@ -26,7 +26,7 @@ const {
   WEEKLY_PLAN_ANALYTICS_SCHEMA_VERSION,
 } = require('./weeklyPlanAnalytics');
 
-const PROGRAM_REVIEW_INPUT_SCHEMA_VERSION = 2;
+const PROGRAM_REVIEW_INPUT_SCHEMA_VERSION = 4;
 const MAX_PROGRAM_REVIEW_INPUT_CHARACTERS = 120000;
 
 class AIProgramReviewError extends Error {
@@ -102,6 +102,11 @@ function compactRepTarget(setTemplate = {}) {
   const targetReps = normalizeInteger(setTemplate.targetReps);
   const minReps = normalizeInteger(setTemplate.minReps);
   const maxReps = normalizeInteger(setTemplate.maxReps);
+  const targetSeconds = normalizeInteger(setTemplate.targetSeconds);
+
+  if (targetSeconds != null) {
+    return `${targetSeconds}s`;
+  }
 
   if (targetReps != null) {
     return String(targetReps);
@@ -378,28 +383,37 @@ function buildConstraintsReviewInput(context = {}) {
   };
 }
 
-function buildTargetIntent(targets, targetKey, includePriority = false) {
-  return toArray(targets)
-    .map((target) => ({
-      area: normalizeOptionalString(target?.area),
-      [targetKey]: normalizeNumber(target?.[targetKey]),
-      ...(includePriority ? { priority: normalizeOptionalString(target?.priority) } : {}),
-    }))
-    .sort((left, right) => compareStableStrings(left.area, right.area));
+function buildDurationCalculationReviewInput(value = {}) {
+  return {
+    methodId: normalizeOptionalString(value?.methodId),
+    blocks: toArray(value?.blocks).map((block, index) => ({
+      blockOrderIndex:
+        normalizeInteger(block?.blockOrderIndex) ?? index + 1,
+      movementSeconds: normalizeNumber(block?.movementSeconds),
+      adjustedRestSeconds: normalizeNumber(block?.adjustedRestSeconds),
+      fixedSeconds: normalizeNumber(block?.fixedSeconds),
+      cardioSeconds: normalizeNumber(block?.cardioSeconds),
+      totalSeconds: normalizeNumber(block?.totalSeconds),
+    })),
+    workoutTotalSeconds: normalizeNumber(value?.workoutTotalSeconds),
+    calculatedDurationMinutes: normalizeInteger(
+      value?.calculatedDurationMinutes
+    ),
+  };
 }
 
-function buildExplicitTargetIntent(values, targetKey, includePriority = false) {
+function buildMuscleDistributionDebugReviewInput(value = {}) {
   return {
-    bodyParts: buildTargetIntent(
-      values?.bodyParts,
-      targetKey,
-      includePriority
-    ),
-    muscleFocuses: buildTargetIntent(
-      values?.muscleFocuses,
-      targetKey,
-      includePriority
-    ),
+    rationale: normalizeOptionalString(value?.rationale),
+    omittedBodyParts: toArray(value?.omittedBodyParts)
+      .map((omission) => ({
+        area: normalizeKey(omission?.area),
+        reasonCode: normalizeKey(omission?.reasonCode),
+        explanation: normalizeOptionalString(omission?.explanation),
+      }))
+      .sort((left, right) =>
+        compareStableStrings(left.area, right.area)
+      ),
   };
 }
 
@@ -409,16 +423,10 @@ function buildIntentReviewInput(generatedAIOutput, generatedPlanDocument = {}) {
     strategySummary:
       normalizeOptionalString(generatedAIOutput?.strategySummary) ||
       normalizeOptionalString(generatedPlanDocument?.strategySummary),
-    volumeTargets: buildExplicitTargetIntent(
-      generatedAIOutput?.volumeTargets,
-      'targetSetsPerWeek',
-      true
-    ),
-    frequencyTargets: buildExplicitTargetIntent(
-      generatedAIOutput?.frequencyTargets,
-      'targetSessionsPerWeek'
-    ),
     progressionType: normalizeOptionalString(generatedAIOutput?.progressionModel?.type),
+    muscleDistributionDebug: buildMuscleDistributionDebugReviewInput(
+      generatedAIOutput?.muscleDistributionDebug
+    ),
   };
 }
 
@@ -441,11 +449,11 @@ function buildProjectionEntries(entries = []) {
 
 function buildTargetComparisonSummaryReviewInput(summary = {}) {
   return {
-    targetCount: normalizeInteger(summary?.targetCount),
-    belowTargetCount: normalizeInteger(summary?.belowTargetCount),
-    withinTargetCount: normalizeInteger(summary?.withinTargetCount),
-    aboveTargetCount: normalizeInteger(summary?.aboveTargetCount),
-    unavailableCount: normalizeInteger(summary?.unavailableCount),
+    targetCount: normalizeInteger(summary?.targetCount) ?? 0,
+    belowTargetCount: normalizeInteger(summary?.belowTargetCount) ?? 0,
+    withinTargetCount: normalizeInteger(summary?.withinTargetCount) ?? 0,
+    aboveTargetCount: normalizeInteger(summary?.aboveTargetCount) ?? 0,
+    unavailableCount: normalizeInteger(summary?.unavailableCount) ?? 0,
   };
 }
 
@@ -483,6 +491,30 @@ function buildDurationAlignmentStatusCounts(counts = {}) {
   }, {});
 }
 
+function buildMuscleDistributionAuditReviewInput(value = {}) {
+  return {
+    actualZeroDirectBodyParts: normalizeStringArray(
+      value?.actualZeroDirectBodyParts
+    ),
+    declaredOmittedBodyParts: normalizeStringArray(
+      value?.declaredOmittedBodyParts
+    ),
+    missingOmissionExplanations: normalizeStringArray(
+      value?.missingOmissionExplanations
+    ),
+    falselyDeclaredOmissions: normalizeStringArray(
+      value?.falselyDeclaredOmissions
+    ),
+    unsupportedPoolLimitationClaims: normalizeStringArray(
+      value?.unsupportedPoolLimitationClaims
+    ),
+    omissionDeclarationMatchesActualCoverage:
+      value?.omissionDeclarationMatchesActualCoverage === true,
+    poolLimitationClaimsVerified:
+      value?.poolLimitationClaimsVerified === true,
+  };
+}
+
 function assertProgramReviewInputDependencies(context, analytics) {
   const contextPolicy = context?.evaluationPolicy;
   const analyticsPolicy = analytics?.evaluationPolicy;
@@ -506,7 +538,14 @@ function assertProgramReviewInputDependencies(context, analytics) {
     !hasValidAnalyticsPolicy ||
     !hasMatchingPolicyIdentity ||
     !hasAnalyticsPlan ||
-    !Array.isArray(analytics?.workouts)
+    !Array.isArray(analytics?.workouts) ||
+    analytics.workouts.some(
+      (workout) =>
+        workout?.durationRequiresCorrection === true ||
+        !workout?.durationCalculation ||
+        typeof workout.durationCalculation !== 'object' ||
+        Array.isArray(workout.durationCalculation)
+    )
   ) {
     throw new AIProgramReviewError(
       'AI_WEEKLY_PLAN_REVIEW_INPUT_INCOMPLETE',
@@ -573,6 +612,9 @@ function buildAnalyticsReviewInput(analytics = {}) {
           workout?.durationAlignmentStatus
         ),
         durationRequiresCorrection: Boolean(workout?.durationRequiresCorrection),
+        durationCalculation: buildDurationCalculationReviewInput(
+          workout?.durationCalculation
+        ),
         supersetCount: normalizeInteger(workout?.supersetCount),
         cardioDurationMinutes: normalizeNumber(workout?.cardioDurationMinutes),
         muscleProjections: buildProjectionEntries(workout?.muscleProjections),
@@ -580,13 +622,13 @@ function buildAnalyticsReviewInput(analytics = {}) {
       .sort((left, right) => left.workoutOrderIndex - right.workoutOrderIndex),
     muscleMetrics: buildProjectionEntries(analytics?.muscleMetrics),
     targetComparisons: {
-      volume: buildExplicitTargetComparisonsReviewInput(
-        analytics?.targetComparisons?.volume
-      ),
-      frequency: buildExplicitTargetComparisonsReviewInput(
-        analytics?.targetComparisons?.frequency
-      ),
+      volume: buildExplicitTargetComparisonsReviewInput(),
+      frequency: buildExplicitTargetComparisonsReviewInput(),
     },
+    muscleDistributionDebugAudit:
+      buildMuscleDistributionAuditReviewInput(
+        analytics?.muscleDistributionDebugAudit
+      ),
     metadataCoverage: {
       totalStrengthWorkingSets: normalizeInteger(metadataCoverage.totalStrengthWorkingSets),
       attributedStrengthWorkingSets: normalizeInteger(metadataCoverage.attributedStrengthWorkingSets),
@@ -605,6 +647,15 @@ function assertReviewInputSize(reviewInput) {
   }
 }
 
+function buildEvaluationPolicyReviewInput(evaluationPolicy = {}) {
+  return {
+    id: normalizeOptionalString(evaluationPolicy?.id),
+    version: normalizeInteger(evaluationPolicy?.version),
+    duration: evaluationPolicy?.duration || null,
+    volumeFrequencyTargetsEvaluated: false,
+  };
+}
+
 function buildProgramReviewInput({
   context = {},
   generatedAIOutput = null,
@@ -621,7 +672,9 @@ function buildProgramReviewInput({
 
   const reviewInput = {
     schemaVersion: PROGRAM_REVIEW_INPUT_SCHEMA_VERSION,
-    evaluationPolicy: context.evaluationPolicy,
+    evaluationPolicy: buildEvaluationPolicyReviewInput(
+      context.evaluationPolicy
+    ),
     profile: buildProfileReviewInput(context),
     constraints: buildConstraintsReviewInput(context),
     intent: buildIntentReviewInput(generatedAIOutput, generatedPlanDocument),
@@ -721,7 +774,6 @@ async function runAIProgramReview(options = {}, deps = {}) {
     promptDescriptor = await (
       deps.buildProgramReviewPrompt || buildProgramReviewPrompt
     )({
-      doctrine: options.doctrine,
       reviewInput,
     });
     assertPromptDescriptor(promptDescriptor);

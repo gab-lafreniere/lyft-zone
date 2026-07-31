@@ -1,8 +1,8 @@
 const Ajv = require('ajv');
 
-const PROGRAM_REVIEW_CONTRACT_VERSION = 1;
-const PROGRAM_REVIEW_OUTPUT_SCHEMA_VERSION = 1;
-const PROGRAM_REVIEW_RESPONSE_FORMAT_NAME = 'ai_program_review_v1';
+const PROGRAM_REVIEW_CONTRACT_VERSION = 3;
+const PROGRAM_REVIEW_OUTPUT_SCHEMA_VERSION = 3;
+const PROGRAM_REVIEW_RESPONSE_FORMAT_NAME = 'ai_program_review_v3';
 
 const PROGRAM_REVIEW_CATEGORIES = Object.freeze([
   'GOAL_PRIORITY_ALIGNMENT',
@@ -25,7 +25,7 @@ const PROGRAM_REVIEW_REPAIRABILITIES = Object.freeze([
 const PROGRAM_REVIEW_DECISIONS = Object.freeze(['PASS', 'REPAIR_REQUIRED', 'FAIL']);
 
 const PROGRAM_REVIEW_LIMITS = Object.freeze({
-  reviewSummaryMaxLength: 400,
+  reviewSummaryMaxLength: 600,
   issuesMaxCount: 12,
   issueMessageMaxLength: 200,
   suggestedActionMaxLength: 200,

@@ -1,0 +1,39 @@
+{
+  "planName": "3-Day Advanced Hypertrophy Plan",
+  "workout_1": {
+    "name": "Upper-Chest and Back Emphasis",
+    "blocks": [
+      { "type": "SINGLE", "setCount": 5 },
+      { "type": "SINGLE", "setCount": 4 },
+      { "type": "SINGLE", "setCount": 4 },
+      { "type": "SUPERSET", "setCount": 4 },
+      { "type": "SUPERSET", "setCount": 3 },
+      { "type": "SUPERSET", "setCount": 3 },
+      { "type": "SINGLE", "setCount": 4 }
+    ]
+  },
+  "workout_2": {
+    "name": "Posterior Chain and Upper-Chest Emphasis",
+    "blocks": [
+      { "type": "SINGLE", "setCount": 4 },
+      { "type": "SINGLE", "setCount": 4 },
+      { "type": "SINGLE", "setCount": 4 },
+      { "type": "SUPERSET", "setCount": 4 },
+      { "type": "SUPERSET", "setCount": 3 },
+      { "type": "SINGLE", "setCount": 4 },
+      { "type": "SINGLE", "setCount": 3 }
+    ]
+  },
+  "workout_3": {
+    "name": "Upper-Chest, Rear-Deltoid and Full-Body Emphasis",
+    "blocks": [
+      { "type": "SINGLE", "setCount": 4 },
+      { "type": "SINGLE", "setCount": 4 },
+      { "type": "SINGLE", "setCount": 4 },
+      { "type": "SINGLE", "setCount": 4 },
+      { "type": "SUPERSET", "setCount": 4 },
+      { "type": "SUPERSET", "setCount": 3 },
+      { "type": "SINGLE", "setCount": 4 }
+    ]
+  }
+}

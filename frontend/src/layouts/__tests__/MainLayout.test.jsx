@@ -33,6 +33,7 @@ describe("MainLayout bottom navigation", () => {
     "/program/manual-builder/workout/workout_1",
     "/program/manual-builder-multi",
     "/program/manual-convert",
+    "/program/ai-builder",
     "/program/cycles/cycle_1/builder",
     "/program/cycles/cycle_1/builder/week/2/workout/1",
     "/program/cycles/cycle_1/builder/workout/workout_1",

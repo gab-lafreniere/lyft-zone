@@ -9,6 +9,13 @@ const {
   PROGRAM_REPAIR_PROMPT_VERSION,
 } = require('./prompts/programRepairPrompt');
 const {
+  PROGRAM_REVIEW_PROMPT_VERSION,
+} = require('./prompts/programReviewPrompt');
+const {
+  PROGRAM_REVIEW_CONTRACT_VERSION,
+  PROGRAM_REVIEW_OUTPUT_SCHEMA_VERSION,
+} = require('./programReviewSchema');
+const {
   PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION,
 } = require('./programGenerationContextBuilder');
 const {
@@ -21,7 +28,7 @@ const {
   WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
 } = require('./weeklyPlanEvaluationPolicy');
 
-const GENERATION_CONTEXT_SCHEMA_VERSION = 7;
+const GENERATION_CONTEXT_SCHEMA_VERSION = 9;
 const REVIEW_SEVERITIES = Object.freeze(['INFO', 'LOW', 'MEDIUM', 'HIGH']);
 const REPAIR_PROVIDER_USAGE_KEYS = Object.freeze([
   'inputTokens',
@@ -32,6 +39,7 @@ const REPAIR_PROVIDER_USAGE_KEYS = Object.freeze([
 const AI_REPAIR_AUDIT_KEYS = Object.freeze([
   'enabled',
   'outcome',
+  'trigger',
   'attempts',
   'maxAttempts',
   'promptVersion',
@@ -93,9 +101,9 @@ function buildBypassedReviewAuditMetadata() {
     enabled: false,
     outcome: 'BYPASSED',
     reviewAttempts: 0,
-    schemaVersion: 1,
-    contractVersion: 1,
-    outputSchemaVersion: 1,
+    schemaVersion: PROGRAM_REVIEW_OUTPUT_SCHEMA_VERSION,
+    contractVersion: PROGRAM_REVIEW_CONTRACT_VERSION,
+    outputSchemaVersion: PROGRAM_REVIEW_OUTPUT_SCHEMA_VERSION,
     promptVersion: null,
     decision: null,
     requiresRepair: false,
@@ -143,16 +151,18 @@ function buildPassedReviewAuditMetadata(aiReview = {}) {
     schemaVersion:
       Number.isSafeInteger(review.schemaVersion) && review.schemaVersion > 0
         ? review.schemaVersion
-        : 1,
+        : PROGRAM_REVIEW_OUTPUT_SCHEMA_VERSION,
     contractVersion:
       Number.isSafeInteger(aiReview.contractVersion) && aiReview.contractVersion > 0
         ? aiReview.contractVersion
-        : 1,
+        : PROGRAM_REVIEW_CONTRACT_VERSION,
     outputSchemaVersion:
       Number.isSafeInteger(aiReview.outputSchemaVersion) && aiReview.outputSchemaVersion > 0
         ? aiReview.outputSchemaVersion
-        : 1,
-    promptVersion: normalizeOptionalString(aiReview.promptVersion),
+        : PROGRAM_REVIEW_OUTPUT_SCHEMA_VERSION,
+    promptVersion:
+      normalizeOptionalString(aiReview.promptVersion) ||
+      PROGRAM_REVIEW_PROMPT_VERSION,
     decision: 'PASS',
     requiresRepair: false,
     issueCount: issues.length,
@@ -223,6 +233,7 @@ function buildDefaultBypassedAIRepairAuditMetadata(enabled = false) {
   return {
     enabled,
     outcome: 'BYPASSED',
+    trigger: null,
     attempts: 0,
     maxAttempts: 1,
     promptVersion: null,
@@ -261,6 +272,7 @@ function buildAIRepairAuditMetadata(aiRepair) {
     if (
       typeof aiRepair.enabled !== 'boolean' ||
       aiRepair.attempts !== 0 ||
+      aiRepair.trigger !== null ||
       aiRepair.maxAttempts !== 1 ||
       aiRepair.promptVersion !== null ||
       !hasCanonicalRepairVersions(aiRepair) ||
@@ -277,6 +289,7 @@ function buildAIRepairAuditMetadata(aiRepair) {
     if (
       aiRepair.enabled !== true ||
       aiRepair.attempts !== 0 ||
+      aiRepair.trigger !== null ||
       aiRepair.maxAttempts !== 1 ||
       aiRepair.promptVersion !== null ||
       !hasCanonicalRepairVersions(aiRepair) ||
@@ -302,10 +315,13 @@ function buildAIRepairAuditMetadata(aiRepair) {
       aiRepair.enabled !== true ||
       aiRepair.attempts !== 1 ||
       aiRepair.maxAttempts !== 1 ||
+      !['DURATION', 'REVIEW'].includes(aiRepair.trigger) ||
       aiRepair.promptVersion !== PROGRAM_REPAIR_PROMPT_VERSION ||
       !hasCanonicalRepairVersions(aiRepair) ||
-      !isObject(aiRepair.initialReviewSummary) ||
-      aiRepair.initialReviewSummary.decision !== 'REPAIR_REQUIRED' ||
+      (aiRepair.trigger === 'DURATION'
+        ? aiRepair.initialReviewSummary !== null
+        : !isObject(aiRepair.initialReviewSummary) ||
+          aiRepair.initialReviewSummary.decision !== 'REPAIR_REQUIRED') ||
       !isValidRepairProvider(aiRepair.provider)
     ) {
       throwInvalidGenerationAudit();
@@ -314,12 +330,16 @@ function buildAIRepairAuditMetadata(aiRepair) {
     return {
       ...buildDefaultBypassedAIRepairAuditMetadata(true),
       outcome: 'PASSED',
+      trigger: aiRepair.trigger,
       attempts: 1,
       promptVersion: aiRepair.promptVersion,
-      initialReviewSummary: buildReviewCountSummary(
-        aiRepair.initialReviewSummary,
-        'REPAIR_REQUIRED'
-      ),
+      initialReviewSummary:
+        aiRepair.trigger === 'REVIEW'
+          ? buildReviewCountSummary(
+              aiRepair.initialReviewSummary,
+              'REPAIR_REQUIRED'
+            )
+          : null,
       provider: buildGeneratorAuditMetadata(aiRepair.provider),
     };
   }
@@ -342,8 +362,12 @@ function assertAIReviewAndRepairAuditConsistency(aiReview, aiRepair) {
   if (!aiReview.enabled) {
     if (
       aiReview.reviewAttempts !== 0 ||
-      aiRepair.outcome !== 'BYPASSED' ||
-      aiRepair.attempts !== 0
+      !(
+        (aiRepair.outcome === 'BYPASSED' && aiRepair.attempts === 0) ||
+        (aiRepair.outcome === 'PASSED' &&
+          aiRepair.trigger === 'DURATION' &&
+          aiRepair.attempts === 1)
+      )
     ) {
       throwInvalidGenerationAudit();
     }
@@ -356,7 +380,8 @@ function assertAIReviewAndRepairAuditConsistency(aiReview, aiRepair) {
 
   if (aiRepair.outcome === 'PASSED') {
     if (
-      aiReview.reviewAttempts !== 2 ||
+      aiReview.reviewAttempts !==
+        (aiRepair.trigger === 'DURATION' ? 1 : 2) ||
       aiRepair.attempts !== 1
     ) {
       throwInvalidGenerationAudit();
@@ -436,6 +461,8 @@ function buildWeeklyPlanGenerationContext({
   generator = {},
   aiReview = {},
   aiRepair,
+  initialDurationGate = null,
+  finalDurationGate = null,
 }) {
   assertCanonicalEvaluationPolicyAuditInput(context, analytics);
 
@@ -462,6 +489,7 @@ function buildWeeklyPlanGenerationContext({
       version: context.evaluationPolicy.version,
     },
     generationType: 'ai_weekly_plan_builder_v1',
+    doctrineMode: 'none',
     generationMode: context?.generationMode || 'weekly_plan_draft',
     createdAt: context?.createdAt || new Date().toISOString(),
     doctrineId: coachInputs.doctrineId || null,
@@ -475,8 +503,6 @@ function buildWeeklyPlanGenerationContext({
     profileSnapshotSummary: buildProfileSnapshotSummary(context),
     strategySummary: aiMetadata.strategySummary || null,
     splitType: aiMetadata.splitType || null,
-    volumeTargets: aiMetadata.volumeTargets || null,
-    frequencyTargets: aiMetadata.frequencyTargets || null,
     progressionModel: aiMetadata.progressionModel || null,
     cautionHandling: aiMetadata.cautionHandling || null,
     notesPolicy: aiMetadata.notesPolicy || null,
@@ -517,6 +543,10 @@ function buildWeeklyPlanGenerationContext({
           }
         : null,
       analytics: analyticsAuditSummary,
+    },
+    durationGate: {
+      initial: initialDurationGate,
+      final: finalDurationGate,
     },
     repairAttempts: aiRepairAuditMetadata.attempts,
   };

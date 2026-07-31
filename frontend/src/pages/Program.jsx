@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { isAIWeeklyPlanFrontendEnabled } from "../features/weeklyPlans/featureFlags";
 import { formatRelativeCreatedLabel } from "../features/weeklyPlans/formatters";
 import { mapWeeklyPlanListItemToUi } from "../features/weeklyPlans/mappers";
 import { buildOrigin } from "../features/weeklyPlans/navigation";
 import {
+  getAIWeeklyPlanBuilderPath,
   getWeeklyPlanDetailsPath,
   getWeeklyPlansPath,
 } from "../features/weeklyPlans/routes";
@@ -188,6 +190,7 @@ export default function Program() {
   const createMenuRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
+  const isAIBuilderEnabled = isAIWeeklyPlanFrontendEnabled();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 4);
@@ -428,22 +431,24 @@ export default function Program() {
                 role="menu"
                 aria-label="Create program options"
               >
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100/80"
-                  role="menuitem"
-                  onClick={() => {
-                    setIsCreateMenuOpen(false);
-                    navigate("/ai", {
-                      state: {
-                        from: buildOrigin(location),
-                      },
-                    });
-                  }}
-                >
-                  <span className="material-symbols-outlined text-[18px] text-primary">auto_awesome</span>
-                  AI builder
-                </button>
+                {isAIBuilderEnabled ? (
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100/80"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsCreateMenuOpen(false);
+                      navigate(getAIWeeklyPlanBuilderPath(), {
+                        state: {
+                          from: buildOrigin(location),
+                        },
+                      });
+                    }}
+                  >
+                    <span className="material-symbols-outlined text-[18px] text-primary">auto_awesome</span>
+                    AI builder
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100/80"

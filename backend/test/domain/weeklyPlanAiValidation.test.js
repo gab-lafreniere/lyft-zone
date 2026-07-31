@@ -2,522 +2,411 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  collectGeneratedExerciseIds,
-  validateWeeklyPlanAiOutputSemantics,
+  buildMuscleDistributionDebugAudit,
   validateGeneratedExerciseIdsAgainstPool,
+  validateWeeklyPlanAiDebugContractAgainstAnalytics,
+  validateWeeklyPlanAiOutputSemantics,
 } = require('../../src/domain/programGeneration/weeklyPlanAiValidation');
+const {
+  clone,
+  createAiExercise,
+  createAiOutput,
+  createSetTemplate,
+} = require('./weeklyPlanAiV4Fixtures');
 
-function createGeneratedDocument(exerciseIds = []) {
-  return {
-    name: 'AI Draft',
-    sessionsPerWeek: 1,
-    workouts: [
-      {
-        name: 'Upper',
+function validateSet(setTemplate) {
+  const output = createAiOutput();
+  output.workouts[0].blocks[0].exercises[0].setTemplates = [setTemplate];
+  return validateWeeklyPlanAiOutputSemantics(output);
+}
+
+function createSupersetOutput({
+  laneADefaultRestSeconds = 120,
+  laneBDefaultRestSeconds = 60,
+  laneBDefaultTempo = '3010',
+  laneBDefaultTargetRir = 2,
+} = {}) {
+  const output = createAiOutput();
+  output.workouts[0].blocks[0] = {
+    orderIndex: 1,
+    blockType: 'SUPERSET',
+    exercises: [
+      createAiExercise({
+        exerciseId: 'ex_lane_a',
         orderIndex: 1,
-        blocks: exerciseIds.map((exerciseId, index) => ({
-          orderIndex: index + 1,
-          blockType: 'SINGLE',
-          exercises: [
-            {
-              exerciseId,
-              exerciseName: `Exercise ${index + 1}`,
-              orderIndex: 1,
-              setTemplates: [],
-            },
-          ],
-        })),
-      },
+        defaultRestSeconds: laneADefaultRestSeconds,
+      }),
+      createAiExercise({
+        exerciseId: 'ex_lane_b',
+        orderIndex: 2,
+        defaultTempo: laneBDefaultTempo,
+        defaultRestSeconds: laneBDefaultRestSeconds,
+        defaultTargetRir: laneBDefaultTargetRir,
+      }),
     ],
   };
+  return output;
 }
 
-function createSetTemplate(overrides = {}) {
-  return {
-    setIndex: 1,
-    setType: 'WORKING',
-    targetReps: 10,
-    minReps: null,
-    maxReps: null,
-    targetRir: 2,
-    tempo: '3010',
-    restSeconds: 120,
-    ...overrides,
-  };
-}
-
-function createAiExercise(exerciseId = 'ex_bench', overrides = {}) {
-  return {
-    exerciseId,
-    exerciseName: 'Dumbbell Bench Press',
-    orderIndex: 1,
-    bodyParts: ['chest'],
-    muscleFocus: ['upper_chest'],
-    defaultTempo: '3010',
-    defaultRestSeconds: 120,
-    defaultTargetRir: 2,
-    setTemplates: [createSetTemplate()],
-    cardioPrescription: null,
-    notes: null,
-    ...overrides,
-  };
-}
-
-function createAiWorkout(index = 1, blockOverrides = {}) {
-  return {
-    name: `Workout ${index}`,
-    orderIndex: index,
-    estimatedDurationMinutes: 60,
-    focus: 'Upper push',
+function createTwelveNotedExerciseOutput() {
+  const output = createAiOutput();
+  output.sessionsPerWeek = 3;
+  output.workouts = Array.from({ length: 3 }, (_, workoutIndex) => ({
+    name: `Workout ${workoutIndex + 1}`,
+    orderIndex: workoutIndex + 1,
+    focus: 'Focused strength work',
     blocks: [
       {
         orderIndex: 1,
         blockType: 'SINGLE',
-        exercises: [createAiExercise()],
-        ...blockOverrides,
+        exercises: [
+          createAiExercise({
+            exerciseId: `ex_${workoutIndex}_1`,
+            notes: `Necessary note ${workoutIndex * 4 + 1}.`,
+          }),
+        ],
+      },
+      {
+        orderIndex: 2,
+        blockType: 'SUPERSET',
+        exercises: [
+          createAiExercise({
+            exerciseId: `ex_${workoutIndex}_2`,
+            orderIndex: 1,
+            notes: `Necessary note ${workoutIndex * 4 + 2}.`,
+          }),
+          createAiExercise({
+            exerciseId: `ex_${workoutIndex}_3`,
+            orderIndex: 2,
+            defaultRestSeconds: null,
+            notes: `Necessary note ${workoutIndex * 4 + 3}.`,
+          }),
+        ],
+      },
+      {
+        orderIndex: 3,
+        blockType: 'SINGLE',
+        exercises: [
+          createAiExercise({
+            exerciseId: `ex_${workoutIndex}_4`,
+            notes: `Necessary note ${workoutIndex * 4 + 4}.`,
+          }),
+        ],
       },
     ],
-  };
+  }));
+  return output;
 }
 
-function createAiOutput(overrides = {}) {
-  return {
-    schemaVersion: 2,
-    planName: 'AI Draft',
-    sessionsPerWeek: 1,
-    strategySummary: 'Simple full body plan.',
-    splitType: 'full_body',
-    workouts: [createAiWorkout()],
-    volumeTargets: {
-      bodyParts: [],
-      muscleFocuses: [],
-    },
-    frequencyTargets: {
-      bodyParts: [],
-      muscleFocuses: [],
-    },
-    progressionModel: {
-      type: 'double_progression',
-      summary: 'Add reps before load.',
-    },
-    cautionHandling: {
-      summary: 'Respect blocked constraints and keep cautions soft.',
-    },
-    notesPolicy: {
-      summary: 'Use notes only when useful.',
-    },
-    ...overrides,
-  };
-}
+test('V4 semantics accept fixed, range, and temporal prescriptions', () => {
+  const cases = [
+    createSetTemplate(),
+    createSetTemplate(1, {
+      targetReps: null,
+      minReps: 8,
+      maxReps: 12,
+    }),
+    createSetTemplate(1, {
+      targetReps: null,
+      minReps: null,
+      maxReps: null,
+      targetSeconds: 45,
+    }),
+  ];
 
-test('validateGeneratedExerciseIdsAgainstPool passes when every generated ID is in the pool snapshot', () => {
-  const document = createGeneratedDocument(['ex_bench', 'ex_row', 'ex_bench']);
-  const result = validateGeneratedExerciseIdsAgainstPool(document, {
-    allowedExerciseIds: ['ex_bench', 'ex_row'],
+  cases.forEach((setTemplate) => {
+    assert.equal(validateSet(setTemplate).ok, true);
   });
-
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.issues, []);
-  assert.deepEqual(result.exerciseIds, ['ex_bench', 'ex_row', 'ex_bench']);
-  assert.deepEqual(result.uniqueExerciseIds, ['ex_bench', 'ex_row']);
 });
 
-test('validateGeneratedExerciseIdsAgainstPool rejects IDs outside the generation pool snapshot', () => {
-  const document = createGeneratedDocument(['ex_bench', 'ex_known_but_outside_pool']);
-  const result = validateGeneratedExerciseIdsAgainstPool(document, {
-    allowedExerciseIds: ['ex_bench'],
+test('V4 semantics reject combined or missing prescription modes', () => {
+  const cases = [
+    createSetTemplate(1, { targetSeconds: 45 }),
+    createSetTemplate(1, {
+      targetReps: null,
+      minReps: 8,
+      maxReps: 12,
+      targetSeconds: 45,
+    }),
+    createSetTemplate(1, {
+      targetReps: null,
+      minReps: null,
+      maxReps: null,
+      targetSeconds: null,
+    }),
+  ];
+
+  cases.forEach((setTemplate) => {
+    assert.equal(validateSet(setTemplate).ok, false);
   });
-
-  assert.equal(result.ok, false);
-  assert.deepEqual(result.issues, [
-    {
-      code: 'EXERCISE_OUTSIDE_POOL',
-      path: 'workouts[0].blocks[1].exercises[0].exerciseId',
-      exerciseId: 'ex_known_but_outside_pool',
-    },
-  ]);
 });
 
-test('collectGeneratedExerciseIds ignores empty exerciseId slots', () => {
-  const entries = collectGeneratedExerciseIds(createGeneratedDocument(['ex_bench', null, '']));
-
-  assert.deepEqual(entries, [
-    {
-      exerciseId: 'ex_bench',
-      path: 'workouts[0].blocks[0].exercises[0].exerciseId',
-    },
-  ]);
-});
-
-test('validateWeeklyPlanAiOutputSemantics rejects sessionsPerWeek mismatch', () => {
-  const result = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      sessionsPerWeek: 2,
+test('V4 semantics reject inverted repetition ranges', () => {
+  const result = validateSet(
+    createSetTemplate(1, {
+      targetReps: null,
+      minReps: 12,
+      maxReps: 8,
     })
   );
-
   assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.code === 'SESSIONS_PER_WEEK_MISMATCH'), true);
-});
-
-test('validateWeeklyPlanAiOutputSemantics rejects duplicate explicit targets and frequency above sessions', () => {
-  const output = createAiOutput({
-    volumeTargets: {
-      bodyParts: [
-        { area: 'chest', targetSetsPerWeek: 3 },
-        { area: 'chest', targetSetsPerWeek: 2 },
-      ],
-      muscleFocuses: [],
-    },
-    frequencyTargets: {
-      bodyParts: [{ area: 'chest', targetSessionsPerWeek: 2 }],
-      muscleFocuses: [],
-    },
-  });
-  const result = validateWeeklyPlanAiOutputSemantics(output);
-
-  assert.equal(result.ok, false);
-  assert.deepEqual(
-    result.issues.map((issue) => issue.code),
-    ['DUPLICATE_TARGET_AREA', 'TARGET_FREQUENCY_EXCEEDS_SESSIONS']
+  assert.equal(
+    result.issues.some((issue) => issue.code === 'INVALID_REP_RANGE'),
+    true
   );
 });
 
-test('validateWeeklyPlanAiOutputSemantics rejects legacy perMuscle directly', () => {
-  const output = createAiOutput({
-    volumeTargets: { perMuscle: [] },
-  });
+test('SINGLE still requires defaultRestSeconds', () => {
+  const output = createAiOutput();
+  output.workouts[0].blocks[0].exercises[0].defaultRestSeconds = null;
+
   const result = validateWeeklyPlanAiOutputSemantics(output);
 
   assert.equal(result.ok, false);
   assert.equal(
     result.issues.some(
-      (issue) => issue.code === 'LEGACY_TARGET_SHAPE_UNSUPPORTED'
+      (issue) =>
+        issue.path ===
+          'workouts[0].blocks[0].exercises[0].defaultRestSeconds' &&
+        issue.code === 'REQUIRED'
     ),
     true
   );
 });
 
-test('validateWeeklyPlanAiOutputSemantics rejects non-sequential orderIndex values', () => {
+test('SUPERSET lane A still requires defaultRestSeconds', () => {
   const result = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      sessionsPerWeek: 2,
-      workouts: [
-        createAiWorkout(1),
-        createAiWorkout(3),
-      ],
-    })
-  );
-
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.code === 'ORDER_INDEX_NOT_SEQUENTIAL'), true);
-});
-
-test('validateWeeklyPlanAiOutputSemantics rejects duplicate setIndex values', () => {
-  const result = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      workouts: [
-        createAiWorkout(1, {
-          exercises: [
-            createAiExercise('ex_bench', {
-              setTemplates: [
-                createSetTemplate({ setIndex: 1 }),
-                createSetTemplate({ setIndex: 1 }),
-              ],
-            }),
-          ],
-        }),
-      ],
-    })
-  );
-
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.code === 'DUPLICATE_ORDER_INDEX'), true);
-});
-
-test('validateWeeklyPlanAiOutputSemantics rejects SINGLE blocks without exactly one exercise', () => {
-  const emptyResult = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      workouts: [
-        createAiWorkout(1, {
-          exercises: [],
-        }),
-      ],
-    })
-  );
-  const twoExerciseResult = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      workouts: [
-        createAiWorkout(1, {
-          exercises: [
-            createAiExercise('ex_bench', { orderIndex: 1 }),
-            createAiExercise('ex_row', { orderIndex: 2 }),
-          ],
-        }),
-      ],
-    })
-  );
-
-  assert.equal(emptyResult.ok, false);
-  assert.equal(twoExerciseResult.ok, false);
-  assert.equal(emptyResult.issues.some((issue) => issue.code === 'INVALID_SINGLE_BLOCK'), true);
-  assert.equal(twoExerciseResult.issues.some((issue) => issue.code === 'INVALID_SINGLE_BLOCK'), true);
-});
-
-test('validateWeeklyPlanAiOutputSemantics rejects SUPERSET blocks without exactly two exercises', () => {
-  const oneExerciseResult = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      workouts: [
-        createAiWorkout(1, {
-          blockType: 'SUPERSET',
-          exercises: [createAiExercise('ex_bench')],
-        }),
-      ],
-    })
-  );
-  const threeExerciseResult = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      workouts: [
-        createAiWorkout(1, {
-          blockType: 'SUPERSET',
-          exercises: [
-            createAiExercise('ex_bench', { orderIndex: 1 }),
-            createAiExercise('ex_row', { orderIndex: 2 }),
-            createAiExercise('ex_fly', { orderIndex: 3 }),
-          ],
-        }),
-      ],
-    })
-  );
-
-  assert.equal(oneExerciseResult.ok, false);
-  assert.equal(threeExerciseResult.ok, false);
-  assert.equal(oneExerciseResult.issues.some((issue) => issue.code === 'INVALID_SUPERSET_BLOCK'), true);
-  assert.equal(threeExerciseResult.issues.some((issue) => issue.code === 'INVALID_SUPERSET_BLOCK'), true);
-});
-
-test('validateWeeklyPlanAiOutputSemantics rejects CARDIO blocks without exactly one exercise', () => {
-  const emptyResult = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      workouts: [
-        createAiWorkout(1, {
-          blockType: 'CARDIO',
-          exercises: [],
-        }),
-      ],
-    })
-  );
-  const twoExerciseResult = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      workouts: [
-        createAiWorkout(1, {
-          blockType: 'CARDIO',
-          exercises: [
-            createAiExercise('ex_bike', {
-              orderIndex: 1,
-              setTemplates: [],
-              cardioPrescription: {
-                durationMinutes: 20,
-                heartRateTargetMode: 'none',
-                heartRateTargetValue: null,
-                machineSettings: [],
-                notes: null,
-              },
-            }),
-            createAiExercise('ex_treadmill', {
-              orderIndex: 2,
-              setTemplates: [],
-              cardioPrescription: {
-                durationMinutes: 20,
-                heartRateTargetMode: 'none',
-                heartRateTargetValue: null,
-                machineSettings: [],
-                notes: null,
-              },
-            }),
-          ],
-        }),
-      ],
-    })
-  );
-
-  assert.equal(emptyResult.ok, false);
-  assert.equal(twoExerciseResult.ok, false);
-  assert.equal(emptyResult.issues.some((issue) => issue.code === 'INVALID_CARDIO_BLOCK'), true);
-  assert.equal(twoExerciseResult.issues.some((issue) => issue.code === 'INVALID_CARDIO_BLOCK'), true);
-});
-
-test('validateWeeklyPlanAiOutputSemantics rejects cardio with setTemplates', () => {
-  const result = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      workouts: [
-        createAiWorkout(1, {
-          blockType: 'CARDIO',
-          exercises: [
-            createAiExercise('ex_bike', {
-              setTemplates: [createSetTemplate()],
-              cardioPrescription: {
-                durationMinutes: 20,
-                heartRateTargetMode: 'none',
-                heartRateTargetValue: null,
-                machineSettings: [],
-                notes: null,
-              },
-            }),
-          ],
-        }),
-      ],
-    })
-  );
-
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.code === 'INVALID_CARDIO_BLOCK'), true);
-});
-
-test('validateWeeklyPlanAiOutputSemantics rejects strength exercises without setTemplates', () => {
-  const result = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      workouts: [
-        createAiWorkout(1, {
-          exercises: [
-            createAiExercise('ex_bench', {
-              setTemplates: [],
-            }),
-          ],
-        }),
-      ],
-    })
-  );
-
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.code === 'MIN_ITEMS_REQUIRED'), true);
-});
-
-test('validateWeeklyPlanAiOutputSemantics rejects ambiguous reps contract', () => {
-  const result = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      workouts: [
-        createAiWorkout(1, {
-          exercises: [
-            createAiExercise('ex_bench', {
-              setTemplates: [
-                createSetTemplate({
-                  targetReps: 10,
-                  minReps: 8,
-                  maxReps: 12,
-                }),
-              ],
-            }),
-          ],
-        }),
-      ],
-    })
-  );
-
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.code === 'AMBIGUOUS_REP_TARGET'), true);
-});
-
-test('validateWeeklyPlanAiOutputSemantics rejects incomplete reps contract', () => {
-  const result = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      workouts: [
-        createAiWorkout(1, {
-          exercises: [
-            createAiExercise('ex_bench', {
-              setTemplates: [
-                createSetTemplate({
-                  targetReps: null,
-                  minReps: 8,
-                  maxReps: null,
-                }),
-              ],
-            }),
-          ],
-        }),
-      ],
-    })
-  );
-
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.code === 'MISSING_REP_TARGET'), true);
-});
-
-test('validateWeeklyPlanAiOutputSemantics rejects inverted repetition ranges', () => {
-  const result = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      workouts: [
-        createAiWorkout(1, {
-          exercises: [
-            createAiExercise('ex_bench', {
-              setTemplates: [
-                createSetTemplate({
-                  targetReps: null,
-                  minReps: 12,
-                  maxReps: 8,
-                }),
-              ],
-            }),
-          ],
-        }),
-      ],
-    })
-  );
-
-  assert.equal(result.ok, false);
-  assert.equal(result.issues.some((issue) => issue.code === 'INVALID_REP_RANGE'), true);
-});
-
-test('validateWeeklyPlanAiOutputSemantics rejects mismatched superset set counts', () => {
-  const result = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      workouts: [
-        createAiWorkout(1, {
-          blockType: 'SUPERSET',
-          exercises: [
-            createAiExercise('ex_bench', {
-              orderIndex: 1,
-              setTemplates: [createSetTemplate({ setIndex: 1 })],
-            }),
-            createAiExercise('ex_row', {
-              orderIndex: 2,
-              setTemplates: [
-                createSetTemplate({ setIndex: 1 }),
-                createSetTemplate({ setIndex: 2 }),
-              ],
-            }),
-          ],
-        }),
-      ],
-    })
+    createSupersetOutput({ laneADefaultRestSeconds: null })
   );
 
   assert.equal(result.ok, false);
   assert.equal(
-    result.issues.some((issue) => issue.code === 'SUPERSET_SET_COUNT_MISMATCH'),
+    result.issues.some(
+      (issue) =>
+        issue.path ===
+          'workouts[0].blocks[0].exercises[0].defaultRestSeconds' &&
+        issue.code === 'REQUIRED'
+    ),
     true
   );
 });
 
-test('validateWeeklyPlanAiOutputSemantics applies bounded strength exercise notes policy', () => {
-  const workouts = Array.from({ length: 4 }, (_, index) =>
-    createAiWorkout(index + 1, {
-      exercises: [
-        createAiExercise(`ex_${index + 1}`, {
-          notes: index < 3 ? `Note ${index + 1}` : null,
-        }),
-      ],
-    })
+test('SUPERSET lane B accepts null defaultRestSeconds', () => {
+  const result = validateWeeklyPlanAiOutputSemantics(
+    createSupersetOutput({ laneBDefaultRestSeconds: null })
   );
 
+  assert.equal(result.ok, true);
+});
+
+test('SUPERSET lane B accepts a valid defaultRestSeconds value', () => {
   const result = validateWeeklyPlanAiOutputSemantics(
-    createAiOutput({
-      sessionsPerWeek: 4,
-      workouts,
-    })
+    createSupersetOutput({ laneBDefaultRestSeconds: 60 })
+  );
+
+  assert.equal(result.ok, true);
+});
+
+test('SUPERSET lane B still requires defaultTempo', () => {
+  const result = validateWeeklyPlanAiOutputSemantics(
+    createSupersetOutput({ laneBDefaultTempo: null })
   );
 
   assert.equal(result.ok, false);
-  assert.equal(result.summary.notesPolicy.allowedExerciseNotes, 2);
-  assert.equal(result.issues.some((issue) => issue.code === 'NOTES_POLICY_VIOLATION'), true);
+  assert.equal(
+    result.issues.some(
+      (issue) =>
+        issue.path === 'workouts[0].blocks[0].exercises[1].defaultTempo' &&
+        issue.code === 'REQUIRED'
+    ),
+    true
+  );
+});
+
+test('SUPERSET lane B still requires defaultTargetRir', () => {
+  const result = validateWeeklyPlanAiOutputSemantics(
+    createSupersetOutput({ laneBDefaultTargetRir: null })
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.issues.some(
+      (issue) =>
+        issue.path ===
+          'workouts[0].blocks[0].exercises[1].defaultTargetRir' &&
+        issue.code === 'REQUIRED'
+    ),
+    true
+  );
+});
+
+test('twelve notes on twelve strength exercises remain semantically valid and are audited', () => {
+  const result = validateWeeklyPlanAiOutputSemantics(
+    createTwelveNotedExerciseOutput()
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.summary.notesPolicy, {
+    strengthExerciseCount: 12,
+    strengthExerciseNoteCount: 12,
+    allowedExerciseNotes: 4,
+    exceedsRecommendedExerciseNotes: true,
+  });
+  assert.equal(
+    result.issues.some((issue) => issue.code === 'NOTES_POLICY_VIOLATION'),
+    false
+  );
+});
+
+test('a structural error with excessive notes remains a structural failure', () => {
+  const output = createTwelveNotedExerciseOutput();
+  output.workouts[0].orderIndex = 2;
+
+  const result = validateWeeklyPlanAiOutputSemantics(output);
+
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.issues.some(
+      (issue) => issue.code === 'ORDER_INDEX_NOT_SEQUENTIAL'
+    ),
+    true
+  );
+  assert.equal(
+    result.issues.some((issue) => issue.code === 'NOTES_POLICY_VIOLATION'),
+    false
+  );
+  assert.equal(
+    result.summary.notesPolicy.exceedsRecommendedExerciseNotes,
+    true
+  );
+});
+
+test('sessions, workouts, blocks, exercises, and sets stay sequential', () => {
+  const output = createAiOutput();
+  output.sessionsPerWeek = 2;
+  output.workouts[0].orderIndex = 2;
+  output.workouts[0].blocks[0].orderIndex = 2;
+  output.workouts[0].blocks[0].exercises[0].orderIndex = 2;
+  output.workouts[0].blocks[0].exercises[0].setTemplates[0].setIndex = 2;
+  const result = validateWeeklyPlanAiOutputSemantics(output);
+
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.issues.some(
+      (issue) => issue.code === 'SESSIONS_PER_WEEK_MISMATCH'
+    ),
+    true
+  );
+  assert.equal(
+    result.issues.filter(
+      (issue) => issue.code === 'ORDER_INDEX_NOT_SEQUENTIAL'
+    ).length >= 4,
+    true
+  );
+});
+
+test('SINGLE, SUPERSET, CARDIO, lane equality, and cardio rules remain enforced', () => {
+  const single = createAiOutput();
+  single.workouts[0].blocks[0].exercises.push(
+    clone(single.workouts[0].blocks[0].exercises[0])
+  );
+
+  const superset = createAiOutput();
+  superset.workouts[0].blocks[0].blockType = 'SUPERSET';
+
+  const cardio = createAiOutput();
+  cardio.workouts[0].blocks[0].blockType = 'CARDIO';
+
+  [single, superset, cardio].forEach((output) => {
+    assert.equal(validateWeeklyPlanAiOutputSemantics(output).ok, false);
+  });
+});
+
+test('generated exercise IDs remain restricted to the pool snapshot', () => {
+  const document = {
+    workouts: [
+      {
+        blocks: [
+          {
+            exercises: [
+              { exerciseId: 'ex_bench' },
+              { exerciseId: 'ex_outside' },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const result = validateGeneratedExerciseIdsAgainstPool(document, {
+    allowedExerciseIds: ['ex_bench'],
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.uniqueExerciseIds, ['ex_bench', 'ex_outside']);
+  assert.equal(result.issues[0].code, 'EXERCISE_OUTSIDE_POOL');
+});
+
+test('debug contract validates omissions and pool claims only, never duration', () => {
+  const generatedAIOutput = createAiOutput();
+  const analytics = {
+    muscleMetrics: [
+      {
+        taxonomy: 'body_part',
+        key: 'chest',
+        directWorkingSets: 1,
+      },
+    ],
+  };
+  const context = {
+    exercisePoolItems: [
+      { exerciseId: 'ex_bench', bodyParts: ['chest'] },
+    ],
+  };
+  const result = validateWeeklyPlanAiDebugContractAgainstAnalytics({
+    generatedAIOutput,
+    analytics,
+    context,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    JSON.stringify(result).includes('duration'),
+    false
+  );
+});
+
+test('limited_by_eligible_pool uses canonical 0, 1, 2, and 3+ coverage', () => {
+  for (const [count, supported] of [
+    [0, true],
+    [1, true],
+    [2, true],
+    [3, false],
+    [5, false],
+  ]) {
+    const generatedAIOutput = createAiOutput();
+    generatedAIOutput.muscleDistributionDebug.omittedBodyParts = [
+      {
+        area: 'quadriceps',
+        reasonCode: 'limited_by_eligible_pool',
+        explanation: 'Quadriceps coverage is limited by the pool.',
+      },
+    ];
+    const audit = buildMuscleDistributionDebugAudit({
+      generatedAIOutput,
+      analytics: {
+        muscleMetrics: [],
+      },
+      context: {
+        exercisePoolItems: Array.from({ length: count }, (_, index) => ({
+          exerciseId: `quad_${index}`,
+          bodyParts: ['quadriceps'],
+        })),
+      },
+    });
+
+    assert.equal(
+      audit.unsupportedPoolLimitationClaims.length === 0,
+      supported
+    );
+  }
 });

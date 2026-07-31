@@ -3,1277 +3,235 @@ const assert = require('node:assert/strict');
 
 const {
   AIProgramReviewError,
-  MAX_PROGRAM_REVIEW_INPUT_CHARACTERS,
   PROGRAM_REVIEW_INPUT_SCHEMA_VERSION,
   buildProgramReviewDecisionSummary,
   buildProgramReviewInput,
-  buildSelectedExerciseMetadata,
-  collectSelectedExerciseIds,
   runAIProgramReview,
 } = require('../../src/domain/programGeneration/aiProgramReview');
 const {
-  validateProgramReviewSemantics,
-} = require('../../src/domain/programGeneration/programReviewValidation');
+  applyBackendCalculatedDurationsToPlanDocument,
+} = require('../../src/domain/programGeneration/weeklyPlanBackendDuration');
 const {
-  stableStringify,
-} = require('../../src/domain/programGeneration/prompts/programGenerationPrompt');
+  calculateWeeklyPlanAnalytics,
+} = require('../../src/domain/programGeneration/weeklyPlanAnalytics');
 const {
-  DURATION_ALIGNMENT_STATUS,
-  WEEKLY_PLAN_EVALUATION_POLICY,
-  WEEKLY_PLAN_EVALUATION_POLICY_ID,
-  WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
-} = require('../../src/domain/programGeneration/weeklyPlanEvaluationPolicy');
+  createAiOutput,
+  createContext,
+  createNormalizedDocument,
+} = require('./weeklyPlanAiV4Fixtures');
 
-const MOCK_DOCTRINE = Object.freeze({
-  id: 'bodybuilding_runtime_classic',
-  version: 'bodybuilding-hypertrophy-runtime-classic-v1.0.0',
-  derivedFromDoctrineVersion: 'bodybuilding-hypertrophy-v1.0.0',
-  content: 'MOCK_CLASSIC_DOCTRINE_CONTENT_SENTINEL',
-});
-
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
-}
-
-function createContext(overrides = {}) {
-  return {
-    evaluationPolicy: WEEKLY_PLAN_EVALUATION_POLICY,
-    primaryGoal: 'HYPERTROPHY',
-    experience: 'intermediate',
-    availability: { sessionsPerWeek: 2, durationPerSession: 60 },
-    musclePriorityProfile: {
-      primaryFocus: 'upper_chest',
-      secondaryFocuses: ['lats'],
-      deprioritizedArea: 'calves',
-      perAreaWeights: { lats: 0.7, upper_chest: 1 },
-    },
-    cardioProfile: { cardioRole: 'supportive', preferredModalities: ['bike'] },
-    movementConstraints: {
-      blockedMovementPatterns: ['heavy_hip_hinge'],
-      blockedJointStressTags: ['spinal_loading'],
-      cautionMovementPatterns: ['vertical_push'],
-      cautionJointStressTags: ['overhead_shoulder_position'],
-    },
-    physicalNotes: 'PRIVATE_PROFILE_NOTE_SENTINEL',
-    poolSnapshot: { allowedExerciseIds: ['ex_bench', 'ex_row', 'ex_unused'] },
-    exercisePoolItems: [
-      {
-        exerciseId: 'ex_bench',
-        name: 'Dumbbell Bench Press',
-        trainingType: 'strength',
-        movementPattern: 'horizontal_push',
-        jointStressTags: ['shoulder_extension', ' Shoulder_Extension '],
-        equipmentCategory: 'dumbbell',
-        bodyParts: ['chest'],
-        muscleFocus: ['upper_chest'],
-        targetMuscles: ['pectoralis_major'],
-        secondaryMuscles: ['triceps'],
-        equipmentNeeded: ['dumbbells', 'bench'],
-        fatigueScore: 5,
-        softSignals: { private: 'PRIVATE_POOL_SIGNAL_SENTINEL' },
-      },
-      {
-        exerciseId: 'ex_row',
-        name: 'Chest Supported Row',
-        trainingType: 'strength',
-        movementPattern: 'horizontal_pull',
-        jointStressTags: [],
-        equipmentCategory: 'machine',
-        bodyParts: ['back'],
-        muscleFocus: ['lats'],
-        targetMuscles: ['latissimus_dorsi'],
-        secondaryMuscles: ['biceps'],
-      },
-      {
-        exerciseId: 'ex_unused',
-        trainingType: 'strength',
-        movementPattern: 'vertical_push',
-        jointStressTags: ['PRIVATE_UNUSED_TAG_SENTINEL'],
-        equipmentCategory: 'machine',
-        bodyParts: ['shoulders'],
-        muscleFocus: ['front_delts'],
-        targetMuscles: ['deltoids'],
-        secondaryMuscles: [],
-      },
-    ],
-    ...overrides,
+function createReviewFixture() {
+  const context = createContext();
+  const generatedAIOutput = createAiOutput();
+  generatedAIOutput.workouts[0].blocks[0].exercises[0].setTemplates[0] = {
+    ...generatedAIOutput.workouts[0].blocks[0].exercises[0].setTemplates[0],
+    targetReps: null,
+    targetSeconds: 120,
   };
-}
-
-function createGeneratedPlanDocument(overrides = {}) {
-  return {
-    name: 'AI Review Draft',
-    sessionsPerWeek: 2,
-    strategySummary: 'Target upper chest and back with manageable recovery.',
-    workouts: [
-      {
-        name: 'Upper B',
-        orderIndex: 2,
-        estimatedDurationMinutes: 58,
-        notes: 'PRIVATE_WORKOUT_NOTE_SENTINEL',
-        blocks: [
-          {
-            orderIndex: 1,
-            blockType: 'SINGLE',
-            restSeconds: 120,
-            exercises: [
-              {
-                orderIndex: 1,
-                exerciseId: 'ex_row',
-                exerciseName: 'Chest Supported Row',
-                bodyParts: ['back'],
-                muscleFocus: ['lats'],
-                defaultTempo: '3010',
-                defaultRestSeconds: 120,
-                defaultTargetRir: 2,
-                notes: null,
-                setTemplates: [
-                  {
-                    targetReps: null,
-                    minReps: 8,
-                    maxReps: 12,
-                    targetRir: 2,
-                    tempo: '3010',
-                    restSeconds: 120,
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-      {
-        name: 'Upper A',
-        orderIndex: 1,
-        estimatedDurationMinutes: 60,
-        blocks: [
-          {
-            orderIndex: 1,
-            blockType: 'SUPERSET',
-            restSeconds: 90,
-            exercises: [
-              {
-                orderIndex: 2,
-                exerciseId: 'ex_bench',
-                exerciseName: 'Dumbbell Bench Press',
-                bodyParts: ['chest'],
-                muscleFocus: ['upper_chest'],
-                defaultTempo: '3010',
-                defaultRestSeconds: 90,
-                defaultTargetRir: 1,
-                notes: 'PRIVATE_EXERCISE_NOTE_SENTINEL',
-                setTemplates: [
-                  {
-                    targetReps: 10,
-                    minReps: null,
-                    maxReps: null,
-                    targetRir: 1,
-                    tempo: '3010',
-                    restSeconds: 90,
-                  },
-                ],
-              },
-              {
-                orderIndex: 1,
-                exerciseId: 'ex_bench',
-                exerciseName: 'Dumbbell Bench Press',
-                bodyParts: ['chest'],
-                muscleFocus: ['upper_chest'],
-                defaultTempo: '3010',
-                defaultRestSeconds: 90,
-                defaultTargetRir: 1,
-                notes: null,
-                setTemplates: [
-                  {
-                    targetReps: 8,
-                    minReps: null,
-                    maxReps: null,
-                    targetRir: 1,
-                    tempo: '3010',
-                    restSeconds: 90,
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-    ],
-    ...overrides,
-  };
-}
-
-function createCardioContext() {
-  const baseContext = createContext();
-
-  return createContext({
-    cardioProfile: {
-      cardioRole: 'supportive',
-      preferredModalities: ['stationary_bike', 'treadmill_walk'],
-    },
-    poolSnapshot: {
-      allowedExerciseIds: [...baseContext.poolSnapshot.allowedExerciseIds, 'ex_bike'],
-    },
-    exercisePoolItems: [
-      ...baseContext.exercisePoolItems,
-      {
-        exerciseId: 'ex_bike',
-        name: 'Stationary Bike',
-        trainingType: 'cardio',
-        movementPattern: 'cyclical',
-        jointStressTags: [],
-        equipmentCategory: 'machine',
-        bodyParts: ['cardio'],
-        muscleFocus: [],
-        targetMuscles: [],
-        secondaryMuscles: [],
-        cardioModality: ' Stationary_Bike ',
-        machineSettings: {
-          resistance: 'PRIVATE_CARDIO_MACHINE_SETTING_SENTINEL',
-        },
-      },
-    ],
+  const initialDocument = createNormalizedDocument({
+    targetSeconds: 120,
   });
-}
-
-function createCardioGeneratedPlanDocument() {
-  return {
-    name: 'Cardio Review Draft',
-    sessionsPerWeek: 1,
-    strategySummary: 'Use supportive cardio alongside strength training.',
-    workouts: [
-      {
-        name: 'Cardio Session',
-        orderIndex: 1,
-        estimatedDurationMinutes: 35,
-        notes: 'PRIVATE_CARDIO_WORKOUT_NOTE_SENTINEL',
-        blocks: [
-          {
-            orderIndex: 1,
-            blockType: 'CARDIO',
-            restSeconds: null,
-            exercises: [
-              {
-                orderIndex: 1,
-                exerciseId: 'ex_bike',
-                exerciseName: 'Stationary Bike',
-                bodyParts: ['cardio'],
-                muscleFocus: [],
-                defaultTempo: null,
-                defaultRestSeconds: null,
-                defaultTargetRir: null,
-                notes: 'PRIVATE_CARDIO_EXERCISE_NOTE_SENTINEL',
-                setTemplates: [],
-                cardioPrescription: {
-                  durationMinutes: 32,
-                  heartRateTargetMode: 'ZONE',
-                  heartRateTargetValue: 3,
-                  machineSettings: [
-                    {
-                      key: 'resistance',
-                      value: 'PRIVATE_CARDIO_MACHINE_SETTING_SENTINEL',
-                    },
-                  ],
-                  notes: 'PRIVATE_CARDIO_PRESCRIPTION_NOTE_SENTINEL',
-                },
-              },
-            ],
-          },
-        ],
-      },
-    ],
-  };
-}
-
-function createGeneratedAIOutput(overrides = {}) {
-  return {
-    splitType: 'upper_lower',
-    strategySummary: 'Provider strategy summary.',
-    volumeTargets: {
-      bodyParts: [],
-      muscleFocuses: [
-        {
-          area: 'upper_chest',
-          targetSetsPerWeek: 10,
-          priority: 'primary',
-          rationale: 'PRIVATE_TARGET_RATIONALE_SENTINEL',
-        },
-      ],
-    },
-    frequencyTargets: {
-      bodyParts: [],
-      muscleFocuses: [
-        { area: 'upper_chest', targetSessionsPerWeek: 2 },
-      ],
-    },
-    progressionModel: { type: 'double_progression' },
-    ...overrides,
-  };
-}
-
-function createAnalytics(overrides = {}) {
-  return {
-    schemaVersion: 2,
-    status: 'complete',
-    evaluationPolicy: {
-      id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
-      version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
-    },
-    plan: {
-      workoutCount: 2,
-      blockCount: 2,
-      exerciseCount: 3,
-      strengthExerciseCount: 3,
-      cardioExerciseCount: 0,
-      uniqueExerciseCount: 2,
-      workingSetCount: 3,
-      totalSetTemplateCount: 3,
-      requestedDurationMinutesPerWorkout: 60,
-      requestedDurationMinutesTotal: 120,
-      calculatedDurationMinutesTotal: 118,
-      calculatedDurationMinutesAverage: 59,
-      declaredEstimatedDurationMinutesTotal: 118,
-      durationDifferenceMinutesTotal: -2,
-      declaredDurationDifferenceMinutesTotal: 0,
-      estimatedDurationMinutesTotal: 118,
-      estimatedDurationMinutesAverage: 59,
-      durationAlignmentStatusCounts: {
-        [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_UNDER_TARGET]: 0,
-        [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_UNDER_TARGET]: 0,
-        [DURATION_ALIGNMENT_STATUS.PREFERRED]: 2,
-        [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_OVER_TARGET]: 0,
-        [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_OVER_TARGET]: 0,
-        [DURATION_ALIGNMENT_STATUS.UNAVAILABLE]: 0,
-      },
-      correctionRequiredWorkoutCount: 0,
-      minWorkoutDurationMinutes: 58,
-      maxWorkoutDurationMinutes: 60,
-      singleBlockCount: 1,
-      supersetBlockCount: 1,
-      cardioBlockCount: 0,
-      cardioDurationMinutes: 0,
-      bodyPartDistribution: [{ key: 'chest', rawSets: 2, normalizedShare: 2 }],
-    },
-    workouts: [
-      {
-        workoutOrderIndex: 1,
-        blockCount: 1,
-        strengthExerciseCount: 2,
-        cardioExerciseCount: 0,
-        workingSetCount: 2,
-        totalSetTemplateCount: 2,
-        requestedDurationMinutes: 60,
-        calculatedDurationMinutes: 60,
-        durationDifferenceMinutes: 0,
-        durationUtilizationRatio: 1,
-        durationAlignmentStatus: DURATION_ALIGNMENT_STATUS.PREFERRED,
-        durationRequiresCorrection: false,
-        estimatedDurationMinutes: 60,
-        declaredEstimatedDurationMinutes: 60,
-        declaredDurationDifferenceMinutes: 0,
-        supersetCount: 1,
-        cardioDurationMinutes: 0,
-        muscleProjections: [
-          { taxonomy: 'muscle_focus', key: 'upper_chest', directWorkingSets: 2 },
-        ],
-      },
-      {
-        workoutOrderIndex: 2,
-        blockCount: 1,
-        strengthExerciseCount: 1,
-        cardioExerciseCount: 0,
-        workingSetCount: 1,
-        totalSetTemplateCount: 1,
-        requestedDurationMinutes: 60,
-        calculatedDurationMinutes: 58,
-        durationDifferenceMinutes: -2,
-        durationUtilizationRatio: 0.9667,
-        durationAlignmentStatus: DURATION_ALIGNMENT_STATUS.PREFERRED,
-        durationRequiresCorrection: false,
-        estimatedDurationMinutes: 58,
-        declaredEstimatedDurationMinutes: 58,
-        declaredDurationDifferenceMinutes: 0,
-        supersetCount: 0,
-        cardioDurationMinutes: 0,
-        muscleProjections: [
-          { taxonomy: 'muscle_focus', key: 'lats', directWorkingSets: 1 },
-        ],
-      },
-    ],
-    muscleMetrics: [
-      {
-        taxonomy: 'muscle_focus',
-        key: 'upper_chest',
-        directWorkingSets: 2,
-        indirectWorkingSets: 0,
-        directWorkoutCount: 1,
-        indirectWorkoutCount: 0,
-      },
-    ],
-    metadataCoverage: {
-      totalStrengthWorkingSets: 3,
-      attributedStrengthWorkingSets: 3,
-      coverageRatio: 1,
-      unresolvedExerciseIds: ['PRIVATE_UNRESOLVED_ID_SENTINEL'],
-    },
-    targetComparisons: {
-      volume: {
-        bodyParts: {
-          summary: { targetCount: 0, belowTargetCount: 0, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
-          items: [],
-        },
-        muscleFocuses: {
-          summary: { targetCount: 1, belowTargetCount: 1, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
-          items: [{ targetIndex: 0, area: 'upper_chest', resolvedTaxonomy: 'muscle_focus', targetValue: 10, generatedDirectValue: 2, difference: -8, absoluteDifference: 8, relativeDifference: -0.8, status: 'below_target' }],
-        },
-        overallSummary: { targetCount: 1, belowTargetCount: 1, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
-      },
-      frequency: {
-        bodyParts: {
-          summary: { targetCount: 0, belowTargetCount: 0, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
-          items: [],
-        },
-        muscleFocuses: {
-          summary: { targetCount: 1, belowTargetCount: 1, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
-          items: [{ targetIndex: 0, area: 'upper_chest', resolvedTaxonomy: 'muscle_focus', targetValue: 2, generatedDirectValue: 1, difference: -1, absoluteDifference: 1, relativeDifference: -0.5, status: 'below_target' }],
-        },
-        overallSummary: { targetCount: 1, belowTargetCount: 1, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
-      },
-    },
-    ...overrides,
-  };
-}
-
-function createReview(overrides = {}) {
-  return {
-    schemaVersion: 1,
-    decision: 'PASS',
-    requiresRepair: false,
-    reviewSummary: 'The plan is consistent with the supplied structured data.',
-    issues: [],
-    ...overrides,
-  };
-}
-
-function createReviewOptions(overrides = {}) {
-  return {
-    doctrine: MOCK_DOCTRINE,
-    context: createContext(),
-    generatedAIOutput: createGeneratedAIOutput(),
-    generatedPlanDocument: createGeneratedPlanDocument(),
-    analytics: createAnalytics(),
-    ...overrides,
-  };
-}
-
-function createCardioReviewOptions(overrides = {}) {
-  return createReviewOptions({
-    context: createCardioContext(),
-    generatedPlanDocument: createCardioGeneratedPlanDocument(),
-    generatedAIOutput: createGeneratedAIOutput({ splitType: 'full_body' }),
-    ...overrides,
+  const analytics = calculateWeeklyPlanAnalytics({
+    generatedAIOutput,
+    generatedPlanDocument: initialDocument,
+    context,
   });
-}
-
-function createHeavySixSessionReviewOptions() {
-  const strengthExerciseIds = Array.from(
-    { length: 59 },
-    (_value, index) => `ex_heavy_strength_${String(index + 1).padStart(2, '0')}`
-  );
-  const cardioExerciseId = 'ex_heavy_cardio';
-  const allSelectedExerciseIds = [...strengthExerciseIds, cardioExerciseId];
-  const exercisePoolItems = [
-    ...strengthExerciseIds.map((exerciseId, index) => ({
-      exerciseId,
-      name: `Heavy Fixture Strength Exercise ${index + 1}`,
-      trainingType: 'strength',
-      movementPattern: index % 2 === 0 ? 'horizontal_push' : 'horizontal_pull',
-      jointStressTags: index % 3 === 0 ? ['shoulder_load'] : ['elbow_load'],
-      equipmentCategory: index % 2 === 0 ? 'dumbbell' : 'cable',
-      bodyParts: index % 2 === 0 ? ['chest'] : ['back'],
-      muscleFocus: index % 2 === 0 ? ['upper_chest'] : ['lats'],
-      targetMuscles: index % 2 === 0 ? ['pectoralis_major'] : ['latissimus_dorsi'],
-      secondaryMuscles: index % 2 === 0 ? ['triceps'] : ['biceps'],
-    })),
-    {
-      exerciseId: cardioExerciseId,
-      name: 'Heavy Fixture Stationary Bike',
-      trainingType: 'cardio',
-      movementPattern: 'cyclical',
-      jointStressTags: [],
-      equipmentCategory: 'cardio_machine',
-      bodyParts: ['cardio'],
-      muscleFocus: [],
-      targetMuscles: [],
-      secondaryMuscles: [],
-      cardioModality: 'stationary_bike',
-    },
-    {
-      exerciseId: 'ex_heavy_unused',
-      name: 'PRIVATE_HEAVY_UNUSED_EXERCISE_SENTINEL',
-      trainingType: 'strength',
-      movementPattern: 'vertical_push',
-      jointStressTags: ['PRIVATE_HEAVY_UNUSED_TAG_SENTINEL'],
-      equipmentCategory: 'machine',
-      bodyParts: ['shoulders'],
-      muscleFocus: ['front_delts'],
-      targetMuscles: ['deltoids'],
-      secondaryMuscles: [],
-    },
-  ];
-  let strengthExerciseCursor = 0;
-
-  function createStrengthExercise(exerciseId, orderIndex) {
-    const item = exercisePoolItems.find((candidate) => candidate.exerciseId === exerciseId);
-    return {
-      orderIndex,
-      exerciseId,
-      exerciseName: item.name,
-      bodyParts: item.bodyParts,
-      muscleFocus: item.muscleFocus,
-      defaultTempo: '3010',
-      defaultRestSeconds: 90,
-      defaultTargetRir: 2,
-      notes: 'PRIVATE_HEAVY_EXERCISE_NOTE_SENTINEL',
-      setTemplates: [
-        { targetReps: 8, minReps: null, maxReps: null, targetRir: 2, tempo: '3010', restSeconds: 90 },
-        { targetReps: 10, minReps: null, maxReps: null, targetRir: 2, tempo: '3010', restSeconds: 90 },
-        { targetReps: 12, minReps: null, maxReps: null, targetRir: 2, tempo: '3010', restSeconds: 90 },
-      ],
-    };
-  }
-
-  function takeStrengthExercises(count) {
-    return Array.from({ length: count }, (_value, index) => {
-      const exercise = createStrengthExercise(
-        strengthExerciseIds[strengthExerciseCursor],
-        index + 1
-      );
-      strengthExerciseCursor += 1;
-      return exercise;
-    });
-  }
-
-  const workouts = Array.from({ length: 6 }, (_value, workoutIndex) => {
-    const hasCardio = workoutIndex === 5;
-    const firstSuperset = takeStrengthExercises(2);
-    const secondSuperset = takeStrengthExercises(2);
-    const thirdSuperset = takeStrengthExercises(2);
-    const fourthSuperset = takeStrengthExercises(2);
-    const singleExercises = takeStrengthExercises(hasCardio ? 1 : 2);
-    const blocks = [
-      { orderIndex: 1, blockType: 'SUPERSET', restSeconds: 90, exercises: firstSuperset },
-      { orderIndex: 2, blockType: 'SUPERSET', restSeconds: 90, exercises: secondSuperset },
-      { orderIndex: 3, blockType: 'SUPERSET', restSeconds: 90, exercises: thirdSuperset },
-      { orderIndex: 4, blockType: 'SUPERSET', restSeconds: 90, exercises: fourthSuperset },
-      ...singleExercises.map((exercise, index) => ({
-        orderIndex: index + 5,
-        blockType: 'SINGLE',
-        restSeconds: 90,
-        exercises: [exercise],
-      })),
-    ];
-
-    if (hasCardio) {
-      blocks.push({
-        orderIndex: 6,
-        blockType: 'CARDIO',
-        restSeconds: null,
-        exercises: [
-          {
-            orderIndex: 1,
-            exerciseId: cardioExerciseId,
-            exerciseName: 'Heavy Fixture Stationary Bike',
-            bodyParts: ['cardio'],
-            muscleFocus: [],
-            defaultTempo: null,
-            defaultRestSeconds: null,
-            defaultTargetRir: null,
-            notes: 'PRIVATE_HEAVY_CARDIO_NOTE_SENTINEL',
-            setTemplates: [],
-            cardioPrescription: {
-              durationMinutes: 20,
-              heartRateTargetMode: 'zone',
-              heartRateTargetValue: 2,
-              machineSettings: [{ key: 'resistance', value: 'PRIVATE_HEAVY_MACHINE_SETTING' }],
-              notes: 'PRIVATE_HEAVY_CARDIO_PRESCRIPTION_NOTE_SENTINEL',
-            },
-          },
-        ],
-      });
-    }
-
-    return {
-      name: `Heavy Fixture Session ${workoutIndex + 1}`,
-      orderIndex: workoutIndex + 1,
-      estimatedDurationMinutes: 75,
-      notes: 'PRIVATE_HEAVY_WORKOUT_NOTE_SENTINEL',
-      blocks,
-    };
-  });
-
-  const projectionEntries = Array.from({ length: 8 }, (_value, index) => ({
-    taxonomy: index % 2 === 0 ? 'muscle_focus' : 'target_muscles',
-    key: `heavy_metric_${String(index + 1).padStart(2, '0')}`,
-    directWorkingSets: 6 + (index % 4),
-    indirectWorkingSets: index % 3,
-    directWorkoutCount: 2 + (index % 3),
-    indirectWorkoutCount: index % 2,
-  }));
-  const targetItems = Array.from({ length: 6 }, (_value, index) => ({
-    targetIndex: index,
-    area: ['upper_chest', 'mid_chest', 'lower_chest', 'lats', 'upper_back', 'mid_back'][index],
-    resolvedTaxonomy: 'muscle_focus',
-    targetValue: 10,
-    generatedDirectValue: 8 + (index % 3),
-    difference: -2 + (index % 3),
-    absoluteDifference: Math.abs(-2 + (index % 3)),
-    relativeDifference: (-2 + (index % 3)) / 10,
-    status: index % 3 === 0 ? 'below_target' : 'within_target',
-  }));
-
-  return {
-    context: createContext({
-      availability: { sessionsPerWeek: 6, durationPerSession: 75 },
-      cardioProfile: { cardioRole: 'supportive', preferredModalities: ['stationary_bike'] },
-      poolSnapshot: { allowedExerciseIds: [...allSelectedExerciseIds, 'ex_heavy_unused'] },
-      exercisePoolItems,
-    }),
-    generatedAIOutput: createGeneratedAIOutput({
-      splitType: 'push_pull_legs',
-      volumeTargets: {
-        bodyParts: [],
-        muscleFocuses: targetItems.map((item, index) => ({
-          area: ['upper_chest', 'mid_chest', 'lower_chest', 'lats', 'upper_back', 'mid_back'][index],
-          targetSetsPerWeek: item.targetValue,
-          priority: index === 0 ? 'primary' : 'secondary',
-          rationale: 'PRIVATE_HEAVY_TARGET_RATIONALE_SENTINEL',
-        })),
-      },
-      frequencyTargets: {
-        bodyParts: [],
-        muscleFocuses: targetItems.map((_item, index) => ({
-          area: ['upper_chest', 'mid_chest', 'lower_chest', 'lats', 'upper_back', 'mid_back'][index],
-          targetSessionsPerWeek: 2,
-        })),
-      },
-    }),
-    generatedPlanDocument: {
-      name: 'Heavy Six Session Review Draft',
-      sessionsPerWeek: 6,
-      strategySummary: 'Six-session hypertrophy fixture for review-input capacity coverage.',
-      workouts,
-    },
-    analytics: createAnalytics({
-      plan: {
-        workoutCount: 6,
-        blockCount: workouts.reduce((count, workout) => count + workout.blocks.length, 0),
-        exerciseCount: 60,
-        strengthExerciseCount: 59,
-        cardioExerciseCount: 1,
-        uniqueExerciseCount: 60,
-        workingSetCount: 177,
-        totalSetTemplateCount: 177,
-        requestedDurationMinutesPerWorkout: 75,
-        requestedDurationMinutesTotal: 450,
-        calculatedDurationMinutesTotal: 450,
-        calculatedDurationMinutesAverage: 75,
-        estimatedDurationMinutesTotal: 450,
-        estimatedDurationMinutesAverage: 75,
-        declaredEstimatedDurationMinutesTotal: 450,
-        durationDifferenceMinutesTotal: 0,
-        declaredDurationDifferenceMinutesTotal: 0,
-        durationAlignmentStatusCounts: {
-          [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_UNDER_TARGET]: 0,
-          [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_UNDER_TARGET]: 0,
-          [DURATION_ALIGNMENT_STATUS.PREFERRED]: 6,
-          [DURATION_ALIGNMENT_STATUS.ACCEPTABLE_OVER_TARGET]: 0,
-          [DURATION_ALIGNMENT_STATUS.CORRECTION_REQUIRED_OVER_TARGET]: 0,
-          [DURATION_ALIGNMENT_STATUS.UNAVAILABLE]: 0,
-        },
-        correctionRequiredWorkoutCount: 0,
-        minWorkoutDurationMinutes: 75,
-        maxWorkoutDurationMinutes: 75,
-        singleBlockCount: 11,
-        supersetBlockCount: 24,
-        cardioBlockCount: 1,
-        cardioDurationMinutes: 20,
-        bodyPartDistribution: projectionEntries.map((entry, index) => ({
-          key: entry.key,
-          rawSets: 6 + index,
-          normalizedShare: 0.04,
-          percentageOfWorkout: 4,
-        })),
-      },
-      workouts: workouts.map((workout, index) => ({
-        workoutOrderIndex: workout.orderIndex,
-        blockCount: workout.blocks.length,
-        strengthExerciseCount: index === 5 ? 9 : 10,
-        cardioExerciseCount: index === 5 ? 1 : 0,
-        workingSetCount: index === 5 ? 27 : 30,
-        totalSetTemplateCount: index === 5 ? 27 : 30,
-        requestedDurationMinutes: 75,
-        calculatedDurationMinutes: 75,
-        durationDifferenceMinutes: 0,
-        durationUtilizationRatio: 1,
-        durationAlignmentStatus: DURATION_ALIGNMENT_STATUS.PREFERRED,
-        durationRequiresCorrection: false,
-        estimatedDurationMinutes: 75,
-        declaredEstimatedDurationMinutes: 75,
-        declaredDurationDifferenceMinutes: 0,
-        supersetCount: 4,
-        cardioDurationMinutes: index === 5 ? 20 : 0,
-        muscleProjections: projectionEntries.slice(index * 4, index * 4 + 4),
-      })),
-      muscleMetrics: projectionEntries,
-      metadataCoverage: {
-        totalStrengthWorkingSets: 177,
-        attributedStrengthWorkingSets: 177,
-        coverageRatio: 1,
-        unresolvedExerciseIds: [],
-      },
-      targetComparisons: {
-        volume: {
-          bodyParts: {
-            summary: { targetCount: 0, belowTargetCount: 0, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
-            items: [],
-          },
-          muscleFocuses: {
-            summary: { targetCount: 6, belowTargetCount: 2, withinTargetCount: 4, aboveTargetCount: 0, unavailableCount: 0 },
-            items: targetItems,
-          },
-          overallSummary: { targetCount: 6, belowTargetCount: 2, withinTargetCount: 4, aboveTargetCount: 0, unavailableCount: 0 },
-        },
-        frequency: {
-          bodyParts: {
-            summary: { targetCount: 0, belowTargetCount: 0, withinTargetCount: 0, aboveTargetCount: 0, unavailableCount: 0 },
-            items: [],
-          },
-          muscleFocuses: {
-            summary: { targetCount: 6, belowTargetCount: 0, withinTargetCount: 6, aboveTargetCount: 0, unavailableCount: 0 },
-            items: targetItems.map((item) => ({ ...item, targetValue: 2, generatedDirectValue: 2, difference: 0, absoluteDifference: 0, relativeDifference: 0, status: 'within_target' })),
-          },
-          overallSummary: { targetCount: 6, belowTargetCount: 0, withinTargetCount: 6, aboveTargetCount: 0, unavailableCount: 0 },
-        },
-      },
-    }),
-  };
-}
-
-test('buildProgramReviewInput is deterministic, compact, and only projects selected metadata', () => {
-  const options = createReviewOptions();
-  const before = clone(options);
-  const first = buildProgramReviewInput(options);
-  const second = buildProgramReviewInput({
-    ...options,
-    generatedPlanDocument: {
-      ...options.generatedPlanDocument,
-      workouts: options.generatedPlanDocument.workouts.slice().reverse(),
-    },
-  });
-
-  assert.equal(PROGRAM_REVIEW_INPUT_SCHEMA_VERSION, 2);
-  assert.equal(first.schemaVersion, 2);
-  assert.deepEqual(Object.keys(first), [
-    'schemaVersion',
-    'evaluationPolicy',
-    'profile',
-    'constraints',
-    'intent',
-    'plan',
-    'analytics',
-  ]);
-  assert.strictEqual(first.evaluationPolicy, options.context.evaluationPolicy);
-  assert.strictEqual(first.evaluationPolicy, WEEKLY_PLAN_EVALUATION_POLICY);
-  assert.equal(first.evaluationPolicy.id, WEEKLY_PLAN_EVALUATION_POLICY_ID);
-  assert.equal(first.evaluationPolicy.version, WEEKLY_PLAN_EVALUATION_POLICY_VERSION);
-  assert.deepEqual(first.analytics.evaluationPolicy, {
-    id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
-    version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
-  });
-  assert.deepEqual(Object.keys(first.analytics.evaluationPolicy), ['id', 'version']);
-  assert.equal(first.analytics.schemaVersion, 2);
-  assert.deepEqual(Object.keys(first.analytics), [
-    'schemaVersion',
-    'status',
-    'evaluationPolicy',
-    'plan',
-    'workouts',
-    'muscleMetrics',
-    'targetComparisons',
-    'metadataCoverage',
-  ]);
-  assert.equal(first.analytics.plan.requestedDurationMinutesPerWorkout, 60);
-  assert.equal(first.analytics.plan.requestedDurationMinutesTotal, 120);
-  assert.equal(first.analytics.plan.calculatedDurationMinutesTotal, 118);
-  assert.equal(first.analytics.plan.calculatedDurationMinutesAverage, 59);
-  assert.equal(first.analytics.plan.durationDifferenceMinutesTotal, -2);
-  assert.equal(first.analytics.plan.correctionRequiredWorkoutCount, 0);
-  assert.equal(first.analytics.plan.durationAlignmentStatusCounts.preferred, 2);
-  assert.deepEqual(Object.keys(first.analytics.workouts[0]), [
-    'workoutOrderIndex',
-    'blockCount',
-    'strengthExerciseCount',
-    'cardioExerciseCount',
-    'workingSetCount',
-    'totalSetTemplateCount',
-    'requestedDurationMinutes',
-    'calculatedDurationMinutes',
-    'durationDifferenceMinutes',
-    'durationUtilizationRatio',
-    'durationAlignmentStatus',
-    'durationRequiresCorrection',
-    'supersetCount',
-    'cardioDurationMinutes',
-    'muscleProjections',
-  ]);
-  assert.deepEqual(
-    {
-      requestedDurationMinutes: first.analytics.workouts[1].requestedDurationMinutes,
-      calculatedDurationMinutes: first.analytics.workouts[1].calculatedDurationMinutes,
-      durationDifferenceMinutes: first.analytics.workouts[1].durationDifferenceMinutes,
-      durationUtilizationRatio: first.analytics.workouts[1].durationUtilizationRatio,
-      durationAlignmentStatus: first.analytics.workouts[1].durationAlignmentStatus,
-      durationRequiresCorrection: first.analytics.workouts[1].durationRequiresCorrection,
-    },
-    {
-      requestedDurationMinutes: 60,
-      calculatedDurationMinutes: 58,
-      durationDifferenceMinutes: -2,
-      durationUtilizationRatio: 0.9667,
-      durationAlignmentStatus: DURATION_ALIGNMENT_STATUS.PREFERRED,
-      durationRequiresCorrection: false,
-    }
-  );
-  assert.equal(first.plan.workouts[0].estimatedDurationMinutes, 60);
-  assert.equal(first.plan.workouts[1].estimatedDurationMinutes, 58);
-  assert.deepEqual(collectSelectedExerciseIds(options.generatedPlanDocument), ['ex_bench', 'ex_row']);
-  assert.deepEqual(
-    first.plan.selectedExerciseMetadata.items.map((item) => item.exerciseId),
-    ['ex_bench', 'ex_row']
-  );
-  assert.equal(first.plan.selectedExerciseMetadata.coverage.selectedExerciseCount, 2);
-  assert.deepEqual(first.plan.selectedExerciseMetadata.items[0].jointStressTags, [
-    'shoulder_extension',
-  ]);
-  assert.deepEqual(first.plan.selectedExerciseMetadata.items[1].jointStressTags, []);
-  assert.equal(
-    first.plan.selectedExerciseMetadata.items[1].partialFields.includes('jointStressTags'),
-    false
-  );
-  assert.equal(first.plan.workouts[0].orderIndex, 1);
-  assert.equal(first.plan.workouts[0].blocks[0].exercises[0].orderIndex, 1);
-  assert.equal(first.plan.workouts[0].blocks[0].exercises[0].hasNote, false);
-  assert.equal(first.plan.workouts[0].blocks[0].exercises[1].hasNote, true);
-  assert.deepEqual(first.plan.workouts[0].blocks[0].exercises[0].repTargets, ['8']);
-  assert.equal(first.intent.volumeTargets.muscleFocuses[0].rationale, undefined);
-  assert.equal(first.analytics.metadataCoverage.unresolvedExerciseCount, 1);
-
-  const serialized = JSON.stringify(first);
-  const serializedAnalytics = JSON.stringify(first.analytics);
-  const serializedPolicy = JSON.stringify(WEEKLY_PLAN_EVALUATION_POLICY);
-  assert.equal(serialized.split(serializedPolicy).length - 1, 1);
-  assert.doesNotMatch(serializedAnalytics, /bodyPartDistribution|muscleDistribution/);
-  assert.doesNotMatch(serializedAnalytics, /estimatedDurationMinutes/);
-  assert.doesNotMatch(serializedAnalytics, /declaredEstimatedDurationMinutes/);
-  assert.doesNotMatch(serializedAnalytics, /declaredDurationDifferenceMinutes/);
-  assert.doesNotMatch(serialized, /PRIVATE_PROFILE_NOTE_SENTINEL/);
-  assert.doesNotMatch(serialized, /PRIVATE_WORKOUT_NOTE_SENTINEL/);
-  assert.doesNotMatch(serialized, /PRIVATE_EXERCISE_NOTE_SENTINEL/);
-  assert.doesNotMatch(serialized, /PRIVATE_POOL_SIGNAL_SENTINEL/);
-  assert.doesNotMatch(serialized, /PRIVATE_UNUSED_TAG_SENTINEL/);
-  assert.doesNotMatch(serialized, /PRIVATE_TARGET_RATIONALE_SENTINEL/);
-  assert.doesNotMatch(serialized, /PRIVATE_UNRESOLVED_ID_SENTINEL/);
-  assert.deepEqual(options, before);
-  assert.deepEqual(first, second);
-});
-
-test('buildProgramReviewInput requires coherent canonical policy identity and Analytics V2', () => {
-  const clonedContextPolicy = clone(WEEKLY_PLAN_EVALUATION_POLICY);
-  const validWithDistinctReferences = createReviewOptions({
-    context: createContext({ evaluationPolicy: clonedContextPolicy }),
-    analytics: createAnalytics({
-      evaluationPolicy: {
-        id: WEEKLY_PLAN_EVALUATION_POLICY_ID,
-        version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION,
-      },
-    }),
-  });
-  const validReviewInput = buildProgramReviewInput(validWithDistinctReferences);
-
-  assert.strictEqual(validReviewInput.evaluationPolicy, clonedContextPolicy);
-  assert.notStrictEqual(
-    validWithDistinctReferences.context.evaluationPolicy,
-    validWithDistinctReferences.analytics.evaluationPolicy
-  );
-
-  const invalidOptions = [
-    createReviewOptions({ context: createContext({ evaluationPolicy: undefined }) }),
-    createReviewOptions({
-      context: createContext({
-        evaluationPolicy: { id: 'wrong_policy', version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION },
-      }),
-    }),
-    createReviewOptions({
-      context: createContext({
-        evaluationPolicy: { id: WEEKLY_PLAN_EVALUATION_POLICY_ID, version: 999 },
-      }),
-    }),
-    createReviewOptions({ analytics: createAnalytics({ schemaVersion: 1 }) }),
-    createReviewOptions({ analytics: createAnalytics({ evaluationPolicy: undefined }) }),
-    createReviewOptions({
-      analytics: createAnalytics({
-        evaluationPolicy: { id: 'wrong_policy', version: WEEKLY_PLAN_EVALUATION_POLICY_VERSION },
-      }),
-    }),
-    createReviewOptions({
-      analytics: createAnalytics({
-        evaluationPolicy: { id: WEEKLY_PLAN_EVALUATION_POLICY_ID, version: 999 },
-      }),
-    }),
-    createReviewOptions({ analytics: createAnalytics({ plan: undefined }) }),
-    createReviewOptions({ analytics: createAnalytics({ workouts: null }) }),
-  ];
-
-  invalidOptions.forEach((options) => {
-    assert.throws(
-      () => buildProgramReviewInput(options),
-      (error) => {
-        assert.equal(error instanceof AIProgramReviewError, true);
-        assert.equal(error.code, 'AI_WEEKLY_PLAN_REVIEW_INPUT_INCOMPLETE');
-        assert.equal(error.message, 'AI weekly plan review input is incomplete');
-        return true;
-      }
+  const generatedPlanDocument =
+    applyBackendCalculatedDurationsToPlanDocument(
+      initialDocument,
+      analytics
     );
-  });
+  return {
+    context,
+    generatedAIOutput,
+    generatedPlanDocument,
+    analytics,
+  };
+}
+
+test('Review Input V4 contains backend duration only', () => {
+  const input = buildProgramReviewInput(createReviewFixture());
+  const serialized = JSON.stringify(input);
+
+  assert.equal(PROGRAM_REVIEW_INPUT_SCHEMA_VERSION, 4);
+  assert.equal(input.schemaVersion, 4);
+  assert.equal(input.plan.workouts[0].estimatedDurationMinutes, 14);
+  assert.equal(
+    input.analytics.workouts[0].durationCalculation
+      .calculatedDurationMinutes,
+    14
+  );
+  assert.equal(serialized.includes('durationCalculationDebug'), false);
+  assert.equal(serialized.includes('durationDebugComparison'), false);
+  assert.equal(serialized.includes('aiCalculatedDurationMinutes'), false);
 });
 
-test('buildProgramReviewInput projects compact cardio data from the prepared document and selected metadata', () => {
-  const options = createCardioReviewOptions();
-  const before = clone(options);
-  const reviewInput = buildProgramReviewInput(options);
-  const cardioExercise = reviewInput.plan.workouts[0].blocks[0].exercises[0];
-  const cardioMetadata = reviewInput.plan.selectedExerciseMetadata.items[0];
-  const strengthReviewInput = buildProgramReviewInput(createReviewOptions());
+test('Review Input preserves targetSeconds as a temporal prescription', () => {
+  const input = buildProgramReviewInput(createReviewFixture());
 
-  assert.deepEqual(cardioExercise.cardioPrescription, {
-    durationMinutes: 32,
-    heartRateTargetMode: 'zone',
-    heartRateTargetValue: 3,
-  });
-  assert.equal(cardioMetadata.exerciseId, 'ex_bike');
-  assert.equal(cardioMetadata.cardioModality, 'stationary_bike');
-  assert.equal(cardioMetadata.partialFields.includes('cardioModality'), false);
-  assert.deepEqual(reviewInput.profile.cardioProfile.preferredModalities, [
-    'stationary_bike',
-    'treadmill_walk',
-  ]);
-  assert.equal(
-    strengthReviewInput.plan.workouts[0].blocks[0].exercises[0].cardioPrescription,
-    null
-  );
-  assert.equal(
-    strengthReviewInput.plan.selectedExerciseMetadata.items[0].cardioModality,
-    null
-  );
-
-  const missingModalityContext = createCardioContext();
-  const partialMetadata = buildSelectedExerciseMetadata(createCardioGeneratedPlanDocument(), {
-    ...missingModalityContext,
-    exercisePoolItems: missingModalityContext.exercisePoolItems.map((item) =>
-      item.exerciseId === 'ex_bike' ? { ...item, cardioModality: null } : item
-    ),
-  });
-  assert.equal(
-    partialMetadata.items[0].partialFields.includes('cardioModality'),
-    true
-  );
-
-  const cardioIssueReview = createReview({
-    issues: [
-      {
-        issueIndex: 1,
-        category: 'CARDIO_INTEGRATION',
-        severity: 'LOW',
-        path: '/plan/workouts/0/blocks/0/exercises/0/cardioPrescription',
-        message: 'The cardio prescription is available for structured review.',
-        repairability: 'NOT_APPLICABLE',
-        suggestedAction: null,
-      },
-    ],
-  });
-  assert.equal(validateProgramReviewSemantics(cardioIssueReview, reviewInput).ok, true);
-
-  const serialized = JSON.stringify(reviewInput);
-  assert.doesNotMatch(serialized, /PRIVATE_CARDIO_(?:WORKOUT|EXERCISE|PRESCRIPTION)_NOTE_SENTINEL/);
-  assert.doesNotMatch(serialized, /PRIVATE_CARDIO_MACHINE_SETTING_SENTINEL/);
-  assert.doesNotMatch(serialized, /machineSettings/);
-  assert.doesNotMatch(serialized, /ex_unused|PRIVATE_UNUSED_TAG_SENTINEL/);
-  assert.deepEqual(options, before);
-});
-
-test('buildProgramReviewInput uses lexical ordering independent of input ordering', () => {
-  const options = createReviewOptions({
-    generatedAIOutput: createGeneratedAIOutput({
-      volumeTargets: {
-        bodyParts: [],
-        muscleFocuses: [
-          { area: 'rear_delts', targetSetsPerWeek: 8, priority: 'secondary' },
-          { area: 'upper_chest', targetSetsPerWeek: 10, priority: 'primary' },
-          { area: 'lats', targetSetsPerWeek: 9, priority: 'secondary' },
-        ],
-      },
-    }),
-    analytics: createAnalytics({
-      muscleMetrics: [
-        { taxonomy: 'zeta', key: 'beta' },
-        { taxonomy: 'alpha', key: 'zeta' },
-        { taxonomy: 'alpha', key: 'Alpha' },
-      ],
-    }),
-  });
-  const reordered = clone(options);
-  reordered.generatedAIOutput.volumeTargets.muscleFocuses.reverse();
-  reordered.analytics.muscleMetrics.reverse();
-
-  const first = buildProgramReviewInput(options);
-  const second = buildProgramReviewInput(reordered);
-
-  assert.deepEqual(first, second);
   assert.deepEqual(
-    first.intent.volumeTargets.muscleFocuses.map((target) => target.area),
-    ['lats', 'rear_delts', 'upper_chest']
-  );
-  assert.deepEqual(
-    first.analytics.muscleMetrics.map((metric) => [metric.taxonomy, metric.key]),
-    [
-      ['alpha', 'Alpha'],
-      ['alpha', 'zeta'],
-      ['zeta', 'beta'],
-    ]
+    input.plan.workouts[0].blocks[0].exercises[0].repTargets,
+    ['120s']
   );
 });
 
-test('selected metadata marks partial fields and fails closed for missing selected IDs', () => {
-  const partialContext = createContext({
-    exercisePoolItems: [
-      {
-        exerciseId: 'ex_bench',
-        trainingType: null,
-        movementPattern: null,
-        jointStressTags: [],
-        equipmentCategory: null,
-        bodyParts: [],
-        muscleFocus: [],
-        targetMuscles: [],
-        secondaryMuscles: [],
-      },
-      createContext().exercisePoolItems[1],
-    ],
-  });
-  const metadata = buildSelectedExerciseMetadata(createGeneratedPlanDocument(), partialContext);
-
-  assert.deepEqual(metadata.items[0].partialFields, [
-    'trainingType',
-    'movementPattern',
-    'equipmentCategory',
-    'bodyParts',
-    'muscleFocus',
-    'targetMuscles',
-    'secondaryMuscles',
-  ]);
-  assert.deepEqual(metadata.items[0].jointStressTags, []);
-
-  const nullJointStressTagsContext = createContext({
-    exercisePoolItems: [
-      { ...createContext().exercisePoolItems[0], jointStressTags: null },
-      createContext().exercisePoolItems[1],
-    ],
-  });
-  assert.equal(
-    buildSelectedExerciseMetadata(createGeneratedPlanDocument(), nullJointStressTagsContext)
-      .items[0].partialFields.includes('jointStressTags'),
-    true
-  );
-
+test('Review Input fails closed when backend Analytics is missing or duration-invalid', () => {
+  const missing = createReviewFixture();
+  missing.analytics = {};
   assert.throws(
-    () =>
-      buildProgramReviewInput(
-        createReviewOptions({
-          context: createContext({ exercisePoolItems: [createContext().exercisePoolItems[0]] }),
-        })
-      ),
-    (error) => {
-      assert.equal(error instanceof AIProgramReviewError, true);
-      assert.equal(error.code, 'AI_WEEKLY_PLAN_REVIEW_INPUT_INCOMPLETE');
-      return true;
-    }
+    () => buildProgramReviewInput(missing),
+    (error) =>
+      error instanceof AIProgramReviewError &&
+      error.code === 'AI_WEEKLY_PLAN_REVIEW_INPUT_INCOMPLETE'
   );
 
-  const documentWithMissingExerciseId = createGeneratedPlanDocument();
-  documentWithMissingExerciseId.workouts[0].blocks[0].exercises[0].exerciseId = '   ';
-
+  const invalid = createReviewFixture();
+  invalid.analytics.workouts[0].durationRequiresCorrection = true;
   assert.throws(
-    () => buildProgramReviewInput(createReviewOptions({ generatedPlanDocument: documentWithMissingExerciseId })),
-    (error) => {
-      assert.equal(error instanceof AIProgramReviewError, true);
-      assert.equal(error.code, 'AI_WEEKLY_PLAN_REVIEW_INPUT_INCOMPLETE');
-      return true;
-    }
+    () => buildProgramReviewInput(invalid),
+    (error) =>
+      error instanceof AIProgramReviewError &&
+      error.code === 'AI_WEEKLY_PLAN_REVIEW_INPUT_INCOMPLETE'
   );
 });
 
-test('buildProgramReviewInput rejects oversized input without truncation', () => {
-  const document = createGeneratedPlanDocument();
-  document.workouts[0].blocks[0].exercises[0].exerciseName = 'x'.repeat(
-    MAX_PROGRAM_REVIEW_INPUT_CHARACTERS + 1
-  );
-
-  assert.throws(
-    () => buildProgramReviewInput(createReviewOptions({ generatedPlanDocument: document })),
-    (error) => {
-      assert.equal(error.code, 'AI_WEEKLY_PLAN_REVIEW_INPUT_TOO_LARGE');
-      return true;
-    }
-  );
-});
-
-test('buildProgramReviewInput accepts a heavy valid six-session fixture without truncation', () => {
-  const options = createHeavySixSessionReviewOptions();
-  const before = clone(options);
-  const reviewInput = buildProgramReviewInput(options);
-  const serialized = stableStringify(reviewInput);
-
-  assert.equal(reviewInput.plan.workouts.length, 6);
-  assert.equal(reviewInput.plan.selectedExerciseMetadata.coverage.selectedExerciseCount, 60);
-  assert.equal(serialized.length > 40000, true);
-  assert.equal(serialized.length <= MAX_PROGRAM_REVIEW_INPUT_CHARACTERS, true);
-  assert.match(serialized, /ex_heavy_strength_59/);
-  assert.match(serialized, /ex_heavy_cardio/);
-  assert.equal(serialized.split('historical_weekly_plan_metrics_v1').length - 1, 1);
-  assert.equal(reviewInput.analytics.schemaVersion, 2);
-  assert.deepEqual(Object.keys(reviewInput.analytics.evaluationPolicy), ['id', 'version']);
-  assert.doesNotMatch(JSON.stringify(reviewInput.analytics), /estimatedDurationMinutes/);
-  assert.doesNotMatch(JSON.stringify(reviewInput.analytics), /bodyPartDistribution|muscleDistribution/);
-  assert.doesNotMatch(serialized, /ex_heavy_unused|PRIVATE_HEAVY_UNUSED_EXERCISE_SENTINEL/);
-  assert.doesNotMatch(serialized, /PRIVATE_HEAVY_(?:WORKOUT|EXERCISE|CARDIO|MACHINE|TARGET)_/);
-  assert.equal(serialized.includes('machineSettings'), false);
-  assert.deepEqual(options, before);
-});
-
-test('runAIProgramReview validates provider output and returns only compact domain metadata', async () => {
-  let providerInput = null;
-  const result = await runAIProgramReview(createReviewOptions(), {
-    reviewWeeklyPlanAi: async (input) => {
-      providerInput = input;
+test('runAIProgramReview uses V3 contracts and no doctrine', async () => {
+  let capturedPrompt;
+  const result = await runAIProgramReview(createReviewFixture(), {
+    reviewWeeklyPlanAi: async ({ promptDescriptor }) => {
+      capturedPrompt = promptDescriptor;
       return {
-        programReview: createReview({
-          issues: [
-            {
-              issueIndex: 1,
-              category: 'NOTES_POLICY',
-              severity: 'LOW',
-              path: '/plan/notesSummary',
-              message: 'One note can remain more concise.',
-              repairability: 'REPAIRABLE',
-              suggestedAction: 'Keep the note focused on execution.',
-            },
-          ],
-        }),
+        programReview: {
+          schemaVersion: 3,
+          decision: 'PASS',
+          requiresRepair: false,
+          reviewSummary: 'The plan is coherent and ready to persist.',
+          issues: [],
+        },
         reviewer: {
           type: 'openai',
           model: 'review-model',
-          responseId: 'resp_review_123',
-          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150, reasoningTokens: 10 },
-          rawResponse: 'RAW_PROVIDER_RESPONSE_SENTINEL',
+          responseId: 'resp_review',
+          usage: {
+            inputTokens: 10,
+            outputTokens: 5,
+            totalTokens: 15,
+            reasoningTokens: 0,
+          },
         },
       };
     },
   });
 
-  assert.equal(providerInput.promptDescriptor.promptVersion, 'ai-program-review-prompt-v1.1.0');
-  assert.equal(providerInput.schema.additionalProperties, false);
+  assert.equal(result.contractVersion, 3);
+  assert.equal(result.outputSchemaVersion, 3);
+  assert.equal(result.promptVersion, 'ai-program-review-prompt-v1.3.0');
   assert.equal(result.decision, 'PASS');
-  assert.equal(result.requiresRepair, false);
-  assert.equal(result.issueCount, 1);
-  assert.deepEqual(result.severityCounts, { INFO: 0, LOW: 1, MEDIUM: 0, HIGH: 0 });
-  assert.deepEqual(result.categoryCounts, { NOTES_POLICY: 1 });
-  assert.deepEqual(result.repairIssues, []);
-  assert.deepEqual(result.provider, {
-    type: 'openai',
-    model: 'review-model',
-    responseId: 'resp_review_123',
-    usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150, reasoningTokens: 10 },
-  });
-  assert.doesNotMatch(JSON.stringify(result.provider), /RAW_PROVIDER_RESPONSE_SENTINEL/);
+  assert.equal(capturedPrompt.userMessage.includes('APPENDIX A'), false);
 });
 
-test('runAIProgramReview rejects invalid schema and semantic provider results', async (t) => {
-  const cases = [
-    {
-      name: 'schema',
-      review: { decision: 'PASS' },
-      code: 'AI_WEEKLY_PLAN_REVIEW_SCHEMA_VALIDATION_FAILED',
-    },
-    {
-      name: 'semantic',
-      review: createReview({ decision: 'REPAIR_REQUIRED', requiresRepair: true }),
-      code: 'AI_WEEKLY_PLAN_REVIEW_SEMANTIC_VALIDATION_FAILED',
-    },
-  ];
-
-  for (const entry of cases) {
-    await t.test(entry.name, async () => {
-      await assert.rejects(
-        () =>
-          runAIProgramReview(createReviewOptions(), {
-            reviewWeeklyPlanAi: async () => ({ programReview: entry.review, reviewer: {} }),
-          }),
-        (error) => {
-          assert.equal(error.code, entry.code);
-          return true;
-        }
-      );
-    });
-  }
-});
-
-test('runAIProgramReview requires reviewer metadata for an enabled review', async () => {
+test('runAIProgramReview rejects invalid provider schema and semantics', async () => {
   await assert.rejects(
     () =>
-      runAIProgramReview(createReviewOptions(), {
-        reviewWeeklyPlanAi: async () => ({ programReview: createReview() }),
+      runAIProgramReview(createReviewFixture(), {
+        reviewWeeklyPlanAi: async () => ({
+          programReview: {},
+          reviewer: {},
+        }),
       }),
-    (error) => {
-      assert.equal(error.code, 'AI_WEEKLY_PLAN_REVIEW_INVALID_RESPONSE');
-      return true;
-    }
+    (error) =>
+      error instanceof AIProgramReviewError &&
+      error.code === 'AI_WEEKLY_PLAN_REVIEW_SCHEMA_VALIDATION_FAILED'
+  );
+
+  await assert.rejects(
+    () =>
+      runAIProgramReview(createReviewFixture(), {
+        reviewWeeklyPlanAi: async () => ({
+          programReview: {
+            schemaVersion: 3,
+            decision: 'REPAIR_REQUIRED',
+            requiresRepair: true,
+            reviewSummary: 'The output is contradictory.',
+            issues: [],
+          },
+          reviewer: {
+            type: 'openai',
+            model: 'review-model',
+            responseId: null,
+            usage: {},
+          },
+        }),
+      }),
+    (error) =>
+      error instanceof AIProgramReviewError &&
+      error.code === 'AI_WEEKLY_PLAN_REVIEW_SEMANTIC_VALIDATION_FAILED'
   );
 });
 
-test('buildProgramReviewDecisionSummary is deterministic and retains only counts', () => {
-  assert.deepEqual(
-    buildProgramReviewDecisionSummary(
-      createReview({
-        issues: [
-          {
-            issueIndex: 1,
-            category: 'EXERCISE_REDUNDANCY',
-            severity: 'HIGH',
-            path: '/plan/workouts/0',
-            message: 'Repeat.',
-            repairability: 'REPAIRABLE',
-            suggestedAction: 'Adjust.',
+test('Review Input remains deterministic, compact, and non-mutating', () => {
+  const fixture = createReviewFixture();
+  const before = structuredClone(fixture);
+  const first = buildProgramReviewInput(fixture);
+  const second = buildProgramReviewInput(fixture);
+  const serialized = JSON.stringify(first);
+
+  assert.deepEqual(first, second);
+  assert.deepEqual(fixture, before);
+  assert.equal(serialized.includes('userId'), false);
+  assert.equal(serialized.includes('poolSnapshot'), false);
+  assert.equal(serialized.includes('secondaryMuscles'), true);
+});
+
+test('enabled Review requires valid reviewer metadata', async () => {
+  await assert.rejects(
+    () =>
+      runAIProgramReview(createReviewFixture(), {
+        reviewWeeklyPlanAi: async () => ({
+          programReview: {
+            schemaVersion: 3,
+            decision: 'PASS',
+            requiresRepair: false,
+            reviewSummary: 'The plan is coherent and ready to persist.',
+            issues: [],
           },
-        ],
-      })
-    ),
-    {
-      decision: 'PASS',
-      requiresRepair: false,
-      issueCount: 1,
-      severityCounts: { INFO: 0, LOW: 0, MEDIUM: 0, HIGH: 1 },
-      categoryCounts: { EXERCISE_REDUNDANCY: 1 },
-    }
+          reviewer: null,
+        }),
+      }),
+    (error) =>
+      error instanceof AIProgramReviewError &&
+      error.code === 'AI_WEEKLY_PLAN_REVIEW_INVALID_RESPONSE'
   );
+});
+
+test('Review decision summary retains deterministic counts only', () => {
+  const summary = buildProgramReviewDecisionSummary({
+    decision: 'PASS',
+    requiresRepair: false,
+    issues: [
+      {
+        severity: 'LOW',
+        category: 'EXERCISE_REDUNDANCY',
+      },
+      {
+        severity: 'MEDIUM',
+        category: 'EXERCISE_REDUNDANCY',
+      },
+    ],
+  });
+
+  assert.deepEqual(summary, {
+    decision: 'PASS',
+    requiresRepair: false,
+    issueCount: 2,
+    severityCounts: {
+      INFO: 0,
+      LOW: 1,
+      MEDIUM: 1,
+      HIGH: 0,
+    },
+    categoryCounts: {
+      EXERCISE_REDUNDANCY: 2,
+    },
+  });
 });
