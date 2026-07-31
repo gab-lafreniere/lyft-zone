@@ -21,6 +21,7 @@ import { mapBuilderPayloadToProgramDraft } from "../../features/weeklyPlans/mapp
 import {
   createAIWeeklyPlanDraft,
   getUserSettings,
+  openOrCreateWeeklyPlanEditDraft,
   updateWeeklyPlanDraft,
 } from "../../services/api";
 import AIWeeklyPlanBuilder from "../AIWeeklyPlanBuilder";
@@ -33,6 +34,7 @@ jest.mock("../../features/weeklyPlans/mappers", () => ({
 jest.mock("../../services/api", () => ({
   createAIWeeklyPlanDraft: jest.fn(),
   getUserSettings: jest.fn(),
+  openOrCreateWeeklyPlanEditDraft: jest.fn(),
   updateWeeklyPlanDraft: jest.fn(),
 }));
 
@@ -80,66 +82,51 @@ const settingsResponse = {
 const generatedDraft = {
   weeklyPlanParentId: "weekly_parent_ai_1",
   weeklyPlanVersionId: "weekly_version_ai_1",
+  name: "Hypertrophie équilibrée",
+  status: "PUBLISHED",
+  source: "ai",
+  metrics: {
+    totalExercises: 11,
+    strengthSets: 30,
+    averageDurationMinutes: 50,
+    averageTUTMinutes: 17,
+    weeklyMuscleDistribution: [
+      {
+        key: "chest",
+        label: "Chest",
+        rawSets: 16,
+        percentage: 53,
+      },
+      {
+        key: "back",
+        label: "Back",
+        rawSets: 14,
+        percentage: 47,
+      },
+    ],
+  },
+  presentation: {
+    title: "Hypertrophie équilibrée",
+    summary:
+      "Un split équilibré qui priorise le haut des pectoraux et le dos.",
+    weeklyStructure: ["Upper A", "Lower A"],
+    musclePriorities: ["upper_chest", "back"],
+    constraintNotes: ["Use pain-free ranges of motion."],
+    progression: "Add repetitions before increasing load.",
+    coachingNotes: ["Keep technique consistent."],
+  },
+};
+
+const editableDraft = {
+  weeklyPlanParentId: "weekly_parent_ai_1",
+  weeklyPlanVersionId: "weekly_version_draft_2",
   status: "DRAFT",
   source: "ai",
   updatedAt: "2026-07-26T12:00:00.000Z",
   builderPayload: {
     programName: "Hypertrophie équilibrée",
     sessionsPerWeek: 2,
-    workouts: [
-      {
-        id: "workout_1",
-        name: "Haut du corps",
-        estimatedDurationMinutes: 999,
-        blocks: [],
-      },
-      {
-        id: "workout_2",
-        name: "Bas du corps",
-        estimatedDurationMinutes: 777,
-        blocks: [],
-      },
-    ],
-  },
-  aiPresentation: {
-    schemaVersion: 1,
-    strategySummary:
-      "Un split équilibré qui priorise le haut des pectoraux et le dos.",
-    splitType: "upper_lower",
-    focusAreas: {
-      primary: ["upper_chest"],
-      secondary: ["back", "rear_delts"],
-      deprioritized: ["quads"],
-    },
-    workouts: [
-      {
-        orderIndex: 1,
-        name: "Upper A",
-        focus: "Upper chest and back",
-        calculatedDurationMinutes: 58,
-        exerciseCount: 6,
-        workingSetCount: 16,
-      },
-      {
-        orderIndex: 2,
-        name: "Lower A",
-        focus: null,
-        calculatedDurationMinutes: null,
-        exerciseCount: 5,
-        workingSetCount: 14,
-      },
-    ],
-  },
-  generationContext: {
-    prompt: "PRIVATE_PROMPT_SENTINEL",
-    provider: {
-      model: "PRIVATE_MODEL_SENTINEL",
-      responseId: "PRIVATE_RESPONSE_ID_SENTINEL",
-      tokens: 1234,
-    },
-    poolSnapshot: "PRIVATE_POOL_SENTINEL",
-    review: "PRIVATE_REVIEW_SENTINEL",
-    repair: "PRIVATE_REPAIR_SENTINEL",
+    workouts: [],
   },
 };
 
@@ -201,6 +188,7 @@ function renderBuilder({
           element={<AIWeeklyPlanBuilder />}
         />
         <Route path="/program/all" element={<p>Liste des programmes</p>} />
+        <Route path="/program/all/:programId" element={<p>Détail du programme</p>} />
         <Route path="/program" element={<p>Accueil Program</p>} />
         <Route path="/origine-personnalisee" element={<p>Origine personnalisée</p>} />
         <Route
@@ -221,6 +209,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   getUserSettings.mockReturnValue(new Promise(() => {}));
   createAIWeeklyPlanDraft.mockResolvedValue(generatedDraft);
+  openOrCreateWeeklyPlanEditDraft.mockResolvedValue(editableDraft);
   mapBuilderPayloadToProgramDraft.mockImplementation(
     jest.requireActual(
       "../../features/weeklyPlans/mappers"
@@ -448,7 +437,7 @@ test("n'affiche aucun pourcentage ni progression déterministe", () => {
   expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
 });
 
-test("affiche le résultat AI persisté et un aperçu des séances", async () => {
+test("affiche uniquement les métriques et la présentation publique", async () => {
   renderBuilder();
 
   fireEvent.click(
@@ -458,194 +447,19 @@ test("affiche le résultat AI persisté et un aperçu des séances", async () =>
   expect(
     await screen.findByRole("heading", { name: "Hypertrophie équilibrée" })
   ).toBeInTheDocument();
-  expect(screen.getByText("Généré avec AI")).toBeInTheDocument();
-  expect(screen.getByText("2 séances par semaine · Upper lower")).toBeInTheDocument();
+  expect(screen.getByText("11")).toBeInTheDocument();
+  expect(screen.getByText("30")).toBeInTheDocument();
+  expect(screen.getByText("50 min")).toBeInTheDocument();
+  expect(screen.getByText("17 min")).toBeInTheDocument();
+  expect(screen.getByText("Chest")).toBeInTheDocument();
+  expect(screen.getByText("53%")).toBeInTheDocument();
+  expect(
+    screen.getByText("Un split équilibré qui priorise le haut des pectoraux et le dos.")
+  ).toBeInTheDocument();
   expect(screen.getByText("Upper A")).toBeInTheDocument();
-  expect(screen.getByText("Lower A")).toBeInTheDocument();
-});
-
-test("affiche exclusivement l'explication publique et le split de la présentation V1", async () => {
-  renderBuilder();
-
-  fireEvent.click(
-    screen.getByRole("button", { name: "Générer mon programme" })
-  );
-
-  expect(
-    await screen.findByRole("heading", { name: "Pourquoi ce plan?" })
-  ).toBeInTheDocument();
-  expect(
-    screen.getByText(
-      "Un split équilibré qui priorise le haut des pectoraux et le dos."
-    )
-  ).toBeInTheDocument();
-  expect(screen.getByText(/Upper lower/)).toBeInTheDocument();
-});
-
-test("affiche les trois catégories allowlistées de priorités", async () => {
-  renderBuilder();
-
-  fireEvent.click(
-    screen.getByRole("button", { name: "Générer mon programme" })
-  );
-
-  await screen.findByText("Généré avec AI");
-  expect(screen.getByText("Priorité principale")).toBeInTheDocument();
   expect(screen.getByText("Upper chest")).toBeInTheDocument();
-  expect(screen.getByText("Priorités secondaires")).toBeInTheDocument();
-  expect(screen.getByText("Back, Rear delts")).toBeInTheDocument();
-  expect(screen.getByText("Zone dépriorisée")).toBeInTheDocument();
-  expect(screen.getByText("Quads")).toBeInTheDocument();
-});
-
-test("masque complètement les catégories de priorité vides", async () => {
-  createAIWeeklyPlanDraft.mockResolvedValue({
-    ...generatedDraft,
-    aiPresentation: {
-      ...generatedDraft.aiPresentation,
-      focusAreas: {
-        primary: [],
-        secondary: [],
-        deprioritized: [],
-      },
-    },
-  });
-  renderBuilder();
-
-  fireEvent.click(
-    screen.getByRole("button", { name: "Générer mon programme" })
-  );
-
-  await screen.findByText("Généré avec AI");
-  expect(screen.queryByText("Priorités du programme")).not.toBeInTheDocument();
-  expect(screen.queryByText("Priorité principale")).not.toBeInTheDocument();
-  expect(screen.queryByText("Priorités secondaires")).not.toBeInTheDocument();
-  expect(screen.queryByText("Zone dépriorisée")).not.toBeInTheDocument();
-});
-
-test("affiche les workouts, durées et comptes reçus du backend dans leur ordre", async () => {
-  renderBuilder();
-
-  fireEvent.click(
-    screen.getByRole("button", { name: "Générer mon programme" })
-  );
-
-  const workoutPreview = await screen.findByRole("list", {
-    name: "Aperçu des séances",
-  });
-  expect(workoutPreview).toHaveTextContent(
-    /Upper A.*Upper chest and back.*58 min.*6 exercices.*16 séries de travail.*Lower A.*Durée non disponible.*5 exercices.*14 séries de travail/
-  );
-});
-
-test("ne recalcule ni ne reprend aucune durée depuis builderPayload", async () => {
-  renderBuilder();
-
-  fireEvent.click(
-    screen.getByRole("button", { name: "Générer mon programme" })
-  );
-
-  await screen.findByText("58 min");
-  expect(screen.queryByText(/999/)).not.toBeInTheDocument();
-  expect(screen.queryByText(/777/)).not.toBeInTheDocument();
-  expect(screen.getByText("Durée non disponible")).toBeInTheDocument();
-});
-
-test("utilise le fallback de stratégie lorsque strategySummary est absent", async () => {
-  createAIWeeklyPlanDraft.mockResolvedValue({
-    ...generatedDraft,
-    aiPresentation: {
-      ...generatedDraft.aiPresentation,
-      strategySummary: null,
-    },
-  });
-  renderBuilder();
-
-  fireEvent.click(
-    screen.getByRole("button", { name: "Générer mon programme" })
-  );
-
-  expect(
-    await screen.findByText(
-      "Ton programme a été généré et validé à partir de ton Training Profile."
-    )
-  ).toBeInTheDocument();
-});
-
-test("une version de présentation inconnue conserve le fallback minimal", async () => {
-  createAIWeeklyPlanDraft.mockResolvedValue({
-    ...generatedDraft,
-    aiPresentation: {
-      ...generatedDraft.aiPresentation,
-      schemaVersion: 2,
-      strategySummary: "PRIVATE_UNKNOWN_VERSION_STRATEGY",
-      splitType: "private_split",
-      workouts: [
-        {
-          ...generatedDraft.aiPresentation.workouts[0],
-          name: "PRIVATE_UNKNOWN_VERSION_WORKOUT",
-        },
-      ],
-    },
-  });
-  renderBuilder();
-
-  fireEvent.click(
-    screen.getByRole("button", { name: "Générer mon programme" })
-  );
-
-  expect(await screen.findByText("Haut du corps")).toBeInTheDocument();
-  expect(screen.getByText("Bas du corps")).toBeInTheDocument();
-  expect(
-    screen.getByText(
-      "Ton programme a été généré et validé à partir de ton Training Profile."
-    )
-  ).toBeInTheDocument();
-  expect(
-    screen.queryByText(/PRIVATE_UNKNOWN_VERSION|Private split/)
-  ).not.toBeInTheDocument();
-  expect(screen.queryByText("58 min")).not.toBeInTheDocument();
-});
-
-test("une réponse sans aiPresentation conserve le fallback minimal", async () => {
-  const draftWithoutPresentation = { ...generatedDraft };
-  delete draftWithoutPresentation.aiPresentation;
-  createAIWeeklyPlanDraft.mockResolvedValue(draftWithoutPresentation);
-  renderBuilder();
-
-  fireEvent.click(
-    screen.getByRole("button", { name: "Générer mon programme" })
-  );
-
-  expect(await screen.findByText("Haut du corps")).toBeInTheDocument();
-  expect(screen.getByText("Bas du corps")).toBeInTheDocument();
-  expect(
-    screen.getByText(
-      "Ton programme a été généré et validé à partir de ton Training Profile."
-    )
-  ).toBeInTheDocument();
-  expect(screen.queryByText("58 min")).not.toBeInTheDocument();
-});
-
-test("une présentation V1 mal formée conserve le fallback minimal", async () => {
-  createAIWeeklyPlanDraft.mockResolvedValue({
-    ...generatedDraft,
-    aiPresentation: {
-      ...generatedDraft.aiPresentation,
-      focusAreas: "PRIVATE_MALFORMED_FOCUS_AREAS",
-    },
-  });
-  renderBuilder();
-
-  fireEvent.click(
-    screen.getByRole("button", { name: "Générer mon programme" })
-  );
-
-  expect(await screen.findByText("Haut du corps")).toBeInTheDocument();
-  expect(screen.queryByText("Upper A")).not.toBeInTheDocument();
-  expect(
-    screen.queryByText("PRIVATE_MALFORMED_FOCUS_AREAS")
-  ).not.toBeInTheDocument();
+  expect(screen.getByText("Add repetitions before increasing load.")).toBeInTheDocument();
+  expect(screen.queryByText("Aperçu des séances")).not.toBeInTheDocument();
 });
 
 test("affiche les deux actions finales uniquement après un succès", async () => {
@@ -653,18 +467,14 @@ test("affiche les deux actions finales uniquement après un succès", async () =
   createAIWeeklyPlanDraft.mockReturnValue(request.promise);
   renderBuilder();
 
-  expect(screen.queryByRole("button", { name: "Modifier" })).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Voir mes programmes" })
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Modify" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "See details" })).not.toBeInTheDocument();
 
   fireEvent.click(
     screen.getByRole("button", { name: "Générer mon programme" })
   );
-  expect(screen.queryByRole("button", { name: "Modifier" })).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Voir mes programmes" })
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Modify" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "See details" })).not.toBeInTheDocument();
 
   await act(async () => {
     request.resolve(generatedDraft);
@@ -672,14 +482,12 @@ test("affiche les deux actions finales uniquement après un succès", async () =
   });
 
   expect(
-    await screen.findByRole("button", { name: "Modifier" })
+    await screen.findByRole("button", { name: "Modify" })
   ).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "Voir mes programmes" })
-  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "See details" })).toBeInTheDocument();
 });
 
-test("Modifier hydrate une seule fois avec la réponse complète puis navigue avec backTarget", async () => {
+test("Modify ouvre et hydrate le draft existant puis navigue vers le Manual Builder", async () => {
   renderBuilder({
     entry: {
       pathname: "/program/ai-builder",
@@ -691,20 +499,28 @@ test("Modifier hydrate une seule fois avec la réponse complète puis navigue av
   fireEvent.click(
     screen.getByRole("button", { name: "Générer mon programme" })
   );
-  const editButton = await screen.findByRole("button", { name: "Modifier" });
+  const editButton = await screen.findByRole("button", { name: "Modify" });
 
   fireEvent.click(editButton);
   fireEvent.click(editButton);
 
-  expect(mapBuilderPayloadToProgramDraft).toHaveBeenCalledTimes(1);
-  expect(mapBuilderPayloadToProgramDraft).toHaveBeenCalledWith(generatedDraft);
-  expect(screen.getByTestId("current-location")).toHaveTextContent(
-    "/program/manual-builder"
+  await waitFor(() =>
+    expect(openOrCreateWeeklyPlanEditDraft).toHaveBeenCalledTimes(1)
   );
+  expect(openOrCreateWeeklyPlanEditDraft).toHaveBeenCalledWith(
+    "weekly_parent_ai_1"
+  );
+  await waitFor(() => {
+    expect(mapBuilderPayloadToProgramDraft).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("current-location")).toHaveTextContent(
+      "/program/manual-builder"
+    );
+  });
+  expect(mapBuilderPayloadToProgramDraft).toHaveBeenCalledWith(editableDraft);
   expect(screen.getByText("Manual Builder route")).toBeInTheDocument();
   expect(screen.getByTestId("current-location-state")).toHaveTextContent(
     JSON.stringify({
-      from: "/onboarding/training-profile",
+      from: "/program/all/weekly_parent_ai_1",
       returnTo: "/onboarding/training-profile",
     })
   );
@@ -715,7 +531,7 @@ test("Modifier hydrate une seule fois avec la réponse complète puis navigue av
     '"weeklyPlanParentId":"weekly_parent_ai_1"'
   );
   expect(screen.getByTestId("manual-state")).toHaveTextContent(
-    '"weeklyPlanVersionId":"weekly_version_ai_1"'
+    '"weeklyPlanVersionId":"weekly_version_draft_2"'
   );
   expect(screen.getByTestId("manual-state")).toHaveTextContent('"source":"ai"');
   expect(screen.getByTestId("manual-state")).toHaveTextContent(
@@ -725,46 +541,28 @@ test("Modifier hydrate une seule fois avec la réponse complète puis navigue av
   expect(updateWeeklyPlanDraft).not.toHaveBeenCalled();
 });
 
-test("Modifier utilise /program comme backTarget par défaut", async () => {
-  renderBuilder();
-
-  fireEvent.click(
-    screen.getByRole("button", { name: "Générer mon programme" })
-  );
-  fireEvent.click(await screen.findByRole("button", { name: "Modifier" }));
-
-  expect(screen.getByTestId("current-location-state")).toHaveTextContent(
-    JSON.stringify({
-      from: "/program",
-      returnTo: "/program",
-    })
-  );
-});
-
-test("Voir mes programmes navigue sans hydrater ni modifier le contexte manuel", async () => {
+test("See details ouvre la page normale du parent sans hydrater", async () => {
   renderBuilder({ withManualContext: true });
   const initialManualState = screen.getByTestId("manual-state").textContent;
 
   fireEvent.click(
     screen.getByRole("button", { name: "Générer mon programme" })
   );
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Voir mes programmes" })
-  );
+  fireEvent.click(await screen.findByRole("button", { name: "See details" }));
 
   expect(screen.getByTestId("current-location")).toHaveTextContent(
-    "/program/all"
+    "/program/all/weekly_parent_ai_1"
   );
   expect(screen.getByTestId("current-location-state")).toHaveTextContent(
-    "null"
+    JSON.stringify({ from: "/program" })
   );
-  expect(screen.getByText("Liste des programmes")).toBeInTheDocument();
+  expect(screen.getByText("Détail du programme")).toBeInTheDocument();
   expect(mapBuilderPayloadToProgramDraft).not.toHaveBeenCalled();
   expect(screen.getByTestId("manual-state")).toHaveTextContent(
     initialManualState
   );
+  expect(openOrCreateWeeklyPlanEditDraft).not.toHaveBeenCalled();
   expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(1);
-  expect(updateWeeklyPlanDraft).not.toHaveBeenCalled();
 });
 
 test("n'affiche aucun audit ni champ interne de la réponse", async () => {
@@ -856,10 +654,8 @@ test("l'erreur builder désactivé n'offre pas de retry immédiat", async () => 
     await screen.findByText("Le générateur AI est temporairement indisponible.")
   ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Réessayer" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Modifier" })).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Voir mes programmes" })
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Modify" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "See details" })).not.toBeInTheDocument();
 });
 
 test.each([

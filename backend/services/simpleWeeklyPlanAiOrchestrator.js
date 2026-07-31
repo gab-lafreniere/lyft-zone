@@ -618,6 +618,7 @@ async function runSimpleWeeklyPlanAiPipeline({
     baseDirectory: outputDirectory,
   });
   const statuses = buildStatus(outputs);
+  const isValid = outputs.output8?.valid === true;
 
   return {
     runId: artifacts.runId,
@@ -626,7 +627,7 @@ async function runSimpleWeeklyPlanAiPipeline({
     models: config.models,
     modelsUsed,
     statuses,
-    valid: outputs.output8?.valid === true,
+    valid: isValid,
     counts: structureGeometry
       ? summarizeStructure(structureGeometry)
       : null,
@@ -636,6 +637,9 @@ async function runSimpleWeeklyPlanAiPipeline({
         ? Object.keys(fillOutput.fills).length
         : 0,
     output8: outputs.output8,
+    completedDocument: isValid ? outputs.output7 : null,
+    metrics: isValid ? outputs.output8.metrics : null,
+    generatedPlanText: isValid ? outputs.output2 : null,
     error: blockingError,
   };
 }

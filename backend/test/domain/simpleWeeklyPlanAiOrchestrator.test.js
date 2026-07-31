@@ -444,6 +444,18 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
   assert.equal(scenario.result.slotCount, 195);
   assert.equal(scenario.result.fillCount, 195);
   assert.equal(scenario.result.valid, true);
+  assert.deepEqual(
+    scenario.result.completedDocument,
+    scenario.output['07-output-ai_completed-plan.json']
+  );
+  assert.deepEqual(
+    scenario.result.metrics,
+    scenario.output['08-output-backend_validation-result.json'].metrics
+  );
+  assert.equal(
+    scenario.result.generatedPlanText,
+    scenario.output['02-output-ai_generated-plan.txt']
+  );
   assert.deepEqual(scenario.result.output8.summary, scenario.result.counts);
   assert.deepEqual(
     Object.keys(
@@ -821,6 +833,9 @@ test('final preflight failure produces invalid Output 8 once without correction'
   assert.equal(scenario.preflightCalls.length, 1);
   assert.equal(scenario.result.statuses.output8, 'PRODUCED_INVALID');
   assert.equal(scenario.result.valid, false);
+  assert.equal(scenario.result.completedDocument, null);
+  assert.equal(scenario.result.metrics, null);
+  assert.equal(scenario.result.generatedPlanText, null);
   assert.equal(
     scenario.output[
       '08-output-backend_validation-result.json'

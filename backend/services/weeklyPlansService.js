@@ -835,27 +835,37 @@ function mapVisibleParentToDetails(parent, userId) {
   };
 }
 
-async function createWeeklyPlan(payload) {
+async function createWeeklyPlan(payload, { initialStatus = 'DRAFT' } = {}) {
   const prisma = getPrisma();
   const userId = normalizeOptionalString(payload.userId);
   const sourceType = normalizeSourceType(payload.source);
+  const normalizedInitialStatus = String(initialStatus || 'DRAFT').toUpperCase();
+  if (!['DRAFT', 'PUBLISHED'].includes(normalizedInitialStatus)) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'initialStatus must be DRAFT or PUBLISHED'
+    );
+  }
+  const isPublished = normalizedInitialStatus === 'PUBLISHED';
   const document = validateDraftDocument(
     {
       name: payload.name,
       sessionsPerWeek: payload.sessionsPerWeek,
       workouts: payload.workouts || [],
     },
-    'draft'
+    isPublished ? 'publish' : 'draft'
   );
 
   await assertUserExists(userId);
   const exerciseById = await assertKnownExerciseIds(collectExerciseIds(document.workouts));
   validateAndNormalizeCardioBlocks(document.workouts, exerciseById, {
-    mode: 'draft',
+    mode: isPublished ? 'publish' : 'draft',
     path: 'workouts',
   });
 
   const parent = await prisma.$transaction(async (tx) => {
+    const publishedAt = isPublished ? new Date() : null;
     const createdParent = await tx.weeklyPlanParent.create({
       data: {
         userId,
@@ -867,7 +877,8 @@ async function createWeeklyPlan(payload) {
       versionNumber: 1,
       name: document.name,
       sessionsPerWeek: document.sessionsPerWeek,
-      status: 'DRAFT',
+      status: normalizedInitialStatus,
+      ...(publishedAt ? { publishedAt } : {}),
       workouts: {
         create: toWorkoutCreateInput(document.workouts),
       },
@@ -885,7 +896,8 @@ async function createWeeklyPlan(payload) {
     await tx.weeklyPlanParent.update({
       where: { id: createdParent.id },
       data: {
-        latestDraftVersionId: createdVersion.id,
+        latestDraftVersionId: isPublished ? null : createdVersion.id,
+        latestPublishedVersionId: isPublished ? createdVersion.id : null,
       },
     });
 
@@ -895,7 +907,10 @@ async function createWeeklyPlan(payload) {
     });
   });
 
-  return mapVersionToBuilderPayload(parent, parent.latestDraftVersion);
+  return mapVersionToBuilderPayload(
+    parent,
+    isPublished ? parent.latestPublishedVersion : parent.latestDraftVersion
+  );
 }
 
 async function listVisibleWeeklyPlans(userId) {

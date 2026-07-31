@@ -26,6 +26,7 @@ function createPrismaMock(options = {}) {
     parentData: null,
     versionData: null,
     parentCreateCount: 0,
+    parentUpdateData: null,
     versionCreateCount: 0,
     transactionCount: 0,
     userFindUniqueArgs: [],
@@ -42,23 +43,33 @@ function createPrismaMock(options = {}) {
           sourceType: data.sourceType,
         };
       },
-      update: async () => ({}),
-      findUnique: async () => ({
-        id: 'parent_123',
-        sourceType: calls.parentData.sourceType,
-        bookmarks: [],
-        latestDraftVersion: {
+      update: async ({ data }) => {
+        calls.parentUpdateData = data;
+        return {};
+      },
+      findUnique: async () => {
+        const storedVersion = {
           id: 'version_123',
           weeklyPlanParentId: 'parent_123',
           versionNumber: 1,
           name: calls.versionData.name,
           sessionsPerWeek: calls.versionData.sessionsPerWeek,
-          status: 'DRAFT',
+          status: calls.versionData.status,
+          publishedAt: calls.versionData.publishedAt || null,
           updatedAt: new Date('2026-06-01T12:00:00.000Z'),
           workouts: options.versionWorkouts || [],
-        },
-        latestPublishedVersion: null,
-      }),
+        };
+
+        return {
+          id: 'parent_123',
+          sourceType: calls.parentData.sourceType,
+          bookmarks: [],
+          latestDraftVersion:
+            calls.versionData.status === 'DRAFT' ? storedVersion : null,
+          latestPublishedVersion:
+            calls.versionData.status === 'PUBLISHED' ? storedVersion : null,
+        };
+      },
     },
     weeklyPlanVersion: {
       create: async ({ data }) => {
@@ -360,7 +371,13 @@ test('createWeeklyPlan manual flow continues without generationContext', async (
   });
 
   assert.equal(result.source, 'manual');
+  assert.equal(result.status, 'DRAFT');
   assert.equal(mock.calls.parentData.sourceType, 'MANUAL');
+  assert.equal(mock.calls.versionData.status, 'DRAFT');
+  assert.deepEqual(mock.calls.parentUpdateData, {
+    latestDraftVersionId: 'version_123',
+    latestPublishedVersionId: null,
+  });
   assert.equal(Object.prototype.hasOwnProperty.call(mock.calls.versionData, 'generationContext'), false);
   assert.equal(Object.prototype.hasOwnProperty.call(result, 'aiPresentation'), false);
   assert.equal(result.builderPayload.programName, 'Manual Draft');
@@ -398,6 +415,34 @@ test('createWeeklyPlan AI flow writes generationContext on WeeklyPlanVersion', a
   assert.deepEqual(mock.calls.versionData.generationContext, generationContext);
   assert.equal(result.builderPayload.programName, 'AI Draft');
   assert.equal(mock.calls.transactionCount, 1);
+});
+
+test('createWeeklyPlan can atomically create an initial published AI version', async () => {
+  const mock = createPrismaMock({
+    exercises: [{ exerciseId: 'ex_hold', trainingType: 'strength' }],
+    versionWorkouts: [createTemporalWorkout()],
+  });
+  prisma = mock.prisma;
+
+  const result = await createWeeklyPlan(createTemporalDraftPayload(), {
+    initialStatus: 'PUBLISHED',
+  });
+
+  assert.equal(result.source, 'ai');
+  assert.equal(result.status, 'PUBLISHED');
+  assert.equal(mock.calls.transactionCount, 1);
+  assert.equal(mock.calls.parentCreateCount, 1);
+  assert.equal(mock.calls.versionCreateCount, 1);
+  assert.equal(mock.calls.versionData.status, 'PUBLISHED');
+  assert.ok(mock.calls.versionData.publishedAt instanceof Date);
+  assert.deepEqual(mock.calls.parentUpdateData, {
+    latestDraftVersionId: null,
+    latestPublishedVersionId: 'version_123',
+  });
+  assert.match(
+    createWeeklyPlan.toString(),
+    /mode:\s*isPublished\s*\?\s*'publish'\s*:\s*'draft'/
+  );
 });
 
 test('targetSeconds survives AI preflight, create persistence input, and builder projection', async () => {
