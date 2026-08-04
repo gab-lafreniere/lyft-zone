@@ -269,6 +269,17 @@ export async function getUserSettings() {
   return readJsonResponse(response);
 }
 
+export async function updateUserProfile(profilePayload) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(`${BACKEND_URL}/api/users/${userId}/profile`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(profilePayload),
+  });
+
+  return readJsonResponse(response);
+}
+
 export async function updateTrainingProfileSettings(trainingProfileDraft) {
   const userId = await ensureCurrentUserId();
   const response = await fetch(

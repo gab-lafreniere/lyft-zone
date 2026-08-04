@@ -15,7 +15,7 @@ const { createContext } = require('./weeklyPlanAiV4Fixtures');
 const SUPERSET_SET_COUNT_RULE =
   'All exercises within the same SUPERSET block must have exactly the same number of sets.';
 
-function createTextContext() {
+function createTextContext(overrides = {}) {
   return createContext({
     availability: {
       sessionsPerWeek: 4,
@@ -68,6 +68,7 @@ function createTextContext() {
         equipmentCategory: 'cable',
       },
     ],
+    ...overrides,
   });
 }
 
@@ -76,7 +77,7 @@ test('text prompt contains the dynamic athlete, safe constraints, and eligible p
 
   assert.equal(
     PROGRAM_GENERATION_PROMPT_VERSION,
-    'ai-weekly-plan-text-prompt-v1.1.0'
+    'ai-weekly-plan-text-prompt-v1.2.0'
   );
   assert.equal(prompt.promptVersion, PROGRAM_GENERATION_PROMPT_VERSION);
   assert.equal(
@@ -103,6 +104,23 @@ test('text prompt contains the dynamic athlete, safe constraints, and eligible p
   assert.match(prompt.userMessage, /include both a brief, light cardio warm-up/);
   assert.match(prompt.userMessage, /ex_bench/);
   assert.match(prompt.userMessage, /ex_row/);
+});
+
+test('text prompt includes only generalized demographics when available', () => {
+  const prompt = buildProgramGenerationPrompt({
+    context: createTextContext({
+      demographics: {
+        sex: 'FEMALE',
+        ageBand: 'in their late 20s',
+      },
+    }),
+  });
+
+  assert.match(
+    prompt.userMessage,
+    /for a female bodybuilding athlete in their late 20s whose experience level is advanced and whose primary goal is hypertrophy\./
+  );
+  assert.doesNotMatch(prompt.userMessage, /\b29\b|2026-08-04|ageInputDate|currentAge/);
 });
 
 test('text prompt gives useful free-form prescription and progression guidance', () => {
@@ -145,7 +163,7 @@ test('text prompt adds only the single SUPERSET set-count rule', () => {
   );
   assert.equal(
     createHash('sha256').update(withoutRule).digest('hex'),
-    'd3ccf6a694955d09f18885fa4ca17ecce1e423d8115676ca791e169cfd3123a3'
+    '1bfe69ae40958a6b71971d527262348b3764fcc2d3bf90e804c47a05b042af1b'
   );
   assert.equal(
     createHash('sha256').update(prompt.systemMessage).digest('hex'),

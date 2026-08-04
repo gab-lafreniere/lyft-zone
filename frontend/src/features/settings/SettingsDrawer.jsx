@@ -6,6 +6,7 @@ import {
 } from "../../services/api";
 import SettingsMenuScreen from "./SettingsMenuScreen";
 import SettingsReadonlyScreen from "./SettingsReadonlyScreen";
+import AccountProfileScreen from "./AccountProfileScreen";
 import SettingsStackHeader from "./SettingsStackHeader";
 import TrainingProfileSectionScreen from "./TrainingProfileSectionScreen";
 import {
@@ -583,30 +584,20 @@ export default function SettingsDrawer({ isOpen, onClose }) {
 
     return (
       <SettingsReadonlyScreen
-        description="Read-only placeholders stay visible until account editing is available."
         showTitle={false}
       >
-        <div className="mb-5 flex items-center gap-4">
-          <div className="flex size-16 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-400">
-            <span className="material-symbols-outlined text-3xl">person</span>
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-slate-900">
-              {formatReadonlyValue(profile.name)}
-            </p>
-            <p className="text-sm text-slate-500">{formatReadonlyValue(profile.email)}</p>
-          </div>
-        </div>
-
-        <dl>
-          <ReadonlyRow label="Name" value={formatReadonlyValue(profile.name)} />
-          <ReadonlyRow label="Email" value={formatReadonlyValue(profile.email)} />
-          <ReadonlyRow label="Username" value={formatReadonlyValue(profile.username)} />
-          <ReadonlyRow
-            label="Profile Picture"
-            value={formatReadonlyValue(profile.profilePicture)}
-          />
-        </dl>
+        <AccountProfileScreen
+          profile={profile}
+          onProfileChange={(nextProfile) => {
+            setSettingsData((current) => ({
+              ...current,
+              account: {
+                ...current.account,
+                profile: nextProfile,
+              },
+            }));
+          }}
+        />
       </SettingsReadonlyScreen>
     );
   }

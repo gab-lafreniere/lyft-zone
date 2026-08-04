@@ -98,7 +98,7 @@ function createAiOutput(overrides = {}) {
 
 function createContext(overrides = {}) {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     generationMode: 'weekly_plan_draft',
     coachInputs: null,
     userId: 'user_v4',
@@ -106,6 +106,7 @@ function createContext(overrides = {}) {
     profileSchemaVersion: 4,
     primaryGoal: 'HYPERTROPHY',
     experience: 'INTERMEDIATE',
+    demographics: null,
     availability: {
       sessionsPerWeek: 1,
       durationPerSession: 15,

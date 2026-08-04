@@ -5,6 +5,7 @@ import {
   analyzeMovementConstraintsPainIssue,
   fetchExercises,
   getUserSettings,
+  updateUserProfile,
   updateTrainingProfileSettings,
 } from "../../../services/api";
 
@@ -12,6 +13,7 @@ jest.mock("../../../services/api", () => ({
   analyzeMovementConstraintsPainIssue: jest.fn(),
   fetchExercises: jest.fn(),
   getUserSettings: jest.fn(),
+  updateUserProfile: jest.fn(),
   updateTrainingProfileSettings: jest.fn(),
 }));
 
@@ -128,6 +130,7 @@ beforeEach(() => {
   fetchExercises.mockReset();
   analyzeMovementConstraintsPainIssue.mockReset();
   getUserSettings.mockReset();
+  updateUserProfile.mockReset();
   updateTrainingProfileSettings.mockReset();
 });
 
@@ -1325,5 +1328,45 @@ describe("SettingsDrawer movement constraints V2", () => {
     expect(screen.getByText("Manual Blocked Exercise IDs")).toBeInTheDocument();
     expect(screen.getAllByText("exr_deadlift").length).toBeGreaterThan(0);
     expect(screen.queryByPlaceholderText(/horizontal_press/i)).not.toBeInTheDocument();
+  });
+
+  test("collects demographics only from Account Profile and locks the saved values", async () => {
+    updateUserProfile.mockResolvedValue({
+      profile: {
+        age: 29,
+        sex: "MALE",
+        currentAge: 29,
+        demographicsStatus: "LOCKED",
+      },
+    });
+
+    await renderDrawer(
+      createSettingsResponse({
+        account: {
+          profile: {
+            name: "Alex",
+            email: "alex@example.com",
+            username: "alex",
+            profilePicture: null,
+            age: null,
+            sex: null,
+            currentAge: null,
+            demographicsStatus: "NOT_COLLECTED",
+          },
+        },
+      })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /person Profile/i }));
+    fireEvent.change(screen.getByLabelText("Age"), { target: { value: "29" } });
+    fireEvent.click(screen.getByRole("button", { name: "Male" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(updateUserProfile).toHaveBeenCalledWith({ age: 29, sex: "MALE" }));
+    expect(await screen.findByText("Saved and currently locked.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Age")).not.toBeInTheDocument();
   });
 });

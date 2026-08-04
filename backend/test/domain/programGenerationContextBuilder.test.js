@@ -215,8 +215,8 @@ test('buildProgramGenerationContext builds profile context, compact pool items, 
     }
   );
 
-  assert.equal(PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION, 4);
-  assert.equal(context.schemaVersion, 4);
+  assert.equal(PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION, 5);
+  assert.equal(context.schemaVersion, 5);
   assert.equal(context.generationMode, 'weekly_plan_draft');
   assert.equal(context.coachInputs, null);
   assert.equal(context.userId, 'user_123');
@@ -234,6 +234,7 @@ test('buildProgramGenerationContext builds profile context, compact pool items, 
   );
   assert.equal(context.primaryGoal, 'HYPERTROPHY');
   assert.equal(context.experience, 'intermediate');
+  assert.equal(context.demographics, null);
   assert.equal(context.physicalNotes, 'Keep setup changes simple.');
   assert.deepEqual(context.promptPhysicalConsiderations, [
     {
@@ -275,6 +276,7 @@ test('buildProgramGenerationContext builds profile context, compact pool items, 
     'cardioProfile',
     'coachInputs',
     'createdAt',
+    'demographics',
     'equipmentContext',
     'evaluationPolicy',
     'exercisePoolItems',
@@ -326,9 +328,63 @@ test('buildProgramGenerationContext builds profile context, compact pool items, 
   assert.equal(exerciseQueryCount, 3);
 });
 
+test('buildProgramGenerationContext exposes only prompt-safe demographics for a locked profile', async () => {
+  const prisma = {
+    userProfile: {
+      findUnique: async () => ({
+        age: 30,
+        ageInputDate: new Date('2025-08-04T00:00:00.000Z'),
+        sex: 'FEMALE',
+        onboardingSnapshot: {
+          schemaVersion: 2,
+          profile: createProfile(),
+        },
+      }),
+    },
+    exercise: {
+      findMany: async () => [createEligibleExercise()],
+    },
+  };
+
+  const context = await buildProgramGenerationContext('user_123', {}, {
+    prisma,
+    now: new Date('2026-08-04T18:00:00.000Z'),
+  });
+
+  assert.deepEqual(context.demographics, {
+    sex: 'FEMALE',
+    ageBand: 'in their early 30s',
+  });
+  assert.equal(Object.hasOwn(context.demographics, 'age'), false);
+  assert.equal(Object.hasOwn(context.demographics, 'ageInputDate'), false);
+  assert.doesNotMatch(JSON.stringify(context.demographics), /2025-08-04|\b31\b/);
+});
+
+test('buildProgramGenerationContext omits incomplete demographics', async () => {
+  const prisma = {
+    userProfile: {
+      findUnique: async () => ({
+        age: 30,
+        ageInputDate: null,
+        sex: 'MALE',
+        onboardingSnapshot: {
+          schemaVersion: 2,
+          profile: createProfile(),
+        },
+      }),
+    },
+    exercise: {
+      findMany: async () => [createEligibleExercise()],
+    },
+  };
+
+  const context = await buildProgramGenerationContext('user_123', {}, { prisma });
+  assert.equal(context.demographics, null);
+});
+
 test('attachCoachInputsToProgramGenerationContext adds compact metadata without doctrine content', () => {
   const baseContext = Object.freeze({
-    schemaVersion: 4,
+    schemaVersion: 5,
     generationMode: 'weekly_plan_draft',
     primaryGoal: 'HYPERTROPHY',
     evaluationPolicy: WEEKLY_PLAN_EVALUATION_POLICY,
@@ -345,12 +401,12 @@ test('attachCoachInputsToProgramGenerationContext adds compact metadata without 
   });
 
   assert.equal(baseContext.coachInputs, null);
-  assert.equal(baseContext.schemaVersion, 4);
+  assert.equal(baseContext.schemaVersion, 5);
   assert.strictEqual(
     baseContext.evaluationPolicy,
     WEEKLY_PLAN_EVALUATION_POLICY
   );
-  assert.equal(context.schemaVersion, 4);
+  assert.equal(context.schemaVersion, 5);
   assert.strictEqual(context.evaluationPolicy, WEEKLY_PLAN_EVALUATION_POLICY);
   assert.notStrictEqual(context, baseContext);
   assert.deepEqual(context.coachInputs, {
@@ -362,7 +418,7 @@ test('attachCoachInputsToProgramGenerationContext adds compact metadata without 
   assert.doesNotMatch(JSON.stringify(context), /DOCTRINE_CONTENT_MUST_NOT_BE_COPIED/);
 });
 
-test('attachCoachInputsToProgramGenerationContext never disguises a legacy V3 context as V4', () => {
+test('attachCoachInputsToProgramGenerationContext never disguises a legacy V3 context as V5', () => {
   const baseContext = Object.freeze({
     schemaVersion: 3,
     generationMode: 'weekly_plan_draft',

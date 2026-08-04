@@ -15,7 +15,7 @@ export const SETTINGS_ROOT_ITEMS = [
     menuDescription: "",
     icon: "person",
     screenId: "settings-section",
-    readonly: true,
+    readonly: false,
   },
   {
     id: "aiCoaching",

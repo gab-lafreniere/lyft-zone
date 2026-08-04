@@ -16,6 +16,11 @@ const {
 const {
   normalizeMovementConstraintsInput,
 } = require('./trainingProfileValidation');
+const {
+  DEMOGRAPHICS_STATUS,
+  calculateCurrentAge,
+  deriveDemographicsStatus,
+} = require('../userProfile/userProfileDemographics');
 
 function createDefaultTrainingProfile() {
   return {
@@ -100,8 +105,19 @@ function resolveSnapshot(snapshot) {
   };
 }
 
-function buildSettingsResponse(user = {}) {
+function buildSettingsResponse(user = {}, options = {}) {
   const snapshot = resolveSnapshot(user.profile?.onboardingSnapshot);
+  const demographicsStatus = deriveDemographicsStatus(
+    user.profile,
+    options.referenceDate
+  );
+  const currentAge = demographicsStatus === DEMOGRAPHICS_STATUS.LOCKED
+    ? calculateCurrentAge({
+      storedAge: user.profile.age,
+      ageInputDate: user.profile.ageInputDate,
+      referenceDate: options.referenceDate,
+    })
+    : null;
 
   return {
     account: {
@@ -110,6 +126,10 @@ function buildSettingsResponse(user = {}) {
         email: user.email || null,
         username: null,
         profilePicture: null,
+        age: user.profile?.age ?? null,
+        sex: user.profile?.sex ?? null,
+        currentAge,
+        demographicsStatus,
       },
     },
     trainingProfile: {

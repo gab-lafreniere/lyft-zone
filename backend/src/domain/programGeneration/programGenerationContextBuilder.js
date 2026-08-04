@@ -11,8 +11,14 @@ const {
 const {
   resolvePromptPhysicalConsiderations,
 } = require('./movementConstraintResolver');
+const {
+  DEMOGRAPHICS_STATUS,
+  calculateCurrentAge,
+  deriveDemographicsStatus,
+} = require('../userProfile/userProfileDemographics');
+const { formatAgeBand } = require('./ageBand');
 
-const PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION = 4;
+const PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION = 5;
 
 function attachCoachInputsToProgramGenerationContext(
   context,
@@ -38,6 +44,9 @@ async function buildProgramGenerationContext(userId, options = {}, deps = {}) {
   const profileRecord = await prisma.userProfile.findUnique({
     where: { userId },
     select: {
+      age: true,
+      ageInputDate: true,
+      sex: true,
       onboardingSnapshot: true,
     },
   });
@@ -55,6 +64,19 @@ async function buildProgramGenerationContext(userId, options = {}, deps = {}) {
     ? deps.evaluationPolicy ||
       require('./weeklyPlanEvaluationPolicy').WEEKLY_PLAN_EVALUATION_POLICY
     : null;
+  const demographicsStatus = deriveDemographicsStatus(profileRecord, deps.now);
+  const currentAge = demographicsStatus === DEMOGRAPHICS_STATUS.LOCKED
+    ? calculateCurrentAge({
+      storedAge: profileRecord.age,
+      ageInputDate: profileRecord.ageInputDate,
+      referenceDate: deps.now,
+    })
+    : null;
+  const ageBand = formatAgeBand(currentAge);
+  const demographics =
+    demographicsStatus === DEMOGRAPHICS_STATUS.LOCKED && ageBand
+      ? { sex: profileRecord.sex, ageBand }
+      : null;
 
   return {
     schemaVersion: PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION,
@@ -65,6 +87,7 @@ async function buildProgramGenerationContext(userId, options = {}, deps = {}) {
     profileSchemaVersion: snapshot.schemaVersion,
     primaryGoal: profile.primaryGoal || null,
     experience: profile.experience || null,
+    demographics,
     availability: {
       sessionsPerWeek: profile.availability?.sessionsPerWeek ?? null,
       durationPerSession: profile.availability?.durationPerSession ?? null,

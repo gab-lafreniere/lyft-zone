@@ -45,7 +45,7 @@ const MOCK_DOCTRINE = {
 
 function createContext(overrides = {}) {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     generationMode: 'weekly_plan_draft',
     coachInputs: {
       doctrineId: 'private_doctrine_id',
@@ -282,9 +282,9 @@ test('buildProgramGenerationPromptInput projects a compact athlete brief, safe c
 
   assert.equal(
     PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION,
-    5
+    6
   );
-  assert.equal(input.schemaVersion, 5);
+  assert.equal(input.schemaVersion, 6);
   assert.equal(input.athleteBrief.primaryGoal, 'HYPERTROPHY');
   assert.equal(input.athleteBrief.experience, 'intermediate');
   assert.deepEqual(input.athleteBrief.trainingSchedule, {
@@ -364,6 +364,32 @@ test('buildProgramGenerationPromptInput projects a compact athlete brief, safe c
       coverageLevel: 'severely_limited',
     },
   ]);
+});
+
+test('prompt input projects only prompt-safe demographics and omits missing data', () => {
+  const withDemographics = buildProgramGenerationPromptInput(
+    createContext({
+      demographics: {
+        sex: 'MALE',
+        ageBand: 'in their early 30s',
+      },
+    })
+  );
+  assert.deepEqual(withDemographics.athleteBrief.demographics, {
+    sex: 'MALE',
+    ageBand: 'in their early 30s',
+  });
+
+  const withoutDemographics = buildProgramGenerationPromptInput(
+    createContext({ demographics: null })
+  );
+  assert.equal(Object.hasOwn(withoutDemographics.athleteBrief, 'demographics'), false);
+
+  assert.throws(() =>
+    buildProgramGenerationPromptInput(
+      createContext({ demographics: { sex: 'OTHER', ageBand: 'in their early 30s' } })
+    )
+  );
 });
 
 test('poolCoverageNotes is omitted when every analyzed area has at least three eligible exercises', () => {
@@ -787,7 +813,7 @@ test('projection is deterministic, owns its arrays and objects, and never mutate
   ]);
 });
 
-test('builder requires ProgramGenerationContext V4, availability, and pool items without an Evaluation Policy', () => {
+test('builder requires ProgramGenerationContext V5, availability, and pool items without an Evaluation Policy', () => {
   const cases = [
     null,
     createContext({ schemaVersion: 3 }),

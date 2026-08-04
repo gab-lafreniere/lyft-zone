@@ -130,11 +130,35 @@ function buildIntroduction(athleteBrief = {}) {
     );
   }
 
-  const article = /^[aeiou]/i.test(experience) ? 'an' : 'a';
+  const demographics = athleteBrief.demographics;
+  let requestSentence;
+
+  if (demographics) {
+    const sex = demographics.sex === 'MALE'
+      ? 'male'
+      : demographics.sex === 'FEMALE'
+        ? 'female'
+        : null;
+    const ageBand = typeof demographics.ageBand === 'string'
+      ? demographics.ageBand.trim()
+      : '';
+
+    if (!sex || !ageBand) {
+      throw new ProgramGenerationProfileNarrativeError(
+        'Demographics are invalid'
+      );
+    }
+
+    requestSentence = `Create one complete, individualized, practical, and recoverable weekly training program for a ${sex} bodybuilding athlete ${ageBand} whose experience level is ${experience} and whose primary goal is ${primaryGoal}.`;
+  } else {
+    const article = /^[aeiou]/i.test(experience) ? 'an' : 'a';
+    requestSentence = `Create one complete, individualized, practical, and recoverable weekly training program for ${article} ${experience} bodybuilding athlete whose primary goal is ${primaryGoal}.`;
+  }
+
   return [
     'ATHLETE PROFILE AND TRAINING REQUEST',
     '',
-    `Create one complete, individualized, practical, and recoverable weekly training program for ${article} ${experience} bodybuilding athlete whose primary goal is ${primaryGoal}.`,
+    requestSentence,
     '',
     `The athlete wants to train exactly ${sessionsPerWeek} times per week, with each workout designed for approximately ${durationPerSession} minutes according to Lyft Zone's backend duration method.`,
   ].join('\n');

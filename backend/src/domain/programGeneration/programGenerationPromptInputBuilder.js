@@ -15,7 +15,7 @@ const {
 } = require('../trainingProfile/trainingProfileRules');
 const exerciseEnums = require('../../exercise-library/exercise-enums.json');
 
-const PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION = 5;
+const PROGRAM_GENERATION_PROMPT_INPUT_SCHEMA_VERSION = 6;
 const MAX_DURATION_PER_SESSION_MINUTES = 120;
 const MAX_POOL_COVERAGE_NOTES = 3;
 const CANONICAL_BODY_PARTS = Object.freeze([
@@ -50,6 +50,7 @@ const EXERCISE_PREFERENCES = new Set([
   'free_weights',
   'no_preference',
 ]);
+const SEX_VALUES = new Set(['MALE', 'FEMALE']);
 
 class ProgramGenerationPromptInputError extends Error {
   constructor(code, message) {
@@ -119,11 +120,11 @@ function invalidContext(message) {
 
 function assertProgramGenerationContext(context) {
   if (!context || typeof context !== 'object' || Array.isArray(context)) {
-    throw invalidContext('ProgramGenerationContext V4 is required');
+    throw invalidContext('ProgramGenerationContext V5 is required');
   }
 
   if (context.schemaVersion !== PROGRAM_GENERATION_CONTEXT_SCHEMA_VERSION) {
-    throw invalidContext('ProgramGenerationContext V4 is required');
+    throw invalidContext('ProgramGenerationContext V5 is required');
   }
 
   if (
@@ -149,6 +150,28 @@ function projectTrainingSchedule(context, trainingMetricsGuidance) {
   return {
     sessionsPerWeek: context.availability.sessionsPerWeek,
     approximateDurationMinutes: trainingMetricsGuidance.requestedMinutes,
+  };
+}
+
+function projectDemographics(value) {
+  if (value == null) {
+    return null;
+  }
+
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    !SEX_VALUES.has(value.sex) ||
+    typeof value.ageBand !== 'string' ||
+    !value.ageBand.trim()
+  ) {
+    throw invalidContext('ProgramGenerationContext demographics are invalid');
+  }
+
+  return {
+    sex: value.sex,
+    ageBand: value.ageBand.trim(),
   };
 }
 
@@ -641,6 +664,7 @@ function buildProjectionResult(context) {
   }
 
   const athleteBrief = {};
+  const demographics = projectDemographics(context.demographics);
   const musclePriorities = projectMusclePriorities(context.musclePriorityProfile);
   const exercisePreference = projectExercisePreference(context.equipmentContext);
   const cardio = projectCardioGuidance(context.cardioProfile);
@@ -660,6 +684,7 @@ function buildProjectionResult(context) {
 
   assignNonEmpty(athleteBrief, 'primaryGoal', context.primaryGoal);
   assignNonEmpty(athleteBrief, 'experience', context.experience);
+  assignNonEmpty(athleteBrief, 'demographics', demographics);
   athleteBrief.trainingSchedule = projectTrainingSchedule(
     context,
     trainingMetricsGuidance

@@ -12,7 +12,7 @@ const {
 } = require('./programGenerationProfileNarrative');
 
 const PROGRAM_GENERATION_PROMPT_VERSION =
-  'ai-weekly-plan-text-prompt-v1.1.0';
+  'ai-weekly-plan-text-prompt-v1.2.0';
 
 class ProgramGenerationPromptError extends Error {
   constructor(code, message) {

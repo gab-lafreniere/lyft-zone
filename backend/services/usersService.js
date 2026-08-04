@@ -12,6 +12,14 @@ const {
 const {
   analyzeMovementConstraints,
 } = require('./movementConstraintAnalysisService');
+const {
+  DEMOGRAPHICS_STATUS,
+  calculateCurrentAge,
+  dateOnlyToUtcDate,
+  deriveDemographicsStatus,
+  serializeDateOnly,
+  validateInitialDemographicsPayload,
+} = require('../src/domain/userProfile/userProfileDemographics');
 
 class ApiError extends Error {
   constructor(status, code, message, details = undefined) {
@@ -111,6 +119,9 @@ async function fetchUserSettingsRecord(userId, prisma) {
       email: true,
       profile: {
         select: {
+          age: true,
+          ageInputDate: true,
+          sex: true,
           trainingMode: true,
           onboardingSnapshot: true,
         },
@@ -160,7 +171,7 @@ async function upsertCanonicalTrainingProfile(userId, payload, prisma) {
 async function getUserSettings(userId, deps = {}) {
   const prisma = deps.prisma || getPrisma();
   const user = await fetchUserSettingsRecord(userId, prisma);
-  return buildSettingsResponse(user);
+  return buildSettingsResponse(user, { referenceDate: deps.now });
 }
 
 async function updateTrainingProfileSettings(userId, payload, deps = {}) {
@@ -169,7 +180,7 @@ async function updateTrainingProfileSettings(userId, payload, deps = {}) {
   await upsertCanonicalTrainingProfile(userId, payload, prisma);
   const user = await fetchUserSettingsRecord(userId, prisma);
 
-  return buildSettingsResponse(user);
+  return buildSettingsResponse(user, { referenceDate: deps.now });
 }
 
 async function analyzeMovementConstraintSettings(userId, payload, deps = {}) {
@@ -179,38 +190,174 @@ async function analyzeMovementConstraintSettings(userId, payload, deps = {}) {
   return analyzeMovementConstraints(payload, deps);
 }
 
+function buildUserProfileUpdateData(payload) {
+  if (isOnboardingTrainingProfilePayload(payload)) {
+    return buildCanonicalTrainingProfileUpdate(payload);
+  }
+
+  const allowedFields = [
+    'primaryGoal',
+    'trainingMode',
+    'experienceNotes',
+    'availableSessionsPerWeek',
+    'sessionDurationMinutes',
+    'trainingPreferences',
+    'equipmentContext',
+    'constraints',
+    'musclePriorities',
+    'onboardingSnapshot',
+  ];
+
+  const data = {};
+  for (const field of allowedFields) {
+    if (hasOwn(payload, field)) {
+      data[field] = payload[field];
+    }
+  }
+
+  return data;
+}
+
+function serializeUserProfileRecord(profile, referenceDate) {
+  if (!profile || typeof profile !== 'object') {
+    return profile;
+  }
+
+  if (!hasOwn(profile, 'ageInputDate')) {
+    return profile;
+  }
+
+  const demographicsStatus = deriveDemographicsStatus(profile, referenceDate);
+  return {
+    ...profile,
+    ageInputDate: serializeDateOnly(profile.ageInputDate),
+    currentAge: demographicsStatus === DEMOGRAPHICS_STATUS.LOCKED
+      ? calculateCurrentAge({
+        storedAge: profile.age,
+        ageInputDate: profile.ageInputDate,
+        referenceDate,
+      })
+      : null,
+    demographicsStatus,
+  };
+}
+
+function resolveNowValue(now) {
+  return typeof now === 'function' ? now() : now || new Date();
+}
+
+async function runSerializableTransaction(prisma, operation) {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await prisma.$transaction(operation, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      if (error?.code !== 'P2034' || attempt === 3) {
+        throw error;
+      }
+    }
+  }
+
+  throw new ApiError(409, 'CONFLICT', 'Profile update conflicted with another request');
+}
+
+async function upsertUserProfileDemographics(userId, payload, data, prisma, deps) {
+  const validation = validateInitialDemographicsPayload(payload);
+  if (!validation.ok) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'Profile demographics payload is invalid',
+      validation.issues
+    );
+  }
+
+  const collectionDate = dateOnlyToUtcDate(resolveNowValue(deps.now));
+  if (!collectionDate) {
+    throw new ApiError(
+      500,
+      'PROFILE_DEMOGRAPHICS_DATE_INVALID',
+      'Profile demographics could not be saved'
+    );
+  }
+
+  const profile = await runSerializableTransaction(prisma, async (tx) => {
+    const current = await tx.userProfile.findUnique({ where: { userId } });
+    const status = deriveDemographicsStatus(current, collectionDate);
+
+    if (status === DEMOGRAPHICS_STATUS.INCONSISTENT) {
+      throw new ApiError(
+        409,
+        'PROFILE_DEMOGRAPHICS_INCONSISTENT',
+        'Profile demographics are incomplete and cannot currently be changed'
+      );
+    }
+
+    if (status === DEMOGRAPHICS_STATUS.LOCKED) {
+      if (
+        current.age !== validation.value.age ||
+        current.sex !== validation.value.sex
+      ) {
+        throw new ApiError(
+          409,
+          'PROFILE_DEMOGRAPHICS_LOCKED',
+          'Age and sex cannot currently be changed'
+        );
+      }
+
+      if (Object.keys(data).length === 0) {
+        return current;
+      }
+
+      return tx.userProfile.update({
+        where: { userId },
+        data,
+      });
+    }
+
+    const demographics = {
+      age: validation.value.age,
+      ageInputDate: collectionDate,
+      sex: validation.value.sex,
+    };
+
+    return tx.userProfile.upsert({
+      where: { userId },
+      update: {
+        ...data,
+        ...demographics,
+      },
+      create: {
+        userId,
+        ...data,
+        ...demographics,
+      },
+    });
+  });
+
+  return serializeUserProfileRecord(profile, deps.now);
+}
+
 async function upsertUserProfile(userId, payload, deps = {}) {
   const prisma = deps.prisma || getPrisma();
 
   await assertUserExists(userId, prisma);
 
-  let data;
+  const data = buildUserProfileUpdateData(payload);
+  const hasDemographicInput =
+    hasOwn(payload, 'age') ||
+    hasOwn(payload, 'sex') ||
+    hasOwn(payload, 'ageInputDate');
 
-  if (isOnboardingTrainingProfilePayload(payload)) {
-    data = buildCanonicalTrainingProfileUpdate(payload);
-  } else {
-    const allowedFields = [
-      'primaryGoal',
-      'trainingMode',
-      'experienceNotes',
-      'availableSessionsPerWeek',
-      'sessionDurationMinutes',
-      'trainingPreferences',
-      'equipmentContext',
-      'constraints',
-      'musclePriorities',
-      'onboardingSnapshot',
-    ];
-
-    data = {};
-    for (const field of allowedFields) {
-      if (Object.prototype.hasOwnProperty.call(payload, field)) {
-        data[field] = payload[field];
-      }
-    }
+  if (hasDemographicInput) {
+    return upsertUserProfileDemographics(userId, payload, data, prisma, deps);
   }
 
-  return upsertUserProfileRecord(userId, data, prisma);
+  return serializeUserProfileRecord(
+    await upsertUserProfileRecord(userId, data, prisma),
+    deps.now
+  );
 }
 
 module.exports = {

@@ -3,6 +3,7 @@ import {
   fetchExercises,
   fetchUserExercisePool,
   fetchUserExercisePoolResponse,
+  updateUserProfile,
 } from "../api";
 
 function mockExerciseResponse(items = []) {
@@ -212,5 +213,39 @@ describe("createAIWeeklyPlanDraft", () => {
       details,
       status: 422,
     });
+  });
+});
+
+describe("updateUserProfile", () => {
+  beforeEach(() => {
+    global.fetch = jest.fn();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("puts only the supplied demographics to the existing profile endpoint", async () => {
+    const responseBody = {
+      profile: {
+        age: 29,
+        sex: "MALE",
+        currentAge: 29,
+        demographicsStatus: "LOCKED",
+      },
+    };
+    mockJsonResponse(responseBody);
+
+    const result = await updateUserProfile({ age: 29, sex: "MALE" });
+
+    const [requestUrl, requestOptions] = global.fetch.mock.calls[0];
+    expect(new URL(requestUrl).pathname).toMatch(/^\/api\/users\/[^/]+\/profile$/);
+    expect(requestOptions).toEqual({
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ age: 29, sex: "MALE" }),
+    });
+    expect(result).toBe(responseBody);
   });
 });

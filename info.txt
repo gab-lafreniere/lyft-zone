@@ -198,7 +198,7 @@ GÉNÉRATION INITIALE (EN COURS)
 - Il n’est pas encore connecté au backend à ce stade
 
 Limitation temporaire des objectifs:
-- AI Weekly Plan Builder V1 supporte uniquement HYPERTROPHY
+- AI Weekly Plan Builder (version actuelle) supporte uniquement HYPERTROPHY
 - STRENGTH et MIXED restent dans le modèle produit, mais sont temporairement verrouillés dans Settings
 - Les profils existants ne doivent jamais être convertis silencieusement vers HYPERTROPHY
 - Le futur onboarding devra passer par-dessus la question d’objectif et utiliser HYPERTROPHY par défaut
@@ -272,6 +272,11 @@ Entrées principales:
 
 Champ additionnel:
 - Profil utilisateur (ex: sexe) si cela sert à ajuster factuellement le style du programme
+  - Prénom
+  - Âge
+  - Sexe
+
+* Le sexe et l'âge servent uniquement de contexte pour le AI Builder, le coaching longitunidal et pour personnaliser l'expérience d'utilisation.
   - Important: présentation neutre et utilitaire, aucune norme de valeur
 
 Sélection du mode:
@@ -1339,6 +1344,9 @@ Règles AI Builder:
 - L’IA ne peut utiliser que les exercices provenant du User Exercise Pool
 - L’IA ne doit pas inventer d’exercices
 - L’IA génère une proposition de plan, pas une modification automatique
+- Le premier appel IA reçoit uniquement les informations nécessaires à la conception stratégique du programme.
+- Les informations calculables ou déjà disponibles dans le backend ne doivent pas être injectées inutilement dans le prompt.
+- Le prompt doit rester le plus compact possible afin de maximiser le contexte disponible pour le raisonnement.
 - Le backend reste responsable de valider:
   - équipement
   - difficulté
@@ -1347,6 +1355,8 @@ Règles AI Builder:
   - structure du plan
 - Les choix doivent être explicables
 - Les exercices existants d’un plan ne doivent pas être supprimés automatiquement par un changement de profil
+- Le builder privilégie une génération complète cohérente dès le premier appel.
+- Les appels IA suivants servent principalement à structurer, normaliser, compléter ou valider la réponse, sans modifier la logique d'entraînement lorsqu'aucune erreur n'est détectée.
 
 ==================================================
 RÈGLE FINALE
@@ -1384,17 +1394,6 @@ Modélisé:
 - block_exercises
 - exercise_set_templates
 - scheduled_sessions
-
-Prochaine couche:
-- workout_logs
-- exercise_logs
-- set_logs
-
-Plus tard:
-- plan_change_events
-- ai_proposals
-- plan_constraints_snapshots
-- progress_snapshots
 
 ==================================================
 Arborescence menu settings

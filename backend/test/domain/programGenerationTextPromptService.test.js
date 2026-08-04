@@ -80,7 +80,7 @@ test('text prompt service returns deterministic messages and exact character cou
   );
 
   assert.equal(result.userId, 'user_dynamic');
-  assert.equal(result.promptVersion, 'ai-weekly-plan-text-prompt-v1.1.0');
+  assert.equal(result.promptVersion, 'ai-weekly-plan-text-prompt-v1.2.0');
   assert.equal(result.sessionsPerWeek, 3);
   assert.equal(result.systemMessage.length > 0, true);
   assert.equal(result.userMessage.length > 0, true);
