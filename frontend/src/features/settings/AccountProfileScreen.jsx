@@ -100,9 +100,16 @@ export default function AccountProfileScreen({ profile = {}, onProfileChange }) 
         <ReadonlyRow label="Email" value={profile.email} />
         <ReadonlyRow label="Username" value={profile.username} />
         <ReadonlyRow label="Profile Picture" value={profile.profilePicture} />
+        {status === "LOCKED" ? (
+          <>
+            <ReadonlyRow label="Age" value={profile.currentAge} />
+            <ReadonlyRow label="Sex" value={formatSex(profile.sex)} />
+          </>
+        ) : null}
       </dl>
 
-      <section className="mt-5 border-t border-slate-200 pt-4">
+      {status !== "LOCKED" ? (
+        <section className="mt-5 border-t border-slate-200 pt-4">
         <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
           Personalization
         </h3>
@@ -166,12 +173,10 @@ export default function AccountProfileScreen({ profile = {}, onProfileChange }) 
               </Button>
             </div>
           </form>
-        ) : (
+        ) : status === "INCONSISTENT" ? (
           <div className="mt-3">
             <p className="mb-2 text-sm leading-relaxed text-slate-500">
-              {status === "LOCKED"
-                ? "Saved and currently locked."
-                : "Some profile information is incomplete and cannot currently be changed."}
+              Some profile information is incomplete and cannot currently be changed.
             </p>
             <dl>
               <ReadonlyRow
@@ -181,8 +186,9 @@ export default function AccountProfileScreen({ profile = {}, onProfileChange }) 
               <ReadonlyRow label="Sex" value={formatSex(profile.sex)} />
             </dl>
           </div>
-        )}
-      </section>
+        ) : null}
+        </section>
+      ) : null}
     </div>
   );
 }

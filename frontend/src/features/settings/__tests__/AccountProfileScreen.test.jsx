@@ -80,8 +80,8 @@ test("shows locked demographics without editable controls", () => {
     />
   );
 
-  expect(screen.getByText("Personalization")).toBeInTheDocument();
-  expect(screen.getByText("Saved and currently locked.")).toBeInTheDocument();
+  expect(screen.queryByText("Personalization")).not.toBeInTheDocument();
+  expect(screen.queryByText("Saved and currently locked.")).not.toBeInTheDocument();
   expect(screen.getByText("30")).toBeInTheDocument();
   expect(screen.getByText("Female")).toBeInTheDocument();
   expect(screen.queryByLabelText("Age")).not.toBeInTheDocument();

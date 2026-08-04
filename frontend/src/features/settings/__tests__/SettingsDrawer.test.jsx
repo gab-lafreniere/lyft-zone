@@ -1366,7 +1366,8 @@ describe("SettingsDrawer movement constraints V2", () => {
     });
 
     await waitFor(() => expect(updateUserProfile).toHaveBeenCalledWith({ age: 29, sex: "MALE" }));
-    expect(await screen.findByText("Saved and currently locked.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByLabelText("Age")).not.toBeInTheDocument());
+    expect(screen.queryByText("Saved and currently locked.")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Age")).not.toBeInTheDocument();
   });
 });
