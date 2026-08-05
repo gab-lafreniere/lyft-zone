@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import AppRouter from "../AppRouter";
 import { isAIWeeklyPlanFrontendEnabled } from "../../features/weeklyPlans/featureFlags";
@@ -6,15 +6,19 @@ import {
   getAIWeeklyPlanBuilderPath,
   getManualBuilderPath,
 } from "../../features/weeklyPlans/routes";
-import { getUserSettings } from "../../services/api";
+import { getHomeDashboard, getUserSettings } from "../../services/api";
 
 jest.mock("../../services/api", () => ({
   ...jest.requireActual("../../services/api"),
   createAIWeeklyPlanDraft: jest.fn(),
+  getHomeDashboard: jest.fn(),
   getUserSettings: jest.fn(),
 }));
 
 beforeEach(() => {
+  getHomeDashboard.mockResolvedValue({
+    schedule14Days: { days: [] },
+  });
   getUserSettings.mockResolvedValue({
     meta: { hasTrainingProfile: false },
     trainingProfile: { profile: {} },
@@ -65,6 +69,15 @@ describe("weekly plan routes", () => {
     renderAt("/ai");
 
     expect(screen.getByRole("heading", { name: "AI Coach" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "AI Weekly Plan Builder" })
+    ).not.toBeInTheDocument();
+  });
+
+  test("treats /wizard as an unknown route", async () => {
+    renderAt("/wizard");
+
+    await waitFor(() => expect(window.location.pathname).toBe("/"));
     expect(
       screen.queryByRole("heading", { name: "AI Weekly Plan Builder" })
     ).not.toBeInTheDocument();

@@ -8,7 +8,6 @@
     "dev": "node server.js",
     "preview:ai-weekly-plan-text": "node scripts/previewRealWeeklyPlanGenerationPrompt.js",
     "preview:ai-weekly-plan-prompt": "npm run preview:ai-weekly-plan-text --",
-    "smoke:ai-weekly-plan-debug": "node scripts/smokeRealWeeklyPlanGenerationDebug.js",
     "run:ai-weekly-plan-pipeline": "node scripts/runSimpleWeeklyPlanAiPipeline.js",
     "test:prisma-api-flow": "node scripts/test-prisma-api-flow.js",
     "test:domain": "node --test test/domain/*.test.js",

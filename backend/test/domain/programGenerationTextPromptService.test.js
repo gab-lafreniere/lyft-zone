@@ -8,7 +8,9 @@ const {
 const {
   buildProgramGenerationPrompt,
 } = require('../../src/domain/programGeneration/prompts/programGenerationPrompt');
-const { createContext } = require('./weeklyPlanAiV4Fixtures');
+const {
+  createContext,
+} = require('../fixtures/programGeneration/currentProgramGenerationContext');
 
 function createServiceContext() {
   return createContext({

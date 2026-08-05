@@ -10,7 +10,9 @@ const {
   serializeEligibleExercisePoolPretty,
   stableStringify,
 } = require('../../src/domain/programGeneration/prompts/programGenerationPrompt');
-const { createContext } = require('./weeklyPlanAiV4Fixtures');
+const {
+  createContext,
+} = require('../fixtures/programGeneration/currentProgramGenerationContext');
 
 const SUPERSET_SET_COUNT_RULE =
   'All exercises within the same SUPERSET block must have exactly the same number of sets.';

@@ -17,7 +17,6 @@ import Train from "../pages/Train";
 import Progress from "../pages/Progress";
 import AICoach from "../pages/AICoach";
 import AIWeeklyPlanBuilder from "../pages/AIWeeklyPlanBuilder";
-import Wizard from "../pages/Wizard/Wizard";
 import { getAIWeeklyPlanBuilderPath } from "../features/weeklyPlans/routes";
 
 export default function AppRouter() {
@@ -44,8 +43,6 @@ export default function AppRouter() {
           <Route path={getAIWeeklyPlanBuilderPath()} element={<AIWeeklyPlanBuilder />} />
           <Route path="/ai" element={<AICoach />} />
         </Route>
-
-        <Route path="/wizard" element={<Wizard />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
