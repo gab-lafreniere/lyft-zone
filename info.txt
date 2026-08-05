@@ -66,7 +66,7 @@ WEEKLY PLAN (TEMPLATE)
 Le weekly plan est une structure hebdomadaire indépendante du temps.
 
 - Il représente un template d’entraînement sur une semaine
-- Il peut être créé manuellement ou généré (à terme via IA)
+- Il peut être créé manuellement ou généré par le AI Builder
 - Il n’est pas lié directement à un calendrier
 
 Contenu:
@@ -83,7 +83,9 @@ Statuts:
 - archived (future)
 
 Règles:
-- Un weekly plan commence toujours en draft
+- Un weekly plan manuel commence en draft
+- Le AI Builder actuel persiste directement sa génération initiale comme published
+- Toute modification subséquente passe par un edit draft avant republication
 - Pour être publié:
   - tous les workouts doivent être créés
   - aucun workout ne peut être vide
@@ -191,11 +193,14 @@ Historique (vision cible):
 GÉNÉRATION INITIALE (EN COURS)
 --------------------------------------------------
 
-- Un wizard utilisateur est prévu pour créer:
-  - un premier weekly plan
-  - puis un cycle associé
-- Ce flow est défini au niveau produit
-- Il n’est pas encore connecté au backend à ce stade
+- Le AI Builder actuel génère un weekly plan à partir du Training Profile sauvegardé dans Settings
+- Le plan généré est persisté comme published
+- L’utilisateur peut ensuite:
+  - consulter le résultat
+  - ouvrir un edit draft dans le Manual Builder
+  - republier le plan modifié
+  - convertir le weekly plan publié en cycle
+- Le futur onboarding remplacera l’ancien Wizard supprimé et sera développé séparément
 
 Limitation temporaire des objectifs:
 - AI Weekly Plan Builder (version actuelle) supporte uniquement HYPERTROPHY
@@ -259,9 +264,10 @@ NOTES IMPORTANTES
 - Les scheduled sessions deviennent la source de vérité pour la planification opérationnelle court terme
 
 ==================================================
-ENTRÉES UTILISATEUR DU WIZARD
+ENTRÉES UTILISATEUR DU FUTUR ONBOARDING
 ==================================================
-Le wizard vise l’intention utilisateur (pas la stratégie) et doit rester court (4 à 6 étapes maximum).
+Le futur onboarding visera l’intention utilisateur, pas la stratégie, et devra rester court.
+Le AI Builder actuel utilise directement le Training Profile sauvegardé dans Settings.
 
 Entrées principales:
 - Objectif principal (force, masse musculaire, cardio, mobilité)
@@ -279,8 +285,9 @@ Champ additionnel:
 * Le sexe et l'âge servent uniquement de contexte pour le AI Builder, le coaching longitunidal et pour personnaliser l'expérience d'utilisation.
   - Important: présentation neutre et utilitaire, aucune norme de valeur
 
-Sélection du mode:
-- Plan fixe ou Coach IA
+Sélection future du mode:
+- Plan fixe (AI builder inclus)
+- Coach IA longitudinal
 
 ==================================================
 PRIORITÉS MUSCULAIRES
@@ -339,6 +346,9 @@ MODULES PRINCIPAUX (ÉTAT ACTUEL)
   - Création de weekly plans (template)
   - Conversion en cycles multi-week
   - Édition via drafts
+  - Génération AI d’un weekly plan statique
+  - Pipeline AI actuel à trois appels
+  - Présentation du résultat et transition vers le Manual Builder
 
 - Base d’exercices avancée (voir section BASE D’EXERCICES)
   - Librairie structurée et validée
@@ -421,7 +431,7 @@ Actuellement:
 Fonctionnalités:
 - Consultation des plans indépendamment du cycle actif
 - Statut (draft / published)
-- Source (manual, AI à terme)
+- Source (manual ou AI)
 
 Note:
 - La librairie weekly plan affiche une seule version visible par plan:
@@ -482,6 +492,14 @@ L’API est structurée autour de plusieurs domaines métier:
 - cycles
 - exercises
 - scheduled sessions
+
+Endpoint AI actuel:
+
+POST /api/weekly-plans/ai-drafts
+
+- Déclenche uniquement le pipeline AI actuel à trois appels
+- Persiste la génération initiale comme weekly plan published
+- Ne passe par aucun ancien pipeline review ou repair
 
 --------------------------------------------------
 USERS
@@ -582,7 +600,7 @@ RÈGLES MÉTIER ET VALIDATIONS
 - Toutes les règles critiques vivent côté backend.
 - Le frontend peut refléter les règles pour l’UX, mais ne doit jamais être la source de vérité.
 - Les règles métier doivent être centralisées dans des services/domain helpers réutilisables.
-- Toute règle utilisée par le builder, le wizard ou les settings doit être validée côté backend avant persistance.
+- Toute règle utilisée par les builders, le futur onboarding ou les Settings doit être validée côté backend avant persistance.
 
 --------------------------------------------------
 USER EXERCISE POOL
@@ -767,7 +785,9 @@ FONCTIONNALITÉS PARTIELLES OU NON FINALISÉES
   - certaines logiques avancées ne sont pas encore stabilisées
   - les éléments visuels (week tabs, volume bars) ne doivent pas être considérés comme des sources métier finales
 
-- Le wizard utilisateur est défini au niveau produit mais n’est pas encore connecté au backend
+- L’ancien Wizard frontend a été supprimé
+- Le futur onboarding n’est pas encore implémenté
+- Le AI Builder actuel utilise directement le Training Profile sauvegardé dans Settings
 
 - Les pages Train, Progress et AI Coach sont présentes mais encore partiellement implémentées (UI principalement)
 
@@ -905,8 +925,10 @@ PRIORITÉS COURT TERME (FOCUS ACTUEL)
 - Clarifier et solidifier la logique de calendrier:
   - alignement entre structure du cycle et scheduled sessions
 
-- Brancher le wizard au backend:
-  - création initiale de weekly plan + cycle
+- Concevoir le futur onboarding:
+  - collecte initiale du profil utilisateur
+  - alimentation du Training Profile canonique
+  - lancement du AI Builder actuel
 
 - Améliorer la cohérence globale frontend/backend:
   - éliminer les zones encore partiellement mockées
@@ -914,11 +936,10 @@ PRIORITÉS COURT TERME (FOCUS ACTUEL)
 - Nettoyage technique:
   - retirer progressivement le code legacy (Sequelize / SQLite)
 
-- Préparer AI Builder initial:
-  - génération d’un weekly plan statique
-  - utilisation du User Exercise Pool
-  - respect du Training Profile
-  - justification des choix
+- Stabiliser le AI Builder actuel:
+  - conserver le pipeline à trois appels
+  - améliorer progressivement la qualité des programmes
+  - préserver le contrat Weekly Plan et l’intégration avec le Manual Builder
   - aucun comportement Coach IA longitudinal à ce stade
 
 --------------------------------------------------
@@ -968,10 +989,13 @@ PHASE 3: IA
 Objectif:
 Rendre le système adaptatif et intelligent.
 
-- AI Builder initial:
-  - génère un weekly plan statique basé sur le Training Profile, le User Exercise Pool et la demande utilisateur
+- AI Builder initial implémenté:
+  - génère un weekly plan statique basé sur le Training Profile et le User Exercise Pool
+  - utilise un pipeline à trois appels IA
+  - persiste le plan généré comme published
+  - permet ensuite l’édition via le Manual Builder
   - ne modifie pas automatiquement les cycles existants
-  - ne remplace pas le Coach IA longitudinal futur
+  - reste distinct du Coach IA longitudinal futur
 
 - Justification des choix
 - Ajustements intelligents dans le cycle
@@ -1317,10 +1341,12 @@ Principes clés:
 - Une décision à la fois
 - Feedback immédiat
 
-Wizard:
-- 4 à 6 étapes maximum
-- Résumé clair avant validation
-- Choix du mode: plan fixe ou Coach IA
+Futur onboarding:
+- parcours court (4 à 6 étapes maximum)
+- résumé clair avant validation
+- alimentation du Training Profile canonique
+- lancement possible du AI Builder
+- développement séparé de l’ancien Wizard supprimé
 
 Navigation produit recommandée:
 - Home
@@ -1334,9 +1360,6 @@ Navigation produit recommandée:
 CONTRAINTES POUR L’AGENT IA
 ==================================================
 - Le projet est développé principalement en local mais déployé (Vercel / Render / Neon)
-- Créer un fichier cursorrules adapté à ce projet
-- Fournir un script unique pour lancer frontend + backend
-- Gérer les commits et pushs GitHub
 - Messages de commit clairs, explicites et structurés
 - Respecter la vision produit sans simplification abusive
 
@@ -1355,8 +1378,36 @@ Règles AI Builder:
   - structure du plan
 - Les choix doivent être explicables
 - Les exercices existants d’un plan ne doivent pas être supprimés automatiquement par un changement de profil
-- Le builder privilégie une génération complète cohérente dès le premier appel.
-- Les appels IA suivants servent principalement à structurer, normaliser, compléter ou valider la réponse, sans modifier la logique d'entraînement lorsqu'aucune erreur n'est détectée.
+- Le pipeline AI actuel utilise exactement trois appels:
+  1. génération du programme textuel complet
+  2. extraction de sa structure
+  3. remplissage du squelette Weekly Plan
+- Les étapes déterministes construisent et verrouillent la géométrie, matérialisent les fills, valident le contrat final et calculent les métriques
+- Le pipeline actuel ne contient aucune passe review ou repair
+- L’ancien pipeline V4 de génération JSON directe, review, repair, analytics et audit a été supprimé
+- Les huit artefacts de diagnostic du pipeline actuel sont conservés
+
+==================================================
+PIPELINE AI WEEKLY PLAN ACTUEL
+==================================================
+
+Architecture active:
+1. génération textuelle complète
+2. extraction de structure
+3. construction déterministe du squelette
+4. remplissage des variables
+5. matérialisation et validation finale
+6. calcul des métriques
+7. persistance du weekly plan comme published
+8. présentation du résultat et accès au Manual Builder
+
+Principes:
+- une seule architecture AI Weekly Plan runtime
+- aucun ancien pipeline V4
+- aucune passe review ou repair
+- aucun exercice hors User Exercise Pool
+- le contrat Weekly Plan final est validé côté backend
+- le prompt actif, ses modèles et ses trois appels constituent la baseline à préserver
 
 ==================================================
 RÈGLE FINALE
@@ -1410,7 +1461,9 @@ Settings
 │   │   ├── Name
 │   │   ├── Email
 │   │   ├── Username
-│   │   └── Profile Picture
+│   │   ├── Profile Picture
+│   │   ├── Age
+│   │   └── Sexe
 │   │
 │   ├── Login & Security
 │   │   ├── Password (if email auth)
@@ -2380,5 +2433,8 @@ Principes:
 - les nouvelles règles de profil et de génération doivent vivre dans `domain`, pas dans les gros services legacy
 
 Persistance Training Profile:
-- `userProfile.onboardingSnapshot` devient la source canonique du nouveau Training Profile
-- `trainingPreferences`, `equipmentContext`, `constraints` et `musclePriorities` sont des miroirs écrits depuis cette source canonique
+- Le Training Profile sauvegardé dans Settings est la source canonique
+- `onboardingSnapshot` n’est pas la source canonique
+- Le futur onboarding devra écrire dans le même contrat canonique que Settings
+- Le AI Builder lit les valeurs sauvegardées du Training Profile
+- Les interfaces temporaires du AI Builder ne doivent modifier le backend qu’au moment explicite de la génération
