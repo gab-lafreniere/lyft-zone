@@ -42,7 +42,7 @@ function normalizeInteger(value) {
   }
 
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+  return Number.isInteger(parsed) ? parsed : null;
 }
 
 function normalizeString(value) {
@@ -230,7 +230,10 @@ function hasBiomechanicalConflict(left, right) {
   return (BIOMECHANICAL_CONFLICTS[comparableLeft] || []).includes(comparableRight);
 }
 
-export function validateTrainingProfileDraft(trainingProfileDraft) {
+export function validateTrainingProfileDraft(
+  trainingProfileDraft,
+  availabilityOptions = {}
+) {
   const fieldErrors = {};
   const formErrors = [];
   const primaryGoal = normalizeString(trainingProfileDraft?.primaryGoal);
@@ -261,6 +264,16 @@ export function validateTrainingProfileDraft(trainingProfileDraft) {
     trainingProfileDraft?.musclePriorities?.deprioritizedArea
   );
   const physicalNotes = normalizeString(trainingProfileDraft?.physicalNotes);
+  const sessionsPerWeekValues = Array.isArray(
+    availabilityOptions?.sessionsPerWeek
+  )
+    ? availabilityOptions.sessionsPerWeek.map(Number)
+    : [];
+  const durationPerSessionValues = Array.isArray(
+    availabilityOptions?.durationPerSession
+  )
+    ? availabilityOptions.durationPerSession.map(Number)
+    : [];
 
   if (!primaryGoal) {
     pushFieldError(fieldErrors, formErrors, "primaryGoal", "Primary goal is required.");
@@ -270,21 +283,27 @@ export function validateTrainingProfileDraft(trainingProfileDraft) {
     pushFieldError(fieldErrors, formErrors, "experience", "Experience is required.");
   }
 
-  if (sessionsPerWeek == null || sessionsPerWeek < 1 || sessionsPerWeek > 7) {
+  if (
+    sessionsPerWeek == null ||
+    !sessionsPerWeekValues.includes(sessionsPerWeek)
+  ) {
     pushFieldError(
       fieldErrors,
       formErrors,
       "availability.sessionsPerWeek",
-      "Sessions per week must be an integer between 1 and 7."
+      "Select an available sessions-per-week value."
     );
   }
 
-  if (durationPerSession == null || durationPerSession < 15 || durationPerSession > 120) {
+  if (
+    durationPerSession == null ||
+    !durationPerSessionValues.includes(durationPerSession)
+  ) {
     pushFieldError(
       fieldErrors,
       formErrors,
       "availability.durationPerSession",
-      "Duration per session must be an integer between 15 and 120 minutes."
+      "Select an available session duration."
     );
   }
 

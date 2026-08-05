@@ -21,7 +21,15 @@ beforeEach(() => {
   });
   getUserSettings.mockResolvedValue({
     meta: { hasTrainingProfile: false },
-    trainingProfile: { profile: {} },
+    trainingProfile: {
+      profile: {},
+      options: {
+        availability: {
+          sessionsPerWeek: [1, 2, 3, 4, 5, 6, 7],
+          durationPerSession: [15, 30, 45, 60, 75, 90, 105, 120],
+        },
+      },
+    },
   });
 });
 
@@ -56,11 +64,11 @@ describe("weekly plan routes", () => {
       screen.getByRole("heading", { name: "AI Weekly Plan Builder" })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Générer mon programme" })
+      await screen.findByText(/Your Training Profile is incomplete/)
     ).toBeInTheDocument();
     expect(
-      await screen.findByText(/Training Profile semble incomplet/)
-    ).toBeInTheDocument();
+      screen.getByRole("button", { name: "Generate my program" })
+    ).toBeDisabled();
   });
 
   test("keeps /ai assigned to AI Coach", () => {

@@ -92,7 +92,7 @@ export default function AIBuilderResult({ generationResult, backTarget }) {
     } catch (_error) {
       editInFlightRef.current = false;
       setIsOpeningDraft(false);
-      setActionError("Impossible d’ouvrir le programme pour le modifier.");
+      setActionError("We couldn't open the program for editing.");
     }
   };
 
@@ -103,26 +103,26 @@ export default function AIBuilderResult({ generationResult, backTarget }) {
     >
       <header>
         <p className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-emerald-700">
-          Généré avec AI
+          Generated with AI
         </p>
         <h2
           id="generated-program-title"
           className="mt-3 text-xl font-bold text-slate-900"
         >
-          {generationResult?.name || presentation.title || "Programme sans nom"}
+          {generationResult?.name || presentation.title || "Untitled program"}
         </h2>
       </header>
 
       <dl className="grid grid-cols-2 gap-3">
-        <MetricCard label="Exercices" value={metrics.totalExercises || 0} />
+        <MetricCard label="Exercises" value={metrics.totalExercises || 0} />
         <MetricCard label="Strength sets" value={metrics.strengthSets || 0} />
         <MetricCard
-          label="Durée moyenne"
+          label="Average duration"
           value={metrics.averageDurationMinutes || 0}
           suffix=" min"
         />
         <MetricCard
-          label="TUT moyen"
+          label="Average TUT"
           value={metrics.averageTUTMinutes || 0}
           suffix=" min"
         />
@@ -131,7 +131,7 @@ export default function AIBuilderResult({ generationResult, backTarget }) {
       {muscleDistribution.length > 0 ? (
         <section aria-labelledby="muscle-distribution-title">
           <h3 id="muscle-distribution-title" className="text-sm font-bold text-slate-900">
-            Distribution musculaire hebdomadaire
+            Weekly muscle distribution
           </h3>
           <div className="mt-3 space-y-2">
             {muscleDistribution.map((entry) => (
@@ -151,7 +151,7 @@ export default function AIBuilderResult({ generationResult, backTarget }) {
       {presentation.summary ? (
         <section aria-labelledby="presentation-summary-title">
           <h3 id="presentation-summary-title" className="text-sm font-bold text-slate-900">
-            Résumé
+            Summary
           </h3>
           <p className="mt-2 text-sm leading-6 text-slate-600">
             {presentation.summary}
@@ -159,9 +159,9 @@ export default function AIBuilderResult({ generationResult, backTarget }) {
         </section>
       ) : null}
 
-      <TextList title="Structure hebdomadaire" values={presentation.weeklyStructure} />
-      <TextList title="Priorités musculaires" values={presentation.musclePriorities} />
-      <TextList title="Gestion des contraintes" values={presentation.constraintNotes} />
+      <TextList title="Weekly structure" values={presentation.weeklyStructure} />
+      <TextList title="Muscle priorities" values={presentation.musclePriorities} />
+      <TextList title="Constraint management" values={presentation.constraintNotes} />
 
       {presentation.progression ? (
         <section aria-labelledby="progression-title">
@@ -174,7 +174,7 @@ export default function AIBuilderResult({ generationResult, backTarget }) {
         </section>
       ) : null}
 
-      <TextList title="Notes pratiques" values={presentation.coachingNotes} />
+      <TextList title="Coaching notes" values={presentation.coachingNotes} />
 
       {actionError ? (
         <p role="alert" className="text-sm font-medium text-red-600">

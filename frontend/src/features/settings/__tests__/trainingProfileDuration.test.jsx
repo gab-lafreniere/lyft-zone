@@ -3,6 +3,11 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { validateTrainingProfileDraft } from "../settingsValidation";
 import AvailabilitySection from "../trainingProfileSections/AvailabilitySection";
 
+const AVAILABILITY_OPTIONS = {
+  sessionsPerWeek: [1, 2, 3, 4, 5, 6, 7],
+  durationPerSession: [15, 30, 45, 60, 75, 90, 105, 120],
+};
+
 function createDraft(durationPerSession) {
   return {
     primaryGoal: "HYPERTROPHY",
@@ -29,13 +34,18 @@ function createDraft(durationPerSession) {
 }
 
 test("Training Profile frontend accepts 120 minutes and rejects 121", () => {
-  expect(validateTrainingProfileDraft(createDraft(120)).ok).toBe(true);
+  expect(
+    validateTrainingProfileDraft(createDraft(120), AVAILABILITY_OPTIONS).ok
+  ).toBe(true);
 
-  const aboveMaximum = validateTrainingProfileDraft(createDraft(121));
+  const aboveMaximum = validateTrainingProfileDraft(
+    createDraft(121),
+    AVAILABILITY_OPTIONS
+  );
   expect(aboveMaximum.ok).toBe(false);
   expect(
     aboveMaximum.fieldErrors["availability.durationPerSession"]
-  ).toBe("Duration per session must be an integer between 15 and 120 minutes.");
+  ).toBe("Select an available session duration.");
 });
 
 test("Availability duration control clamps increments at 120", () => {
@@ -46,6 +56,7 @@ test("Availability duration control clamps increments at 120", () => {
       draft={createDraft(120)}
       onChange={onChange}
       fieldErrors={{}}
+      options={AVAILABILITY_OPTIONS}
     />
   );
 
@@ -53,11 +64,5 @@ test("Availability duration control clamps increments at 120", () => {
     screen.getByRole("button", { name: "Increase Duration per session" })
   );
 
-  expect(onChange).toHaveBeenCalledWith(
-    expect.objectContaining({
-      availability: expect.objectContaining({
-        durationPerSession: "120",
-      }),
-    })
-  );
+  expect(onChange).not.toHaveBeenCalled();
 });

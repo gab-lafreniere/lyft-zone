@@ -7,11 +7,40 @@ export default function InlineStepper({
   min,
   max,
   step = 1,
+  allowedValues = [],
   onChange,
   quickPicks = [],
   suffix = "",
 }) {
   const numericValue = value == null || value === "" ? null : Number(value);
+  const orderedValues = Array.isArray(allowedValues)
+    ? allowedValues.map(Number).filter(Number.isFinite)
+    : [];
+  const usesOrderedValues = orderedValues.length > 0;
+  const visibleQuickPicks = usesOrderedValues
+    ? quickPicks.filter((quickPick) => orderedValues.includes(Number(quickPick)))
+    : quickPicks;
+  const currentIndex = usesOrderedValues
+    ? orderedValues.indexOf(numericValue)
+    : -1;
+  const previousValue = usesOrderedValues
+    ? currentIndex > 0
+      ? orderedValues[currentIndex - 1]
+      : currentIndex === -1 && numericValue != null
+        ? orderedValues.filter((candidate) => candidate < numericValue).at(-1) ?? null
+        : null
+    : numericValue == null
+      ? min
+      : clamp(numericValue - step);
+  const nextValue = usesOrderedValues
+    ? currentIndex >= 0 && currentIndex < orderedValues.length - 1
+      ? orderedValues[currentIndex + 1]
+      : currentIndex === -1 && numericValue != null
+        ? orderedValues.find((candidate) => candidate > numericValue) ?? null
+        : null
+    : numericValue == null
+      ? min
+      : clamp(numericValue + step);
 
   function clamp(nextValue) {
     return Math.max(min, Math.min(max, nextValue));
@@ -27,8 +56,9 @@ export default function InlineStepper({
       <div className="flex items-center gap-3">
         <button
           type="button"
-          onClick={() => onChange(String(clamp((numericValue ?? min) - step)))}
-          className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-700 transition"
+          onClick={() => previousValue != null && onChange(String(previousValue))}
+          disabled={previousValue == null || previousValue === numericValue}
+          className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-700 transition disabled:cursor-not-allowed disabled:opacity-40"
           aria-label={`Decrease ${label}`}
         >
           <span className="material-symbols-outlined">remove</span>
@@ -43,17 +73,18 @@ export default function InlineStepper({
 
         <button
           type="button"
-          onClick={() => onChange(String(clamp((numericValue ?? min) + step)))}
-          className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-700 transition"
+          onClick={() => nextValue != null && onChange(String(nextValue))}
+          disabled={nextValue == null || nextValue === numericValue}
+          className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-700 transition disabled:cursor-not-allowed disabled:opacity-40"
           aria-label={`Increase ${label}`}
         >
           <span className="material-symbols-outlined">add</span>
         </button>
       </div>
 
-      {quickPicks.length > 0 ? (
+      {visibleQuickPicks.length > 0 ? (
         <div className="flex flex-wrap gap-2">
-          {quickPicks.map((quickPick) => {
+          {visibleQuickPicks.map((quickPick) => {
             const isSelected = numericValue === quickPick;
 
             return (

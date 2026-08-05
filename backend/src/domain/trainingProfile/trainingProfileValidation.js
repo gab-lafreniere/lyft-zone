@@ -12,6 +12,12 @@ const {
   resolveEnvironmentInput,
 } = require('./trainingProfileEnvironment');
 const exerciseEnums = require('../../exercise-library/exercise-enums.json');
+const {
+  DURATION_PER_SESSION_VALUES,
+  SESSIONS_PER_WEEK_VALUES,
+  normalizeDurationPerSession,
+  normalizeSessionsPerWeek,
+} = require('./trainingProfileAvailability');
 
 const TRAINING_GOALS = new Set([
   'HYPERTROPHY',
@@ -102,19 +108,6 @@ function normalizeStringArray(value) {
 function normalizeSignalType(value) {
   const normalized = normalizeOptionalString(value);
   return normalized || null;
-}
-
-function normalizeInteger(value) {
-  if (value == null || value === '') {
-    return null;
-  }
-
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return null;
-  }
-
-  return Math.trunc(parsed);
 }
 
 function pushIssue(issues, path, code, message) {
@@ -595,8 +588,12 @@ function validateTrainingProfileInput(payload) {
   const deprioritizedAreas = normalizeAreaArray(musclePrioritiesInput.deprioritizedArea);
   const primaryFocus = primaryFocusValues[0] || null;
   const deprioritizedArea = deprioritizedAreas[0] || null;
-  const sessionsPerWeek = normalizeInteger(payload?.availability?.sessionsPerWeek);
-  const durationPerSession = normalizeInteger(payload?.availability?.durationPerSession);
+  const sessionsPerWeek = normalizeSessionsPerWeek(
+    payload?.availability?.sessionsPerWeek
+  );
+  const durationPerSession = normalizeDurationPerSession(
+    payload?.availability?.durationPerSession
+  );
   const experience = normalizeLowerString(payload?.experience);
   const environment = resolveEnvironmentInput(payload?.environment);
   const movementConstraints = normalizeMovementConstraintsInput(
@@ -703,21 +700,21 @@ function validateTrainingProfileInput(payload) {
     });
   }
 
-  if (sessionsPerWeek == null || sessionsPerWeek < 1 || sessionsPerWeek > 7) {
+  if (sessionsPerWeek == null) {
     pushIssue(
       issues,
       'availability.sessionsPerWeek',
-      'INVALID_RANGE',
-      'sessionsPerWeek must be an integer between 1 and 7'
+      'INVALID_ENUM',
+      `sessionsPerWeek must be one of: ${SESSIONS_PER_WEEK_VALUES.join(', ')}`
     );
   }
 
-  if (durationPerSession == null || durationPerSession < 15 || durationPerSession > 120) {
+  if (durationPerSession == null) {
     pushIssue(
       issues,
       'availability.durationPerSession',
-      'INVALID_RANGE',
-      'durationPerSession must be an integer between 15 and 120'
+      'INVALID_ENUM',
+      `durationPerSession must be one of: ${DURATION_PER_SESSION_VALUES.join(', ')}`
     );
   }
 

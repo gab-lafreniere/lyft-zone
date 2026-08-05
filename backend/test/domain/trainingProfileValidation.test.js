@@ -99,10 +99,32 @@ test('validateTrainingProfileInput accepts 120 minutes and rejects 121 without c
     ),
     {
       path: 'availability.durationPerSession',
-      code: 'INVALID_RANGE',
-      message: 'durationPerSession must be an integer between 15 and 120',
+      code: 'INVALID_ENUM',
+      message: 'durationPerSession must be one of: 15, 30, 45, 60, 75, 90, 105, 120',
     }
   );
+});
+
+test('validateTrainingProfileInput accepts only the ordered availability values', () => {
+  const sessionValues = [1, 2, 3, 4, 5, 6, 7];
+  const durationValues = [15, 30, 45, 60, 75, 90, 105, 120];
+
+  sessionValues.forEach((sessionsPerWeek) => {
+    const payload = createValidPayload();
+    payload.availability.sessionsPerWeek = sessionsPerWeek;
+    assert.equal(validateTrainingProfileInput(payload).ok, true);
+  });
+  durationValues.forEach((durationPerSession) => {
+    const payload = createValidPayload();
+    payload.availability.durationPerSession = durationPerSession;
+    assert.equal(validateTrainingProfileInput(payload).ok, true);
+  });
+
+  for (const durationPerSession of [16, 50, 119, 60.5]) {
+    const payload = createValidPayload();
+    payload.availability.durationPerSession = durationPerSession;
+    assert.equal(validateTrainingProfileInput(payload).ok, false);
+  }
 });
 
 test('validateTrainingProfileInput keeps STRENGTH and MIXED in the product contract', () => {

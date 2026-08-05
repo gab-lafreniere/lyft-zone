@@ -294,6 +294,10 @@ export async function updateTrainingProfileSettings(trainingProfileDraft) {
   return readJsonResponse(response);
 }
 
+export async function updateTrainingProfileAvailability(availability) {
+  return updateTrainingProfileSettings({ availability });
+}
+
 export async function analyzeMovementConstraintsPainIssue(payload) {
   const userId = await ensureCurrentUserId();
   const response = await fetch(

@@ -24,6 +24,7 @@ export default function TrainingProfileForm({
   draft,
   onChange,
   fieldErrors,
+  options,
 }) {
   const SectionComponent = SECTION_COMPONENTS[sectionId];
 
@@ -39,7 +40,12 @@ export default function TrainingProfileForm({
 
   return (
     <div className="space-y-6">
-      <SectionComponent draft={draft} onChange={onChange} fieldErrors={fieldErrors} />
+      <SectionComponent
+        draft={draft}
+        onChange={onChange}
+        fieldErrors={fieldErrors}
+        options={options}
+      />
 
       <Card className="border-slate-200 bg-slate-50/90 shadow-none">
         <div className="p-4 text-sm text-slate-600 md:p-5">

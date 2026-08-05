@@ -3,6 +3,7 @@ import {
   fetchExercises,
   fetchUserExercisePool,
   fetchUserExercisePoolResponse,
+  updateTrainingProfileAvailability,
   updateUserProfile,
 } from "../api";
 
@@ -213,6 +214,46 @@ describe("createAIWeeklyPlanDraft", () => {
       details,
       status: 422,
     });
+  });
+});
+
+describe("updateTrainingProfileAvailability", () => {
+  beforeEach(() => {
+    global.fetch = jest.fn();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("patches only availability through the canonical Training Profile endpoint", async () => {
+    const responseBody = {
+      trainingProfile: {
+        profile: {
+          availability: { sessionsPerWeek: 5, durationPerSession: 90 },
+        },
+      },
+    };
+    mockJsonResponse(responseBody);
+
+    const result = await updateTrainingProfileAvailability({
+      sessionsPerWeek: 5,
+      durationPerSession: 90,
+    });
+
+    const [requestUrl, requestOptions] = global.fetch.mock.calls[0];
+    expect(new URL(requestUrl).pathname).toMatch(
+      /^\/api\/users\/[^/]+\/settings\/training-profile$/
+    );
+    expect(requestOptions.method).toBe("PATCH");
+    expect(JSON.parse(requestOptions.body)).toEqual({
+      availability: {
+        sessionsPerWeek: 5,
+        durationPerSession: 90,
+      },
+    });
+    expect(result).toBe(responseBody);
   });
 });
 

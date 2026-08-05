@@ -21,6 +21,9 @@ const {
   calculateCurrentAge,
   deriveDemographicsStatus,
 } = require('../userProfile/userProfileDemographics');
+const {
+  getTrainingProfileAvailabilityOptions,
+} = require('./trainingProfileAvailability');
 
 function createDefaultTrainingProfile() {
   return {
@@ -135,6 +138,9 @@ function buildSettingsResponse(user = {}, options = {}) {
     trainingProfile: {
       profile: snapshot.profile,
       derived: snapshot.derived,
+      options: {
+        availability: getTrainingProfileAvailabilityOptions(),
+      },
     },
     aiCoaching: {
       mode: user.profile?.trainingMode === 'AI_COACH' ? 'on' : 'off',

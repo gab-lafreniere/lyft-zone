@@ -7,6 +7,7 @@ export default function TrainingProfileSectionScreen({
   draft,
   onChange,
   fieldErrors,
+  options,
   showTitle = true,
 }) {
   return (
@@ -34,6 +35,7 @@ export default function TrainingProfileSectionScreen({
         draft={draft}
         onChange={onChange}
         fieldErrors={fieldErrors}
+        options={options}
       />
     </div>
   );

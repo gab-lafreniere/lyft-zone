@@ -114,6 +114,8 @@ export default function SettingsDrawer({ isOpen, onClose }) {
     () => getTrainingProfileHasErrors(fieldErrors),
     [fieldErrors]
   );
+  const trainingProfileAvailabilityOptions =
+    settingsData?.trainingProfile?.options?.availability || {};
   const settingsRootGroups = useMemo(
     () => resolveSettingsMenuGroups(SETTINGS_ROOT_GROUPS, SETTINGS_ROOT_ITEMS),
     []
@@ -277,7 +279,10 @@ export default function SettingsDrawer({ isOpen, onClose }) {
         return;
       }
 
-      const validation = validateTrainingProfileDraft(currentDraft);
+      const validation = validateTrainingProfileDraft(
+        currentDraft,
+        trainingProfileAvailabilityOptions
+      );
       if (!validation.ok) {
         if (shouldCloseAfterSave) {
           closeAfterSaveRef.current = false;
@@ -384,6 +389,7 @@ export default function SettingsDrawer({ isOpen, onClose }) {
       finalizeClose,
       initialTrainingProfileDraft,
       showSavedFlash,
+      trainingProfileAvailabilityOptions,
     ]
   );
 
@@ -468,7 +474,10 @@ export default function SettingsDrawer({ isOpen, onClose }) {
       return;
     }
 
-    const validation = validateTrainingProfileDraft(trainingProfileDraft);
+    const validation = validateTrainingProfileDraft(
+      trainingProfileDraft,
+      trainingProfileAvailabilityOptions
+    );
     if (!validation.ok || currentSnapshot === lastFailedSnapshotRef.current) {
       clearAutosaveTimer();
       setIsAutoSavePending(false);
@@ -497,7 +506,10 @@ export default function SettingsDrawer({ isOpen, onClose }) {
 
   function handleDraftChange(nextDraft) {
     const nextSnapshot = serializeTrainingProfileDraft(nextDraft);
-    const validation = validateTrainingProfileDraft(nextDraft);
+    const validation = validateTrainingProfileDraft(
+      nextDraft,
+      trainingProfileAvailabilityOptions
+    );
 
     latestDraftRef.current = nextDraft;
     setTrainingProfileDraft(nextDraft);
@@ -520,7 +532,10 @@ export default function SettingsDrawer({ isOpen, onClose }) {
   }
 
   function requestClose() {
-    const validation = validateTrainingProfileDraft(trainingProfileDraft);
+    const validation = validateTrainingProfileDraft(
+      trainingProfileDraft,
+      trainingProfileAvailabilityOptions
+    );
     const hasLocalValidationError = Boolean(trainingProfileDraft) && !validation.ok;
 
     if (!hasUnsavedChanges) {
@@ -739,6 +754,7 @@ export default function SettingsDrawer({ isOpen, onClose }) {
           draft={trainingProfileDraft}
           onChange={handleDraftChange}
           fieldErrors={fieldErrors}
+          options={trainingProfileAvailabilityOptions}
           showTitle={false}
         />
       </div>

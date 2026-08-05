@@ -380,6 +380,134 @@ test('updateTrainingProfileSettings validates, maps, persists, and returns the f
   assert.equal(result.account.profile.email, 'athlete@example.com');
 });
 
+test('updateTrainingProfileSettings merges an availability-only patch into the latest canonical profile', async () => {
+  const currentProfile = createNormalizedCanonicalProfile();
+  let stored = mapTrainingProfileToUserProfileUpdate(currentProfile);
+  let upsertArgs = null;
+  const prisma = {
+    user: {
+      findUnique: async (args) => {
+        if (args.select?.id && !args.select?.email) {
+          return { id: 'user_123' };
+        }
+
+        return {
+          id: 'user_123',
+          email: 'athlete@example.com',
+          profile: {
+            trainingMode: 'FIXED',
+            onboardingSnapshot: stored.onboardingSnapshot,
+          },
+        };
+      },
+    },
+    userProfile: {
+      upsert: async (args) => {
+        upsertArgs = args;
+        stored = { ...stored, ...args.update };
+        return stored;
+      },
+    },
+  };
+  prisma.$transaction = async (operation) => operation(prisma);
+
+  const result = await updateTrainingProfileSettings(
+    'user_123',
+    {
+      availability: {
+        sessionsPerWeek: 5,
+        durationPerSession: 90,
+      },
+    },
+    { prisma }
+  );
+
+  assert.equal(upsertArgs.update.availableSessionsPerWeek, 5);
+  assert.equal(upsertArgs.update.sessionDurationMinutes, 90);
+  assert.deepEqual(upsertArgs.update.onboardingSnapshot.profile.availability, {
+    sessionsPerWeek: 5,
+    durationPerSession: 90,
+  });
+  assert.equal(
+    upsertArgs.update.onboardingSnapshot.profile.physicalNotes,
+    currentProfile.physicalNotes
+  );
+  assert.deepEqual(
+    upsertArgs.update.onboardingSnapshot.profile.musclePriorities,
+    currentProfile.musclePriorities
+  );
+  assert.deepEqual(result.trainingProfile.profile.availability, {
+    sessionsPerWeek: 5,
+    durationPerSession: 90,
+  });
+  assert.deepEqual(result.trainingProfile.options.availability, {
+    sessionsPerWeek: [1, 2, 3, 4, 5, 6, 7],
+    durationPerSession: [15, 30, 45, 60, 75, 90, 105, 120],
+  });
+});
+
+test('availability-only updates reject unknown fields and invalid values without writing', async () => {
+  let transactionCalled = false;
+  const prisma = {
+    $transaction: async () => {
+      transactionCalled = true;
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      updateTrainingProfileSettings(
+        'user_123',
+        {
+          availability: {
+            sessionsPerWeek: 4,
+            durationPerSession: 50,
+            extra: true,
+          },
+          unexpected: true,
+        },
+        { prisma }
+      ),
+    (error) => {
+      assert.equal(error.code, 'VALIDATION_ERROR');
+      assert.match(JSON.stringify(error.details), /unexpected|extra|durationPerSession/);
+      return true;
+    }
+  );
+  assert.equal(transactionCalled, false);
+});
+
+test('getUserSettings keeps a legacy availability value readable without rewriting it', async () => {
+  const profile = createNormalizedCanonicalProfile();
+  profile.availability.durationPerSession = 50;
+  let writeCalled = false;
+  const prisma = {
+    user: {
+      findUnique: async () => ({
+        id: 'user_123',
+        email: 'athlete@example.com',
+        profile: {
+          trainingMode: 'FIXED',
+          onboardingSnapshot: {
+            schemaVersion: TRAINING_PROFILE_SCHEMA_VERSION,
+            profile,
+          },
+        },
+      }),
+    },
+    userProfile: {
+      upsert: async () => {
+        writeCalled = true;
+      },
+    },
+  };
+
+  const result = await getUserSettings('user_123', { prisma });
+
+  assert.equal(result.trainingProfile.profile.availability.durationPerSession, 50);
+  assert.equal(writeCalled, false);
+});
+
 test('updateTrainingProfileSettings preserves MIXED in the canonical snapshot and omits only its Prisma mirror', async () => {
   const payload = {
     ...createCanonicalPayload(),

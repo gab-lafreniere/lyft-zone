@@ -10,6 +10,12 @@ const {
   buildSettingsResponse,
 } = require('../src/domain/trainingProfile/settingsResponse');
 const {
+  DURATION_PER_SESSION_VALUES,
+  SESSIONS_PER_WEEK_VALUES,
+  normalizeDurationPerSession,
+  normalizeSessionsPerWeek,
+} = require('../src/domain/trainingProfile/trainingProfileAvailability');
+const {
   analyzeMovementConstraints,
 } = require('./movementConstraintAnalysisService');
 const {
@@ -151,6 +157,107 @@ function buildCanonicalTrainingProfileUpdate(payload) {
   return mapTrainingProfileToUserProfileUpdate(validation.value);
 }
 
+const COMPLETE_TRAINING_PROFILE_ROOT_FIELDS = new Set([
+  'primaryGoal',
+  'musclePriorities',
+  'experience',
+  'environment',
+  'movementConstraints',
+  'exercisePreference',
+  'cardioProfile',
+  'physicalNotes',
+]);
+
+function isAvailabilityOnlyPatchCandidate(payload) {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    Array.isArray(payload) ||
+    !hasOwn(payload, 'availability')
+  ) {
+    return false;
+  }
+
+  return !Object.keys(payload).some((key) =>
+    COMPLETE_TRAINING_PROFILE_ROOT_FIELDS.has(key)
+  );
+}
+
+function validateAvailabilityOnlyPatch(payload) {
+  const issues = [];
+  const rootKeys = Object.keys(payload || {});
+  rootKeys.forEach((key) => {
+    if (key !== 'availability') {
+      issues.push({
+        path: key,
+        code: 'UNKNOWN_FIELD',
+        message: 'Field is not allowed in an availability-only update',
+      });
+    }
+  });
+
+  const availability = payload?.availability;
+  if (
+    !availability ||
+    typeof availability !== 'object' ||
+    Array.isArray(availability)
+  ) {
+    issues.push({
+      path: 'availability',
+      code: 'INVALID_TYPE',
+      message: 'availability must be an object',
+    });
+  }
+
+  const availabilityKeys =
+    availability && typeof availability === 'object' && !Array.isArray(availability)
+      ? Object.keys(availability)
+      : [];
+  availabilityKeys.forEach((key) => {
+    if (key !== 'sessionsPerWeek' && key !== 'durationPerSession') {
+      issues.push({
+        path: `availability.${key}`,
+        code: 'UNKNOWN_FIELD',
+        message: 'Field is not allowed in an availability-only update',
+      });
+    }
+  });
+
+  const sessionsPerWeek = normalizeSessionsPerWeek(
+    availability?.sessionsPerWeek
+  );
+  const durationPerSession = normalizeDurationPerSession(
+    availability?.durationPerSession
+  );
+
+  if (sessionsPerWeek == null) {
+    issues.push({
+      path: 'availability.sessionsPerWeek',
+      code: 'INVALID_ENUM',
+      message: `sessionsPerWeek must be one of: ${SESSIONS_PER_WEEK_VALUES.join(', ')}`,
+    });
+  }
+
+  if (durationPerSession == null) {
+    issues.push({
+      path: 'availability.durationPerSession',
+      code: 'INVALID_ENUM',
+      message: `durationPerSession must be one of: ${DURATION_PER_SESSION_VALUES.join(', ')}`,
+    });
+  }
+
+  if (issues.length > 0) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'Training profile availability payload is invalid',
+      issues
+    );
+  }
+
+  return { sessionsPerWeek, durationPerSession };
+}
+
 async function upsertUserProfileRecord(userId, data, prisma) {
   return prisma.userProfile.upsert({
     where: { userId },
@@ -177,7 +284,34 @@ async function getUserSettings(userId, deps = {}) {
 async function updateTrainingProfileSettings(userId, payload, deps = {}) {
   const prisma = deps.prisma || getPrisma();
 
-  await upsertCanonicalTrainingProfile(userId, payload, prisma);
+  if (isAvailabilityOnlyPatchCandidate(payload)) {
+    const availability = validateAvailabilityOnlyPatch(payload);
+
+    await runSerializableTransaction(prisma, async (tx) => {
+      const currentUser = await fetchUserSettingsRecord(userId, tx);
+      const currentSettings = buildSettingsResponse(currentUser, {
+        referenceDate: deps.now,
+      });
+
+      if (!currentSettings.meta.hasTrainingProfile) {
+        throw new ApiError(
+          409,
+          'PROFILE_NOT_READY',
+          'Training Profile must be completed before updating availability'
+        );
+      }
+
+      const mergedProfile = {
+        ...currentSettings.trainingProfile.profile,
+        availability,
+      };
+      const data = buildCanonicalTrainingProfileUpdate(mergedProfile);
+      await upsertUserProfileRecord(userId, data, tx);
+    });
+  } else {
+    await upsertCanonicalTrainingProfile(userId, payload, prisma);
+  }
+
   const user = await fetchUserSettingsRecord(userId, prisma);
 
   return buildSettingsResponse(user, { referenceDate: deps.now });

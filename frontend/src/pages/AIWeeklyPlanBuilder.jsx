@@ -5,28 +5,34 @@ import AIBuilderResult from "../features/weeklyPlans/aiBuilder/AIBuilderResult";
 import { isAIWeeklyPlanFrontendEnabled } from "../features/weeklyPlans/featureFlags";
 import { resolveBackTarget } from "../features/weeklyPlans/navigation";
 import { getWeeklyPlansPath } from "../features/weeklyPlans/routes";
-import { createAIWeeklyPlanDraft, getUserSettings } from "../services/api";
+import {
+  createAIWeeklyPlanDraft,
+  getUserSettings,
+  updateTrainingProfileAvailability,
+} from "../services/api";
 import Button from "../ui/Button";
 
 const LOADING_MESSAGE_INTERVAL_MS = 3500;
+const EMPTY_AVAILABILITY_OPTIONS = Object.freeze({});
+const EMPTY_AVAILABILITY_VALUES = Object.freeze([]);
 
 const LOADING_MESSAGES = [
-  "Analyse de ton profil d’entraînement",
-  "Sélection des exercices compatibles",
-  "Organisation de tes séances",
-  "Vérification du volume et de la durée",
-  "Validation de la qualité du programme",
+  "Analyzing your Training Profile",
+  "Selecting compatible exercises",
+  "Organizing your sessions",
+  "Checking volume and duration",
+  "Reviewing program quality",
 ];
 
 const PROFILE_ERROR_MESSAGES = {
   PROFILE_NOT_READY:
-    "Ton Training Profile doit être complété avant de générer un programme.",
+    "Complete your Training Profile before generating a program.",
   UNSUPPORTED_PROFILE_SCHEMA_VERSION:
-    "Ton Training Profile utilise une version qui n’est pas encore prise en charge. Ouvre-le pour le mettre à jour.",
+    "Your Training Profile uses a version that is not yet supported. Open it to update your profile.",
   EMPTY_EXERCISE_POOL:
-    "Aucun exercice compatible n’a été trouvé avec ton Training Profile. Revois ton profil avant de réessayer.",
+    "No compatible exercises were found for your Training Profile. Review your profile and try again.",
   AI_WEEKLY_PLAN_UNSUPPORTED_PRIMARY_GOAL:
-    "Ton objectif principal n’est pas encore pris en charge par le générateur AI. Revois ton Training Profile pour continuer.",
+    "Your primary goal is not yet supported by the AI Builder. Review your Training Profile to continue.",
 };
 
 const RETRYABLE_ERROR_CODES = new Set([
@@ -40,23 +46,23 @@ const RETRYABLE_ERROR_CODES = new Set([
 ]);
 
 const VALUE_LABELS = {
-  HYPERTROPHY: "Hypertrophie",
-  STRENGTH: "Force",
-  MIXED: "Mixte",
-  beginner: "Débutant",
-  intermediate: "Intermédiaire",
-  advanced: "Avancé",
-  full_gym: "Salle complète",
-  commercial_gym: "Salle commerciale",
-  minimal_home: "Équipement maison minimal",
-  gym: "Salle",
-  home: "Maison",
+  HYPERTROPHY: "Hypertrophy",
+  STRENGTH: "Strength",
+  MIXED: "Mixed",
+  beginner: "Beginner",
+  intermediate: "Intermediate",
+  advanced: "Advanced",
+  full_gym: "Full gym",
+  commercial_gym: "Commercial gym",
+  minimal_home: "Minimal home equipment",
+  gym: "Gym",
+  home: "Home",
   ai: "AI",
 };
 
 function formatProfileValue(value) {
   if (value === null || value === undefined || value === "") {
-    return "Non renseigné";
+    return "Not provided";
   }
 
   if (VALUE_LABELS[value]) {
@@ -80,15 +86,14 @@ function getPublicGenerationError(error) {
   if (code === "AI_WEEKLY_PLAN_BUILDER_DISABLED") {
     return {
       kind: "disabled",
-      message: "Le générateur AI est temporairement indisponible.",
+      message: "The AI Builder is temporarily unavailable.",
     };
   }
 
   if (RETRYABLE_ERROR_CODES.has(code)) {
     return {
       kind: "retryable",
-      message:
-        "La génération n’a pas pu être terminée. Tu peux lancer une nouvelle tentative.",
+      message: "We couldn't finish generating your program. You can try again.",
     };
   }
 
@@ -96,18 +101,109 @@ function getPublicGenerationError(error) {
     return {
       kind: "network",
       message:
-        "La connexion a été interrompue pendant la génération. Le programme pourrait quand même avoir été créé.",
+        "The connection was interrupted during generation. Your program may still have been created.",
     };
   }
 
   return {
     kind: "unknown",
-    message:
-      "Impossible de générer le programme pour le moment. Réessaie plus tard.",
+    message: "We can't generate your program right now. Try again later.",
   };
 }
 
-function TrainingProfileSummary({ settingsState }) {
+function getAvailability(settings) {
+  const availability = settings?.trainingProfile?.profile?.availability || {};
+  return {
+    sessionsPerWeek: availability.sessionsPerWeek ?? null,
+    durationPerSession: availability.durationPerSession ?? null,
+  };
+}
+
+function areAvailabilityValuesEqual(left, right) {
+  return (
+    left?.sessionsPerWeek === right?.sessionsPerWeek &&
+    left?.durationPerSession === right?.durationPerSession
+  );
+}
+
+function getAdjacentValues(allowedValues, currentValue) {
+  const values = Array.isArray(allowedValues) ? allowedValues : [];
+  const index = values.indexOf(currentValue);
+
+  if (index >= 0) {
+    return {
+      previous: index > 0 ? values[index - 1] : null,
+      next: index < values.length - 1 ? values[index + 1] : null,
+      isAllowed: true,
+    };
+  }
+
+  return {
+    previous: values.filter((value) => value < currentValue).at(-1) ?? null,
+    next: values.find((value) => value > currentValue) ?? null,
+    isAllowed: false,
+  };
+}
+
+function AvailabilityStepper({
+  label,
+  value,
+  allowedValues,
+  onChange,
+  disabled,
+  formatValue,
+}) {
+  const adjacent = getAdjacentValues(allowedValues, value);
+
+  return (
+    <div className="rounded-2xl bg-slate-50 p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => adjacent.previous != null && onChange(adjacent.previous)}
+          disabled={disabled || adjacent.previous == null}
+          aria-label={`Decrease ${label.toLowerCase()}`}
+          className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:border-primary/40 disabled:cursor-not-allowed disabled:opacity-35"
+        >
+          <span className="material-symbols-outlined" aria-hidden="true">remove</span>
+        </button>
+        <output
+          aria-live="polite"
+          className="min-w-0 flex-1 text-center text-sm font-bold text-slate-900"
+        >
+          {formatValue(value)}
+        </output>
+        <button
+          type="button"
+          onClick={() => adjacent.next != null && onChange(adjacent.next)}
+          disabled={disabled || adjacent.next == null}
+          aria-label={`Increase ${label.toLowerCase()}`}
+          className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:border-primary/40 disabled:cursor-not-allowed disabled:opacity-35"
+        >
+          <span className="material-symbols-outlined" aria-hidden="true">add</span>
+        </button>
+      </div>
+      {!adjacent.isAllowed ? (
+        <p className="mt-2 text-xs font-medium leading-5 text-amber-700">
+          Select an available value before generating.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function TrainingProfileSummary({
+  settingsState,
+  draftAvailability,
+  availabilityOptions,
+  onAvailabilityChange,
+  controlsDisabled,
+  onRetryLoad,
+  onOpenSettings,
+}) {
   if (settingsState.status === "loading") {
     return (
       <div className="flex items-center gap-3 text-sm text-slate-500">
@@ -115,23 +211,26 @@ function TrainingProfileSummary({ settingsState }) {
           aria-hidden="true"
           className="size-5 animate-spin rounded-full border-2 border-slate-200 border-t-primary"
         />
-        Chargement du résumé…
+        Loading your Training Profile…
       </div>
     );
   }
 
   if (settingsState.status === "unavailable") {
     return (
-      <p className="text-sm leading-6 text-slate-500">
-        Le résumé du profil est indisponible. Tu peux quand même demander au
-        backend de vérifier ton profil et de préparer ton programme.
-      </p>
+      <div className="space-y-3">
+        <p className="text-sm leading-6 text-slate-500">
+          We couldn't load your Training Profile.
+        </p>
+        <Button type="button" variant="secondary" onClick={onRetryLoad}>
+          Try loading again
+        </Button>
+      </div>
     );
   }
 
   const settings = settingsState.data;
   const profile = settings?.trainingProfile?.profile || {};
-  const availability = profile.availability || {};
   const priorities = profile.musclePriorities || {};
   const environment = profile.environment || {};
   const muscleFocuses = [
@@ -145,16 +244,21 @@ function TrainingProfileSummary({ settingsState }) {
   return (
     <div className="space-y-4">
       {settings?.meta?.hasTrainingProfile === false ? (
-        <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Ton Training Profile semble incomplet. Le backend effectuera la
-          vérification finale au moment de la génération.
-        </p>
+        <div className="space-y-3 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <p>
+            Your Training Profile is incomplete. Complete it in Settings before
+            generating a program.
+          </p>
+          <Button type="button" variant="secondary" onClick={onOpenSettings}>
+            Open Training Profile
+          </Button>
+        </div>
       ) : null}
 
       <dl className="grid grid-cols-2 gap-3">
         <div className="rounded-2xl bg-slate-50 p-3">
           <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Objectif
+            Goal
           </dt>
           <dd className="mt-1 text-sm font-bold text-slate-800">
             {formatProfileValue(profile.primaryGoal)}
@@ -162,45 +266,45 @@ function TrainingProfileSummary({ settingsState }) {
         </div>
         <div className="rounded-2xl bg-slate-50 p-3">
           <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Niveau
+            Experience
           </dt>
           <dd className="mt-1 text-sm font-bold text-slate-800">
             {formatProfileValue(profile.experience)}
           </dd>
         </div>
+        <AvailabilityStepper
+          label="Sessions per week"
+          value={draftAvailability?.sessionsPerWeek}
+          allowedValues={availabilityOptions?.sessionsPerWeek}
+          onChange={(value) => onAvailabilityChange("sessionsPerWeek", value)}
+          disabled={controlsDisabled}
+          formatValue={(value) =>
+            value == null ? "Not provided" : `${value} sessions per week`
+          }
+        />
+        <AvailabilityStepper
+          label="Duration per session"
+          value={draftAvailability?.durationPerSession}
+          allowedValues={availabilityOptions?.durationPerSession}
+          onChange={(value) => onAvailabilityChange("durationPerSession", value)}
+          disabled={controlsDisabled}
+          formatValue={(value) =>
+            value == null ? "Not provided" : `${value} min per session`
+          }
+        />
         <div className="rounded-2xl bg-slate-50 p-3">
           <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Séances
-          </dt>
-          <dd className="mt-1 text-sm font-bold text-slate-800">
-            {availability.sessionsPerWeek
-              ? `${availability.sessionsPerWeek} par semaine`
-              : "Non renseigné"}
-          </dd>
-        </div>
-        <div className="rounded-2xl bg-slate-50 p-3">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Durée
-          </dt>
-          <dd className="mt-1 text-sm font-bold text-slate-800">
-            {availability.durationPerSession
-              ? `${availability.durationPerSession} min par séance`
-              : "Non renseigné"}
-          </dd>
-        </div>
-        <div className="rounded-2xl bg-slate-50 p-3">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Priorités
+            Priorities
           </dt>
           <dd className="mt-1 text-sm font-bold text-slate-800">
             {muscleFocuses.length
               ? muscleFocuses.map(formatProfileValue).join(", ")
-              : "Non renseigné"}
+              : "Not provided"}
           </dd>
         </div>
         <div className="rounded-2xl bg-slate-50 p-3">
           <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Équipement
+            Equipment
           </dt>
           <dd className="mt-1 text-sm font-bold text-slate-800">
             {formatProfileValue(equipmentValue)}
@@ -219,7 +323,9 @@ export default function AIWeeklyPlanBuilder() {
     status: "loading",
     data: null,
   });
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [savedAvailability, setSavedAvailability] = useState(null);
+  const [draftAvailability, setDraftAvailability] = useState(null);
+  const [submissionStage, setSubmissionStage] = useState(null);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [generationError, setGenerationError] = useState(null);
   const [generationResult, setGenerationResult] = useState(null);
@@ -228,6 +334,24 @@ export default function AIWeeklyPlanBuilder() {
   const inFlightRef = useRef(false);
   const loadingTimerRef = useRef(null);
   const settingsRequestIdRef = useRef(0);
+  const isSubmitting = submissionStage !== null;
+  const availabilityOptions =
+    settingsState.data?.trainingProfile?.options?.availability ||
+    EMPTY_AVAILABILITY_OPTIONS;
+  const sessionsValues =
+    availabilityOptions.sessionsPerWeek || EMPTY_AVAILABILITY_VALUES;
+  const durationValues =
+    availabilityOptions.durationPerSession || EMPTY_AVAILABILITY_VALUES;
+  const hasValidAvailability =
+    sessionsValues.includes(draftAvailability?.sessionsPerWeek) &&
+    durationValues.includes(draftAvailability?.durationPerSession);
+  const hasTrainingProfile =
+    settingsState.data?.meta?.hasTrainingProfile !== false;
+  const canGenerate =
+    settingsState.status === "loaded" &&
+    hasTrainingProfile &&
+    hasValidAvailability &&
+    !isSubmitting;
 
   const backTarget = useMemo(
     () => resolveBackTarget(location, "/program"),
@@ -261,6 +385,9 @@ export default function AIWeeklyPlanBuilder() {
         settingsRequestIdRef.current === requestId
       ) {
         setSettingsState({ status: "loaded", data: response });
+        const nextAvailability = getAvailability(response);
+        setSavedAvailability(nextAvailability);
+        setDraftAvailability(nextAvailability);
       }
     } catch {
       if (
@@ -268,6 +395,8 @@ export default function AIWeeklyPlanBuilder() {
         settingsRequestIdRef.current === requestId
       ) {
         setSettingsState({ status: "unavailable", data: null });
+        setSavedAvailability(null);
+        setDraftAvailability(null);
       }
     }
   }, [isEnabled]);
@@ -291,7 +420,7 @@ export default function AIWeeklyPlanBuilder() {
   }, [isEnabled, loadSettings]);
 
   useEffect(() => {
-    if (!isGenerating) {
+    if (!isSubmitting) {
       return;
     }
 
@@ -302,7 +431,7 @@ export default function AIWeeklyPlanBuilder() {
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [isGenerating]);
+  }, [isSubmitting]);
 
   const startLoadingMessages = useCallback(() => {
     clearLoadingTimer();
@@ -323,13 +452,43 @@ export default function AIWeeklyPlanBuilder() {
       return;
     }
 
+    const selectionsAreValid =
+      sessionsValues.includes(draftAvailability?.sessionsPerWeek) &&
+      durationValues.includes(draftAvailability?.durationPerSession);
+    if (!selectionsAreValid || settingsState.status !== "loaded") {
+      setGenerationError({
+        kind: "availability",
+        message: "Select available session and duration values before generating.",
+      });
+      return;
+    }
+
     inFlightRef.current = true;
     setGenerationError(null);
     setGenerationResult(null);
-    setIsGenerating(true);
-    startLoadingMessages();
+    let generationStarted = false;
+    let availabilityWasSaved = false;
 
     try {
+      if (!areAvailabilityValuesEqual(savedAvailability, draftAvailability)) {
+        setSubmissionStage("saving");
+        const settingsResponse = await updateTrainingProfileAvailability({
+          sessionsPerWeek: draftAvailability.sessionsPerWeek,
+          durationPerSession: draftAvailability.durationPerSession,
+        });
+        const authoritativeAvailability = getAvailability(settingsResponse);
+        availabilityWasSaved = true;
+
+        if (mountedRef.current) {
+          setSettingsState({ status: "loaded", data: settingsResponse });
+          setSavedAvailability(authoritativeAvailability);
+          setDraftAvailability(authoritativeAvailability);
+        }
+      }
+
+      generationStarted = true;
+      setSubmissionStage("generating");
+      startLoadingMessages();
       const response = await createAIWeeklyPlanDraft();
 
       if (mountedRef.current) {
@@ -337,17 +496,46 @@ export default function AIWeeklyPlanBuilder() {
       }
     } catch (error) {
       if (mountedRef.current) {
-        setGenerationError(getPublicGenerationError(error));
+        if (!generationStarted) {
+          setGenerationError({
+            kind: "save",
+            message:
+              "Your Training Profile was not changed, and generation did not start. Review your selections and try again.",
+          });
+        } else {
+          setGenerationError({
+            ...getPublicGenerationError(error),
+            availabilityWasSaved,
+          });
+        }
       }
     } finally {
       clearLoadingTimer();
       inFlightRef.current = false;
 
       if (mountedRef.current) {
-        setIsGenerating(false);
+        setSubmissionStage(null);
       }
     }
-  }, [clearLoadingTimer, isEnabled, startLoadingMessages]);
+  }, [
+    clearLoadingTimer,
+    draftAvailability,
+    durationValues,
+    isEnabled,
+    savedAvailability,
+    sessionsValues,
+    settingsState.status,
+    startLoadingMessages,
+  ]);
+
+  const handleAvailabilityChange = useCallback((field, value) => {
+    setDraftAvailability((current) => ({
+      ...(current || {}),
+      [field]: value,
+    }));
+    setGenerationError(null);
+    setGenerationResult(null);
+  }, []);
 
   const closeSettings = useCallback(() => {
     setIsSettingsOpen(false);
@@ -392,8 +580,8 @@ export default function AIWeeklyPlanBuilder() {
 
       <main className="mx-auto max-w-2xl space-y-6 px-6 py-8 pb-12 sm:px-0">
         <p className="text-sm leading-6 text-slate-600">
-          L’AI prépare un programme hebdomadaire à partir du Training Profile
-          enregistré. Le backend vérifiera toujours les règles de génération.
+          AI builds a weekly program from your saved Training Profile. You can
+          adjust availability here; changes are saved only when you generate.
         </p>
 
         <section
@@ -405,16 +593,24 @@ export default function AIWeeklyPlanBuilder() {
               id="training-profile-summary-title"
               className="text-base font-bold text-slate-900"
             >
-              Ton Training Profile
+              Your Training Profile
             </h2>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              Résumé indicatif des informations enregistrées.
+              Review the saved details used to build your program.
             </p>
           </div>
-          <TrainingProfileSummary settingsState={settingsState} />
+          <TrainingProfileSummary
+            settingsState={settingsState}
+            draftAvailability={draftAvailability}
+            availabilityOptions={availabilityOptions}
+            onAvailabilityChange={handleAvailabilityChange}
+            controlsDisabled={isSubmitting}
+            onRetryLoad={loadSettings}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+          />
         </section>
 
-        {isGenerating ? (
+        {submissionStage === "saving" ? (
           <section
             aria-live="polite"
             aria-busy="true"
@@ -425,17 +621,37 @@ export default function AIWeeklyPlanBuilder() {
               className="mx-auto size-12 animate-spin rounded-full border-4 border-slate-100 border-t-primary"
             />
             <h2 className="mt-5 text-lg font-bold text-slate-900">
-              Ton programme est en préparation
+              Saving your availability
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Your program will start generating after your Training Profile is updated.
+            </p>
+            <Button className="mt-5 w-full" disabled aria-label="Saving availability">
+              Saving…
+            </Button>
+          </section>
+        ) : submissionStage === "generating" ? (
+          <section
+            aria-live="polite"
+            aria-busy="true"
+            className="rounded-3xl border border-primary/20 bg-white p-6 text-center shadow-sm"
+          >
+            <div
+              aria-hidden="true"
+              className="mx-auto size-12 animate-spin rounded-full border-4 border-slate-100 border-t-primary"
+            />
+            <h2 className="mt-5 text-lg font-bold text-slate-900">
+              Your program is being prepared
             </h2>
             <p className="mt-2 text-sm font-semibold text-primary">
               {LOADING_MESSAGES[loadingMessageIndex]}
             </p>
             <p className="mt-3 text-xs leading-5 text-slate-500">
-              Ces messages décrivent l’attente; ils ne représentent pas l’état
-              technique exact du backend.
+              These messages describe what you’re waiting for; they do not
+              represent the backend’s exact technical state.
             </p>
-            <Button className="mt-5 w-full" disabled aria-label="Génération en cours">
-              Génération en cours…
+            <Button className="mt-5 w-full" disabled aria-label="Generation in progress">
+              Generating…
             </Button>
           </section>
         ) : generationResult ? (
@@ -450,48 +666,56 @@ export default function AIWeeklyPlanBuilder() {
           >
             <div>
               <h2 className="text-lg font-bold text-slate-900">
-                Génération interrompue
+                {generationError.kind === "save"
+                  ? "We couldn't save your availability"
+                  : "Generation interrupted"}
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 {generationError.message}
               </p>
+              {generationError.availabilityWasSaved ? (
+                <p className="mt-2 text-sm font-medium leading-6 text-emerald-700">
+                  Your availability was saved to your Training Profile. You can
+                  retry generation without saving it again.
+                </p>
+              ) : null}
             </div>
 
             {generationError.kind === "profile" ? (
               <Button className="w-full" onClick={() => setIsSettingsOpen(true)}>
-                Revoir le Training Profile
+                Review Training Profile
               </Button>
             ) : null}
 
-            {generationError.kind === "retryable" ? (
+            {["retryable", "save", "availability"].includes(generationError.kind) ? (
               <Button className="w-full" onClick={handleGenerate}>
-                Réessayer
+                Try again
               </Button>
             ) : null}
 
             {generationError.kind === "network" ? (
               <div className="grid gap-3 sm:grid-cols-2">
                 <Button onClick={() => navigate(getWeeklyPlansPath())}>
-                  Vérifier mes programmes
+                  Check my programs
                 </Button>
                 <Button variant="secondary" onClick={() => navigate(backTarget)}>
-                  Retour
+                  Back
                 </Button>
               </div>
             ) : null}
           </section>
         ) : (
           <section className="rounded-3xl bg-slate-900 p-5 text-white shadow-sm">
-            <h2 className="text-lg font-bold">Prêt à créer ton programme?</h2>
+            <h2 className="text-lg font-bold">Ready to create your program?</h2>
             <p className="mt-2 text-sm leading-6 text-white/70">
-              La génération démarre uniquement lorsque tu le demandes.
+              Your availability changes will be saved when generation starts.
             </p>
             <Button
               className="mt-5 w-full bg-primary"
               onClick={handleGenerate}
-              disabled={isGenerating}
+              disabled={!canGenerate}
             >
-              Générer mon programme
+              Generate my program
             </Button>
           </section>
         )}

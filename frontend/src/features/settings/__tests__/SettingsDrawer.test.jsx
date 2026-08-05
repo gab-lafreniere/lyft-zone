@@ -31,43 +31,62 @@ const MINIMAL_PRESET = [
 ];
 
 function createSettingsResponse(overrides = {}) {
+  const trainingProfile = {
+    options: {
+      availability: {
+        sessionsPerWeek: [1, 2, 3, 4, 5, 6, 7],
+        durationPerSession: [15, 30, 45, 60, 75, 90, 105, 120],
+      },
+    },
+    profile: {
+      primaryGoal: "HYPERTROPHY",
+      experience: "beginner",
+      availability: {
+        sessionsPerWeek: 4,
+        durationPerSession: 60,
+      },
+      environment: {
+        equipmentPreset: "full_gym",
+        availableEquipment: ["bodyweight", "dumbbells"],
+      },
+      musclePriorities: {
+        primaryFocus: "chest",
+        secondaryFocuses: ["back"],
+        deprioritizedArea: null,
+      },
+      movementConstraints: {
+        painIssues: [],
+        manualBlockedExerciseIds: [],
+      },
+      exercisePreference: {
+        equipmentBias: "no_preference",
+      },
+      cardioProfile: {
+        cardioRole: "none",
+        preferredModalities: [],
+      },
+      physicalNotes: "",
+    },
+  };
+
   return {
     account: { profile: { name: "Alex", email: "alex@example.com", username: "alex" } },
     aiCoaching: { mode: "manual", autonomyLevel: "low" },
     workoutExperience: { defaultRestTimer: 90, soundVibrationAlerts: true },
     interface: { units: { weight: "kg", height: "cm" } },
+    ...overrides,
     trainingProfile: {
-      profile: {
-        primaryGoal: "HYPERTROPHY",
-        experience: "beginner",
+      ...trainingProfile,
+      ...overrides.trainingProfile,
+      options: {
+        ...trainingProfile.options,
+        ...overrides.trainingProfile?.options,
         availability: {
-          sessionsPerWeek: 4,
-          durationPerSession: 60,
+          ...trainingProfile.options.availability,
+          ...overrides.trainingProfile?.options?.availability,
         },
-        environment: {
-          equipmentPreset: "full_gym",
-          availableEquipment: ["bodyweight", "dumbbells"],
-        },
-        musclePriorities: {
-          primaryFocus: "chest",
-          secondaryFocuses: ["back"],
-          deprioritizedArea: null,
-        },
-        movementConstraints: {
-          painIssues: [],
-          manualBlockedExerciseIds: [],
-        },
-        exercisePreference: {
-          equipmentBias: "no_preference",
-        },
-        cardioProfile: {
-          cardioRole: "none",
-          preferredModalities: [],
-        },
-        physicalNotes: "",
       },
     },
-    ...overrides,
   };
 }
 
