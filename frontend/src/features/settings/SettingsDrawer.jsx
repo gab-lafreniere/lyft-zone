@@ -114,8 +114,10 @@ export default function SettingsDrawer({ isOpen, onClose }) {
     () => getTrainingProfileHasErrors(fieldErrors),
     [fieldErrors]
   );
-  const trainingProfileAvailabilityOptions =
-    settingsData?.trainingProfile?.options?.availability || {};
+  const trainingProfileAvailabilityOptions = useMemo(
+    () => settingsData?.trainingProfile?.options?.availability || {},
+    [settingsData]
+  );
   const settingsRootGroups = useMemo(
     () => resolveSettingsMenuGroups(SETTINGS_ROOT_GROUPS, SETTINGS_ROOT_ITEMS),
     []
@@ -499,6 +501,7 @@ export default function SettingsDrawer({ isOpen, onClose }) {
     initialTrainingProfileDraft,
     isOpen,
     runAutosave,
+    trainingProfileAvailabilityOptions,
     trainingProfileDraft,
   ]);
 
