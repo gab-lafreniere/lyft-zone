@@ -133,6 +133,11 @@ async function renderLoaded(response = settingsResponse) {
   return result;
 }
 
+function expectAvailabilityValue(label, value) {
+  const card = screen.getByText(label).parentElement;
+  expect(within(card).getByText(String(value))).toBeInTheDocument();
+}
+
 beforeEach(() => {
   process.env[FEATURE_FLAG] = "true";
   jest.clearAllMocks();
@@ -163,8 +168,10 @@ test("renders the disabled feature state without loading or generating", () => {
 
 test("loads the backend profile and renders the complete launcher in English", async () => {
   await renderLoaded();
-  expect(screen.getByText("4 sessions per week")).toBeInTheDocument();
-  expect(screen.getByText("60 min per session")).toBeInTheDocument();
+  expectAvailabilityValue("Sessions per week", 4);
+  expectAvailabilityValue("Duration per session", 60);
+  expect(screen.queryByText("4 sessions per week")).not.toBeInTheDocument();
+  expect(screen.queryByText("60 min per session")).not.toBeInTheDocument();
   expect(screen.getByText("Intermediate")).toBeInTheDocument();
   expect(screen.getByText("Full gym")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Generate my program" })).toBeEnabled();
@@ -202,8 +209,8 @@ test("plus and minus use adjacent backend-provided session and duration values l
   await renderLoaded();
   fireEvent.click(screen.getByRole("button", { name: "Increase sessions per week" }));
   fireEvent.click(screen.getByRole("button", { name: "Decrease duration per session" }));
-  expect(screen.getByText("5 sessions per week")).toBeInTheDocument();
-  expect(screen.getByText("45 min per session")).toBeInTheDocument();
+  expectAvailabilityValue("Sessions per week", 5);
+  expectAvailabilityValue("Duration per session", 45);
   expect(updateTrainingProfileAvailability).not.toHaveBeenCalled();
 });
 
@@ -218,11 +225,11 @@ test.each([
 
 test("legacy availability remains visible and requires an explicit valid selection", async () => {
   await renderLoaded(createSettingsResponse({ durationPerSession: 50 }));
-  expect(screen.getByText("50 min per session")).toBeInTheDocument();
+  expectAvailabilityValue("Duration per session", 50);
   expect(screen.getByText("Select an available value before generating.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Generate my program" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Increase duration per session" }));
-  expect(screen.getByText("60 min per session")).toBeInTheDocument();
+  expectAvailabilityValue("Duration per session", 60);
   expect(updateTrainingProfileAvailability).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "Generate my program" })).toBeEnabled();
 });
@@ -270,7 +277,7 @@ test("a failed save preserves selections and prevents generation", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Increase sessions per week" }));
   fireEvent.click(screen.getByRole("button", { name: "Generate my program" }));
   expect(await screen.findByText("We couldn't save your availability")).toBeInTheDocument();
-  expect(screen.getByText("5 sessions per week")).toBeInTheDocument();
+  expectAvailabilityValue("Sessions per week", 5);
   expect(createAIWeeklyPlanDraft).not.toHaveBeenCalled();
 });
 

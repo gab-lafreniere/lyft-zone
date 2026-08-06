@@ -172,7 +172,7 @@ function AvailabilityStepper({
         </button>
         <output
           aria-live="polite"
-          className="min-w-0 flex-1 text-center text-sm font-bold text-slate-900"
+          className="min-w-0 flex-1 whitespace-nowrap text-center text-lg font-bold text-slate-900"
         >
           {formatValue(value)}
         </output>
@@ -278,9 +278,7 @@ function TrainingProfileSummary({
           allowedValues={availabilityOptions?.sessionsPerWeek}
           onChange={(value) => onAvailabilityChange("sessionsPerWeek", value)}
           disabled={controlsDisabled}
-          formatValue={(value) =>
-            value == null ? "Not provided" : `${value} sessions per week`
-          }
+          formatValue={(value) => value ?? "—"}
         />
         <AvailabilityStepper
           label="Duration per session"
@@ -288,9 +286,7 @@ function TrainingProfileSummary({
           allowedValues={availabilityOptions?.durationPerSession}
           onChange={(value) => onAvailabilityChange("durationPerSession", value)}
           disabled={controlsDisabled}
-          formatValue={(value) =>
-            value == null ? "Not provided" : `${value} min per session`
-          }
+          formatValue={(value) => value ?? "—"}
         />
         <div className="rounded-2xl bg-slate-50 p-3">
           <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">
