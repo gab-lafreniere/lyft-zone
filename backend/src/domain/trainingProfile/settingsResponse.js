@@ -24,6 +24,9 @@ const {
 const {
   getTrainingProfileAvailabilityOptions,
 } = require('./trainingProfileAvailability');
+const {
+  deriveOnboardingState,
+} = require('../onboarding/onboardingState');
 
 function createDefaultTrainingProfile() {
   return {
@@ -110,6 +113,7 @@ function resolveSnapshot(snapshot) {
 
 function buildSettingsResponse(user = {}, options = {}) {
   const snapshot = resolveSnapshot(user.profile?.onboardingSnapshot);
+  const onboarding = deriveOnboardingState(user.profile);
   const demographicsStatus = deriveDemographicsStatus(
     user.profile,
     options.referenceDate
@@ -125,7 +129,8 @@ function buildSettingsResponse(user = {}, options = {}) {
   return {
     account: {
       profile: {
-        name: null,
+        displayName: user.profile?.displayName ?? null,
+        name: user.profile?.displayName ?? null,
         email: user.email || null,
         username: null,
         profilePicture: null,
@@ -158,7 +163,9 @@ function buildSettingsResponse(user = {}, options = {}) {
     },
     meta: {
       hasTrainingProfile: snapshot.hasTrainingProfile,
+      hasValidTrainingProfile: onboarding.hasValidTrainingProfile,
       schemaVersion: snapshot.schemaVersion,
+      onboarding,
     },
   };
 }

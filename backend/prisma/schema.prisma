@@ -21,6 +21,12 @@ enum Sex {
   FEMALE
 }
 
+enum OnboardingStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
 enum TrainingGoal {
   STRENGTH
   HYPERTROPHY
@@ -162,9 +168,12 @@ model User {
 model UserProfile {
   id                       String        @id @default(cuid())
   userId                   String        @unique
+  displayName              String?
   age                      Int?
   ageInputDate             DateTime?     @db.Date
   sex                      Sex?
+  onboardingStatus         OnboardingStatus?
+  onboardingLastCompletedStep Int?
   primaryGoal              TrainingGoal?
   trainingMode             TrainingMode?
   experienceNotes          String?

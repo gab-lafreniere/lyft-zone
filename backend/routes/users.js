@@ -5,6 +5,7 @@ const {
   getUserSettingsHandler,
   analyzeMovementConstraintSettingsHandler,
   upsertUserProfileHandler,
+  updateUserOnboardingHandler,
   updateTrainingProfileSettingsHandler,
 } = require('../controllers/usersController');
 const {
@@ -17,6 +18,7 @@ router.post('/', createUserHandler);
 router.get('/:userId/exercise-pool', getUserExercisePoolHandler);
 router.get('/:userId/settings', getUserSettingsHandler);
 router.put('/:userId/profile', upsertUserProfileHandler);
+router.patch('/:userId/onboarding', updateUserOnboardingHandler);
 router.patch('/:userId/settings/training-profile', updateTrainingProfileSettingsHandler);
 router.post(
   '/:userId/settings/training-profile/movement-constraints/analyze',

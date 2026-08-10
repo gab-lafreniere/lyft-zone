@@ -26,6 +26,14 @@ const {
   serializeDateOnly,
   validateInitialDemographicsPayload,
 } = require('../src/domain/userProfile/userProfileDemographics');
+const {
+  validateDisplayName,
+} = require('../src/domain/userProfile/userProfileDisplayName');
+const {
+  MAX_ONBOARDING_STEP,
+  ONBOARDING_STATUS,
+  deriveOnboardingState,
+} = require('../src/domain/onboarding/onboardingState');
 
 class ApiError extends Error {
   constructor(status, code, message, details = undefined) {
@@ -125,9 +133,12 @@ async function fetchUserSettingsRecord(userId, prisma) {
       email: true,
       profile: {
         select: {
+          displayName: true,
           age: true,
           ageInputDate: true,
           sex: true,
+          onboardingStatus: true,
+          onboardingLastCompletedStep: true,
           trainingMode: true,
           onboardingSnapshot: true,
         },
@@ -349,7 +360,134 @@ function buildUserProfileUpdateData(payload) {
     }
   }
 
+  if (hasOwn(payload, 'displayName')) {
+    const validation = validateDisplayName(payload.displayName);
+    if (!validation.ok) {
+      throw new ApiError(
+        400,
+        'VALIDATION_ERROR',
+        'Profile payload is invalid',
+        [validation.issue]
+      );
+    }
+    data.displayName = validation.value;
+  }
+
   return data;
+}
+
+const ONBOARDING_ACTIONS = new Set(['BEGIN', 'ADVANCE', 'COMPLETE']);
+
+function validateOnboardingAction(payload) {
+  const action = String(payload?.action || '').trim().toUpperCase();
+  if (!ONBOARDING_ACTIONS.has(action)) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'Onboarding action must be BEGIN, ADVANCE, or COMPLETE'
+    );
+  }
+
+  if (action !== 'ADVANCE') {
+    return { action, lastCompletedStep: null };
+  }
+
+  const lastCompletedStep = Number(payload?.lastCompletedStep);
+  if (
+    !Number.isInteger(lastCompletedStep) ||
+    lastCompletedStep < 0 ||
+    lastCompletedStep > MAX_ONBOARDING_STEP
+  ) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      `lastCompletedStep must be an integer from 0 through ${MAX_ONBOARDING_STEP}`
+    );
+  }
+
+  return { action, lastCompletedStep };
+}
+
+async function updateUserOnboarding(userId, payload, deps = {}) {
+  const prisma = deps.prisma || getPrisma();
+  const input = validateOnboardingAction(payload);
+
+  await assertUserExists(userId, prisma);
+
+  return runSerializableTransaction(prisma, async (tx) => {
+    const currentProfile = await tx.userProfile.findUnique({ where: { userId } });
+    const currentState = deriveOnboardingState(currentProfile);
+
+    if (currentState.isComplete) {
+      return currentState;
+    }
+
+    let nextData;
+    if (input.action === 'BEGIN') {
+      nextData = {
+        onboardingStatus: ONBOARDING_STATUS.IN_PROGRESS,
+        onboardingLastCompletedStep: currentState.lastCompletedStep,
+      };
+    } else if (input.action === 'ADVANCE') {
+      if (input.lastCompletedStep >= 2 && !currentState.hasValidTrainingProfile) {
+        throw new ApiError(
+          409,
+          'PROFILE_NOT_READY',
+          'A valid canonical Training Profile is required for this onboarding step'
+        );
+      }
+
+      nextData = {
+        onboardingStatus: ONBOARDING_STATUS.IN_PROGRESS,
+        onboardingLastCompletedStep: Math.max(
+          currentState.lastCompletedStep,
+          input.lastCompletedStep
+        ),
+      };
+    } else {
+      if (!currentState.hasValidTrainingProfile) {
+        throw new ApiError(
+          409,
+          'PROFILE_NOT_READY',
+          'A valid canonical Training Profile is required to complete onboarding'
+        );
+      }
+
+      const displayNameValidation = validateDisplayName(currentProfile?.displayName);
+      if (!displayNameValidation.ok) {
+        throw new ApiError(
+          409,
+          'ONBOARDING_PROFILE_INCOMPLETE',
+          'Display name is required to complete onboarding',
+          [displayNameValidation.issue]
+        );
+      }
+
+      if (deriveDemographicsStatus(currentProfile, resolveNowValue(deps.now)) !== DEMOGRAPHICS_STATUS.LOCKED) {
+        throw new ApiError(
+          409,
+          'ONBOARDING_PROFILE_INCOMPLETE',
+          'Age and sex are required to complete onboarding'
+        );
+      }
+
+      nextData = {
+        onboardingStatus: ONBOARDING_STATUS.COMPLETED,
+        onboardingLastCompletedStep: MAX_ONBOARDING_STEP,
+      };
+    }
+
+    const savedProfile = await tx.userProfile.upsert({
+      where: { userId },
+      update: nextData,
+      create: {
+        userId,
+        ...nextData,
+      },
+    });
+
+    return deriveOnboardingState(savedProfile);
+  });
 }
 
 function serializeUserProfileRecord(profile, referenceDate) {
@@ -499,6 +637,7 @@ module.exports = {
   analyzeMovementConstraintSettings,
   createUser,
   getUserSettings,
+  updateUserOnboarding,
   upsertUserProfile,
   updateTrainingProfileSettings,
 };

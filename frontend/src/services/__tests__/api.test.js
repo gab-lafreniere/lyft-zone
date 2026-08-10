@@ -4,6 +4,7 @@ import {
   fetchUserExercisePool,
   fetchUserExercisePoolResponse,
   updateTrainingProfileAvailability,
+  updateUserOnboarding,
   updateUserProfile,
 } from "../api";
 
@@ -286,6 +287,42 @@ describe("updateUserProfile", () => {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ age: 29, sex: "MALE" }),
+    });
+    expect(result).toBe(responseBody);
+  });
+});
+
+describe("updateUserOnboarding", () => {
+  beforeEach(() => {
+    global.fetch = jest.fn();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("patches lifecycle metadata without sending Training Profile values", async () => {
+    const responseBody = {
+      onboarding: {
+        status: "IN_PROGRESS",
+        lastCompletedStep: 2,
+        isComplete: false,
+      },
+    };
+    mockJsonResponse(responseBody);
+
+    const result = await updateUserOnboarding({
+      action: "ADVANCE",
+      lastCompletedStep: 2,
+    });
+
+    const [requestUrl, requestOptions] = global.fetch.mock.calls[0];
+    expect(new URL(requestUrl).pathname).toMatch(/^\/api\/users\/[^/]+\/onboarding$/);
+    expect(requestOptions).toEqual({
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "ADVANCE", lastCompletedStep: 2 }),
     });
     expect(result).toBe(responseBody);
   });

@@ -227,7 +227,13 @@ function SummaryChipGroup({ title, items, tone = "neutral", emptyLabel }) {
   );
 }
 
-export default function MovementConstraintsSection({ draft, onChange, fieldErrors }) {
+export default function MovementConstraintsSection({
+  draft,
+  onChange,
+  fieldErrors,
+  presentation = "settings",
+}) {
+  const isOnboarding = presentation === "onboarding";
   const movementConstraints = getMovementConstraints(draft);
   const exerciseSearchRef = useRef(null);
   const issueRefs = useRef({});
@@ -543,15 +549,15 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
       isCompleteIssue(issue) && description.length <= MAX_DESCRIPTION_LENGTH;
     const isAnalyzing = analyzingIssueId === issue.id;
     const analysisError = analysisErrorsByIssueId[issue.id] || "";
-    const analyzeLabel =
-      issue.analysisStatus === "analyzed" || issue.analysisStatus === "needs_reanalysis"
-        ? "Re-analyze with AI"
-        : "Analyze with AI";
+    const analyzeLabel = issue.analysisStatus === "analyzed"
+      || issue.analysisStatus === "needs_reanalysis"
+      ? isOnboarding ? "Review again" : "Re-analyze with AI"
+      : isOnboarding ? "Review with AI" : "Analyze with AI";
 
     return (
       <div className="space-y-5">
         <Field
-          label="Description"
+          label={isOnboarding ? "What are you experiencing?" : "Description"}
           error={findFieldError(fieldErrors, [
             `movementConstraints.painIssues[${index}].description`,
           ])}
@@ -594,7 +600,7 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
         </Field>
 
         <Field
-          label="Pain Severity"
+          label={isOnboarding ? "Pain level" : "Pain Severity"}
           error={findFieldError(fieldErrors, [
             `movementConstraints.painIssues[${index}].painSeverity`,
           ])}
@@ -609,7 +615,7 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
         </Field>
 
         {toArray(issue.clarificationQuestions).length ? (
-          <Field label="Clarification Questions">
+          <Field label={isOnboarding ? "A few follow-up questions" : "Clarification Questions"}>
             <div className="mt-2 space-y-3">
               {toArray(issue.clarificationQuestions).map((question) => {
                 const answer =
@@ -639,7 +645,7 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
         ) : null}
 
         {issue.aiSummary ? (
-          <Field label="AI Summary">
+          <Field label={isOnboarding ? "Review summary" : "AI Summary"}>
             <p className="mt-2 rounded-[14px] border border-slate-200 bg-white px-3 py-2.5 text-sm leading-relaxed text-slate-700">
               {issue.aiSummary}
             </p>
@@ -669,8 +675,10 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
         </div>
 
         <Field
-          label="Detected Signals"
-          hint="Suggested training signals. Only confirmed decisions become active."
+          label={isOnboarding ? "Suggested adjustments" : "Detected Signals"}
+          hint={isOnboarding
+            ? "Choose which adjustments should shape your training."
+            : "Suggested training signals. Only confirmed decisions become active."}
         >
           {toArray(issue.detectedSignals).length ? (
             <div className="mt-2 space-y-2">
@@ -753,7 +761,9 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
               })}
             </div>
           ) : (
-            <p className="mt-2 text-sm text-slate-500">No detected signals yet.</p>
+            <p className="mt-2 text-sm text-slate-500">
+              {isOnboarding ? "No suggested adjustments yet." : "No detected signals yet."}
+            </p>
           )}
         </Field>
       </div>
@@ -761,20 +771,27 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
   }
 
   return (
-    <div className="space-y-6">
+    <div className={isOnboarding ? "lz-v2-movement-constraints space-y-6" : "space-y-6"}>
       <SectionBlock
-        title="Active Constraints"
-        description="Current applied movement limits."
+        title={isOnboarding ? "Current adjustments" : "Active Constraints"}
+        description={isOnboarding ? "Training limits currently in place." : "Current applied movement limits."}
         className="border-[rgba(25,230,212,0.25)] bg-[rgba(25,230,212,0.08)]"
       >
         <div className="space-y-3">
           {hasActiveConstraints ? (
             <div className="space-y-3">
-              <SummaryChipGroup title="Blocked signals" items={restrictedItems} tone="danger" />
-              <SummaryChipGroup title="Caution signals" items={cautionItems} />
+              <SummaryChipGroup
+                title={isOnboarding ? "Avoid" : "Blocked signals"}
+                items={restrictedItems}
+                tone="danger"
+              />
+              <SummaryChipGroup
+                title={isOnboarding ? "Use caution" : "Caution signals"}
+                items={cautionItems}
+              />
               {derivedConstraints.manualBlockedExerciseIds.length ? (
                 <SummaryChipGroup
-                  title="Manual blocked exercises"
+                  title={isOnboarding ? "Exercises to avoid" : "Manual blocked exercises"}
                   items={[
                     {
                       label: `${derivedConstraints.manualBlockedExerciseIds.length}`,
@@ -788,13 +805,16 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
           ) : (
             <SummaryChipGroup
               items={[]}
-              emptyLabel="No active movement restrictions"
+              emptyLabel={isOnboarding ? "No adjustments yet" : "No active movement restrictions"}
             />
           )}
         </div>
       </SectionBlock>
 
-      <SectionBlock title="Pain Issues" description="Track each issue separately.">
+      <SectionBlock
+        title={isOnboarding ? "Your limitations" : "Pain Issues"}
+        description={isOnboarding ? "Add each issue separately." : "Track each issue separately."}
+      >
         <div className="space-y-3">
           {movementConstraints.painIssues.length ? (
             movementConstraints.painIssues.map((issue, index) => {
@@ -876,7 +896,9 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
               );
             })
           ) : (
-            <p className="text-sm text-slate-500">No pain issues added.</p>
+            <p className="text-sm text-slate-500">
+              {isOnboarding ? "No limitations added yet." : "No pain issues added."}
+            </p>
           )}
 
           <button
@@ -886,7 +908,7 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
             className="flex w-full items-center justify-center gap-2 rounded-[18px] border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition hover:border-primary/40 hover:text-slate-900 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
           >
             <span className="material-symbols-outlined text-base">add</span>
-            Add pain issue
+            {isOnboarding ? "Add a limitation" : "Add pain issue"}
           </button>
           {!canAddIssue ? (
             <p className="text-sm font-medium text-slate-500">
@@ -897,11 +919,13 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
       </SectionBlock>
 
       <SectionBlock
-        title="Manual Blocked Exercises"
-        description="Block exercises you do not want, independent of pain issues."
+        title={isOnboarding ? "Exercises to avoid" : "Manual Blocked Exercises"}
+        description={isOnboarding
+          ? "Optionally block a specific exercise."
+          : "Block exercises you do not want, independent of pain issues."}
       >
         <div ref={exerciseSearchRef}>
-          <Field label="Search Exercises">
+          <Field label={isOnboarding ? "Find an exercise" : "Search Exercises"}>
             <div className="relative">
               <input
                 type="text"
@@ -967,7 +991,7 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
           ) : null}
         </div>
 
-        <Field label="Blocked Exercises">
+        <Field label={isOnboarding ? "Exercises you want to avoid" : "Blocked Exercises"}>
           {movementConstraints.manualBlockedExerciseIds.length ? (
             <div className="mt-2 space-y-2">
               {movementConstraints.manualBlockedExerciseIds.map((exerciseId) => (
@@ -1043,11 +1067,12 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
             className="w-full max-w-sm rounded-[20px] border border-slate-200 bg-white p-5 shadow-xl"
           >
             <h3 id="reanalyze-pain-issue-title" className="text-base font-bold text-slate-900">
-              Re-analyze this pain issue?
+              {isOnboarding ? "Review this limitation again?" : "Re-analyze this pain issue?"}
             </h3>
             <p className="mt-2 text-sm leading-relaxed text-slate-600">
-              This will request a fresh analysis. Confirmed decisions stay in place unless the new
-              analysis returns final detected signals.
+              {isOnboarding
+                ? "We’ll request a fresh review. Your current choices stay in place until it finishes."
+                : "This will request a fresh analysis. Confirmed decisions stay in place unless the new analysis returns final detected signals."}
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button
@@ -1065,20 +1090,21 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
               >
                 {analyzingIssueId === pendingReanalyzeIssue.id
                   ? "Analyzing..."
-                  : "Re-analyze with AI"}
+                  : isOnboarding ? "Review again" : "Re-analyze with AI"}
               </button>
             </div>
           </div>
         </div>
       ) : null}
 
-      <CollapsibleBlock
-        title="Advanced signals"
-        description="Readonly overview of applied movement constraints."
-        badge="Readonly"
-        defaultOpen={false}
-      >
-        <div className="space-y-4 rounded-[18px] bg-slate-50 p-4">
+      {!isOnboarding ? (
+        <CollapsibleBlock
+          title="Advanced signals"
+          description="Readonly overview of applied movement constraints."
+          badge="Readonly"
+          defaultOpen={false}
+        >
+          <div className="space-y-4 rounded-[18px] bg-slate-50 p-4">
           <Field label="Caution Movement Patterns">
             <ReadonlyChipList
               values={derivedConstraints.cautionMovementPatterns}
@@ -1136,8 +1162,9 @@ export default function MovementConstraintsSection({ draft, onChange, fieldError
               </div>
             </div>
           </Field>
-        </div>
-      </CollapsibleBlock>
+          </div>
+        </CollapsibleBlock>
+      ) : null}
     </div>
   );
 }

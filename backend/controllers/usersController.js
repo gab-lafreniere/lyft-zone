@@ -3,6 +3,7 @@ const {
   createUser,
   getUserSettings,
   analyzeMovementConstraintSettings,
+  updateUserOnboarding,
   upsertUserProfile,
   updateTrainingProfileSettings,
 } = require('../services/usersService');
@@ -95,6 +96,15 @@ async function updateTrainingProfileSettingsHandler(req, res) {
   }
 }
 
+async function updateUserOnboardingHandler(req, res) {
+  try {
+    const onboarding = await updateUserOnboarding(req.params.userId, req.body || {});
+    return res.status(200).json({ onboarding });
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
 async function analyzeMovementConstraintSettingsHandler(req, res) {
   try {
     const analysis = await analyzeMovementConstraintSettings(req.params.userId, req.body || {});
@@ -111,6 +121,7 @@ module.exports = {
   getUserSettingsHandler,
   upsertUserProfileHandler,
   updateTrainingProfileSettingsHandler,
+  updateUserOnboardingHandler,
   _test: {
     getExercisePoolErrorStatus,
   },

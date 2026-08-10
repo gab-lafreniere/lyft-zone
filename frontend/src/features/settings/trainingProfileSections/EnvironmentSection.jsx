@@ -5,6 +5,14 @@ import {
   EQUIPMENT_SETUP_OPTIONS,
 } from "../settingsOptions";
 import {
+  BODYWEIGHT_EQUIPMENT,
+  applyEquipmentPreset,
+  areEquipmentSetsEqual,
+  isBodyweightOnly,
+  normalizeEquipmentList,
+  toggleAvailableEquipment,
+} from "../equipmentPresetUtils";
+import {
   ChipSelector,
   CollapsibleBlock,
   SectionBlock,
@@ -12,36 +20,6 @@ import {
   applyDraftUpdate,
   findFieldError,
 } from "./shared";
-
-const BODYWEIGHT = "bodyweight";
-
-function normalizeEquipmentList(value) {
-  const values = Array.isArray(value) ? value : value == null ? [] : [value];
-  const normalized = Array.from(
-    new Set(
-      values
-        .map((entry) => String(entry || "").trim().toLowerCase())
-        .filter(Boolean)
-    )
-  );
-
-  return normalized.length ? normalized : [BODYWEIGHT];
-}
-
-function areSetsEqual(left, right) {
-  const leftSet = new Set(left || []);
-  const rightSet = new Set(right || []);
-
-  if (leftSet.size !== rightSet.size) {
-    return false;
-  }
-
-  return Array.from(leftSet).every((value) => rightSet.has(value));
-}
-
-function isBodyweightOnly(equipmentList) {
-  return equipmentList.length === 1 && equipmentList[0] === BODYWEIGHT;
-}
 
 export default function EnvironmentSection({ draft, onChange, fieldErrors }) {
   const [pendingPreset, setPendingPreset] = useState(null);
@@ -53,9 +31,13 @@ export default function EnvironmentSection({ draft, onChange, fieldErrors }) {
     draft?.environment?.equipmentPreset ?? draft?.environment?.equipmentSetup ?? null;
   const selectedPreset = EQUIPMENT_PRESETS[equipmentPreset] || null;
   const isCustomized = Boolean(
-    equipmentPreset && selectedPreset && !areSetsEqual(equipmentList, selectedPreset)
+    equipmentPreset &&
+      selectedPreset &&
+      !areEquipmentSetsEqual(equipmentList, selectedPreset)
   );
-  const lockedValues = isBodyweightOnly(equipmentList) ? [BODYWEIGHT] : [];
+  const lockedValues = isBodyweightOnly(equipmentList)
+    ? [BODYWEIGHT_EQUIPMENT]
+    : [];
   const pendingPresetOption = pendingPreset
     ? EQUIPMENT_SETUP_OPTIONS.find((option) => option.value === pendingPreset)
     : null;
@@ -74,23 +56,20 @@ export default function EnvironmentSection({ draft, onChange, fieldErrors }) {
   }
 
   function toggleEquipment(itemValue) {
-    if (itemValue === BODYWEIGHT && isBodyweightOnly(equipmentList)) {
-      return;
-    }
-
-    const nextValue = equipmentList.includes(itemValue)
-      ? equipmentList.filter((entry) => entry !== itemValue)
-      : [...equipmentList, itemValue];
-
     updateEnvironment((environment) => {
-      environment.availableEquipment = nextValue.length ? nextValue : [BODYWEIGHT];
+      environment.availableEquipment = toggleAvailableEquipment(
+        equipmentList,
+        itemValue
+      );
     });
   }
 
   function applyPreset(presetValue) {
     updateEnvironment((environment) => {
-      environment.equipmentPreset = presetValue;
-      environment.availableEquipment = EQUIPMENT_PRESETS[presetValue] || [BODYWEIGHT];
+      Object.assign(
+        environment,
+        applyEquipmentPreset(environment, presetValue)
+      );
     });
     setOpenCategory(null);
   }

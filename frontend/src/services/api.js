@@ -280,6 +280,17 @@ export async function updateUserProfile(profilePayload) {
   return readJsonResponse(response);
 }
 
+export async function updateUserOnboarding(onboardingPayload) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(`${BACKEND_URL}/api/users/${userId}/onboarding`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(onboardingPayload),
+  });
+
+  return readJsonResponse(response);
+}
+
 export async function updateTrainingProfileSettings(trainingProfileDraft) {
   const userId = await ensureCurrentUserId();
   const response = await fetch(

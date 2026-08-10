@@ -101,9 +101,12 @@ test('getUserSettings returns frontend-friendly defaults when userProfile is mis
       email: true,
       profile: {
         select: {
+          displayName: true,
           age: true,
           ageInputDate: true,
           sex: true,
+          onboardingStatus: true,
+          onboardingLastCompletedStep: true,
           trainingMode: true,
           onboardingSnapshot: true,
         },
@@ -111,9 +114,17 @@ test('getUserSettings returns frontend-friendly defaults when userProfile is mis
     },
   });
   assert.equal(result.account.profile.email, 'athlete@example.com');
+  assert.equal(result.account.profile.displayName, null);
   assert.equal(result.account.profile.name, null);
   assert.equal(result.meta.hasTrainingProfile, false);
   assert.equal(result.meta.schemaVersion, TRAINING_PROFILE_SCHEMA_VERSION);
+  assert.deepEqual(result.meta.onboarding, {
+    status: 'NOT_STARTED',
+    lastCompletedStep: 0,
+    isComplete: false,
+    isLegacyInferred: true,
+    hasValidTrainingProfile: false,
+  });
   assert.equal(result.aiCoaching.mode, 'off');
   assert.equal(result.interface.units.weight, 'kg');
   assert.equal(result.interface.units.height, 'cm');
@@ -211,7 +222,15 @@ test('getUserSettings returns the canonical snapshot and derived data when prese
   assert.deepEqual(result.trainingProfile.derived, mapped.onboardingSnapshot.derived);
   assert.equal(result.aiCoaching.mode, 'on');
   assert.equal(result.meta.hasTrainingProfile, true);
+  assert.equal(result.meta.hasValidTrainingProfile, true);
   assert.equal(result.meta.schemaVersion, TRAINING_PROFILE_SCHEMA_VERSION);
+  assert.deepEqual(result.meta.onboarding, {
+    status: 'COMPLETED',
+    lastCompletedStep: 5,
+    isComplete: true,
+    isLegacyInferred: true,
+    hasValidTrainingProfile: true,
+  });
 });
 
 test('getUserSettings recomputes derived data when onboardingSnapshot.profile exists without derived', async () => {
@@ -356,9 +375,12 @@ test('updateTrainingProfileSettings validates, maps, persists, and returns the f
         email: true,
         profile: {
           select: {
+            displayName: true,
             age: true,
             ageInputDate: true,
             sex: true,
+            onboardingStatus: true,
+            onboardingLastCompletedStep: true,
             trainingMode: true,
             onboardingSnapshot: true,
           },
