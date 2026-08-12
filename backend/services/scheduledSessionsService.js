@@ -140,7 +140,16 @@ async function createScheduledSessions(payload) {
 
   const workoutIds = Array.from(new Set(sessions.map((session) => session.workoutId)));
   const workouts = await prisma.workout.findMany({
-    where: { id: { in: workoutIds } },
+    where: {
+      id: { in: workoutIds },
+      planWeek: {
+        plan: {
+          trainingCycle: {
+            status: { not: 'ARCHIVED' },
+          },
+        },
+      },
+    },
     select: { id: true },
   });
 
@@ -193,7 +202,19 @@ async function listScheduledSessions(query) {
     }
   }
 
-  const where = {};
+  const where = cycleId
+    ? {}
+    : {
+        workout: {
+          planWeek: {
+            plan: {
+              trainingCycle: {
+                status: { not: 'ARCHIVED' },
+              },
+            },
+          },
+        },
+      };
 
   if (startDate || endDate) {
     where.scheduledStartAt = {};
@@ -257,13 +278,13 @@ async function listScheduledSessions(query) {
   }));
 }
 
-async function regenerateScheduledSessionsForPublishedCycle(cycleId, options = {}) {
-  const prisma = getPrisma();
+async function synchronizeScheduledSessionsForPublishedCycle(db, cycleId, options = {}) {
   const userId = options.userId ? String(options.userId).trim() : null;
-  const cycle = await prisma.trainingCycle.findFirst({
+  const cycle = await db.trainingCycle.findFirst({
     where: {
       id: cycleId,
       ...(userId ? { userId } : {}),
+      status: { not: 'ARCHIVED' },
     },
     select: {
       id: true,
@@ -345,7 +366,7 @@ async function regenerateScheduledSessionsForPublishedCycle(cycleId, options = {
     }
   }
 
-  const existingSessions = await prisma.scheduledSession.findMany({
+  const existingSessions = await db.scheduledSession.findMany({
     where: {
       workout: {
         planWeek: {
@@ -363,23 +384,21 @@ async function regenerateScheduledSessionsForPublishedCycle(cycleId, options = {
       effectiveRegenerateFromDateKey
   );
 
-  await prisma.$transaction(async (tx) => {
-    if (sessionsToDelete.length > 0) {
-      await tx.scheduledSession.deleteMany({
-        where: {
-          id: {
-            in: sessionsToDelete.map((session) => session.id),
-          },
+  if (sessionsToDelete.length > 0) {
+    await db.scheduledSession.deleteMany({
+      where: {
+        id: {
+          in: sessionsToDelete.map((session) => session.id),
         },
-      });
-    }
+      },
+    });
+  }
 
-    if (sessionsToCreate.length > 0) {
-      await tx.scheduledSession.createMany({
-        data: sessionsToCreate,
-      });
-    }
-  });
+  if (sessionsToCreate.length > 0) {
+    await db.scheduledSession.createMany({
+      data: sessionsToCreate,
+    });
+  }
 
   return {
     cycleId: cycle.id,
@@ -395,8 +414,16 @@ async function regenerateScheduledSessionsForPublishedCycle(cycleId, options = {
   };
 }
 
+async function regenerateScheduledSessionsForPublishedCycle(cycleId, options = {}) {
+  const prisma = getPrisma();
+  return prisma.$transaction((tx) =>
+    synchronizeScheduledSessionsForPublishedCycle(tx, cycleId, options)
+  );
+}
+
 module.exports = {
   createScheduledSessions,
   listScheduledSessions,
   regenerateScheduledSessionsForPublishedCycle,
+  synchronizeScheduledSessionsForPublishedCycle,
 };

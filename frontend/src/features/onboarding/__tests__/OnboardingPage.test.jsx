@@ -3,8 +3,12 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import {
   analyzeMovementConstraintsPainIssue,
+  createAIWeeklyPlanDraft,
+  createCycleFromWeeklyPlan,
   ensureCurrentUserId,
   fetchExercises,
+  getAIWeeklyPlanGenerationProgress,
+  getOnboardingCycleConflicts,
   getUserSettings,
   updateTrainingProfileSettings,
   updateUserOnboarding,
@@ -15,8 +19,12 @@ import { saveOnboardingRecovery } from "../onboardingStorage";
 
 jest.mock("../../../services/api", () => ({
   analyzeMovementConstraintsPainIssue: jest.fn(),
+  createAIWeeklyPlanDraft: jest.fn(),
+  createCycleFromWeeklyPlan: jest.fn(),
   ensureCurrentUserId: jest.fn(),
   fetchExercises: jest.fn(),
+  getAIWeeklyPlanGenerationProgress: jest.fn(),
+  getOnboardingCycleConflicts: jest.fn(),
   getUserSettings: jest.fn(),
   updateTrainingProfileSettings: jest.fn(),
   updateUserOnboarding: jest.fn(),
@@ -24,9 +32,7 @@ jest.mock("../../../services/api", () => ({
 }));
 
 const ONBOARDING_FLAG = "REACT_APP_ENABLE_ONBOARDING_FRONTEND";
-const AI_FLAG = "REACT_APP_ENABLE_AI_WEEKLY_PLAN_FRONTEND";
 const originalOnboardingFlag = process.env[ONBOARDING_FLAG];
-const originalAiFlag = process.env[AI_FLAG];
 
 const availabilityOptions = {
   sessionsPerWeek: [1, 2, 3, 4, 5, 6, 7],
@@ -115,8 +121,18 @@ function renderPage(initialEntry = "/onboarding") {
         <Route path="/" element={<p>Home destination</p>} />
         <Route path="/program" element={<p>Program destination</p>} />
         <Route path="/program/ai-builder" element={<p>AI Builder destination</p>} />
+        <Route path="/program/cycles/:cycleId" element={<p>Cycle details destination</p>} />
+        <Route path="/program/cycles/:cycleId/builder" element={<p>Cycle builder destination</p>} />
       </Routes>
     </MemoryRouter>
+  );
+}
+
+function findGeneratedProgramHeading() {
+  return screen.findByRole(
+    "heading",
+    { name: "Generated Program" },
+    { timeout: 4000 }
   );
 }
 
@@ -139,11 +155,36 @@ function mockLifecycle() {
 
 beforeEach(() => {
   process.env[ONBOARDING_FLAG] = "true";
-  delete process.env[AI_FLAG];
   window.localStorage.clear();
+  window.scrollTo = jest.fn();
   ensureCurrentUserId.mockResolvedValue("user_123");
   fetchExercises.mockResolvedValue([]);
   analyzeMovementConstraintsPainIssue.mockResolvedValue({ status: "analyzed" });
+  getOnboardingCycleConflicts.mockResolvedValue({
+    window: {
+      timezone: "America/Toronto",
+      startDate: "2026-08-17",
+      endDate: "2026-09-27",
+      durationWeeks: 6,
+    },
+    conflicts: [],
+  });
+  getAIWeeklyPlanGenerationProgress.mockResolvedValue({
+    generationId: "generation_test",
+    status: "RUNNING",
+    stage: "BUILDING_PROGRAM",
+  });
+  createAIWeeklyPlanDraft.mockResolvedValue({
+    weeklyPlanParentId: "weekly_parent_1",
+    weeklyPlanVersionId: "weekly_version_1",
+    name: "Generated Program",
+    status: "PUBLISHED",
+    presentation: { summary: "A six-week hypertrophy program." },
+  });
+  createCycleFromWeeklyPlan.mockResolvedValue({
+    cycleId: "cycle_new",
+    cycle: { startDate: "2026-08-17", endDate: "2026-09-27" },
+  });
   mockLifecycle();
 });
 
@@ -153,11 +194,6 @@ afterEach(() => {
     delete process.env[ONBOARDING_FLAG];
   } else {
     process.env[ONBOARDING_FLAG] = originalOnboardingFlag;
-  }
-  if (originalAiFlag === undefined) {
-    delete process.env[AI_FLAG];
-  } else {
-    process.env[AI_FLAG] = originalAiFlag;
   }
 });
 
@@ -312,11 +348,7 @@ test("preserves edits on failure, prevents duplicate saves, and supports retry",
   expect(updateTrainingProfileSettings).toHaveBeenCalledTimes(2);
 });
 
-test.each([
-  ["true", "AI Builder destination"],
-  ["false", "Program destination"],
-])("completion routes according to the AI Builder flag %s", async (flagValue, destination) => {
-  process.env[AI_FLAG] = flagValue;
+test("generates a published weekly plan, converts it once, then completes onboarding", async () => {
   const settings = createSettings({
     lastCompletedStep: 4,
     trainingProfile: createCanonicalProfile({
@@ -340,10 +372,308 @@ test.each([
   expect(screen.getByRole("region", { name: "Full profile summary" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Generate my program" })).toBeInTheDocument();
 
+  const pageMain = document.querySelector(".lz-v2-mobile-page__main");
+  pageMain.scrollTop = 640;
+  document.documentElement.scrollTop = 640;
   fireEvent.click(screen.getByRole("button", { name: "Generate my program" }));
 
-  expect(await screen.findByText(destination)).toBeInTheDocument();
+  expect(await findGeneratedProgramHeading()).toBeInTheDocument();
+  expect(pageMain.scrollTop).toBe(0);
+  expect(document.documentElement.scrollTop).toBe(0);
+  expect(window.scrollTo).toHaveBeenCalledWith({
+    top: 0,
+    left: 0,
+    behavior: "auto",
+  });
+  expect(getOnboardingCycleConflicts).toHaveBeenCalledTimes(1);
+  expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+  expect(createAIWeeklyPlanDraft).toHaveBeenCalledWith({
+    generationId: expect.any(String),
+  });
+  expect(createCycleFromWeeklyPlan).toHaveBeenCalledWith({
+    weeklyPlanParentId: "weekly_parent_1",
+    weeklyPlanVersionId: "weekly_version_1",
+    name: "Generated Program",
+    startDate: "2026-08-17",
+    durationWeeks: 6,
+    workoutDayAssignmentStrategy: "DEFAULT",
+    conflictWindow: {
+      timezone: "America/Toronto",
+      startDate: "2026-08-17",
+      endDate: "2026-09-27",
+      durationWeeks: 6,
+    },
+    confirmedConflicts: [],
+  });
   expect(updateUserOnboarding).toHaveBeenCalledWith({ action: "COMPLETE" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Details" }));
+  expect(await screen.findByText("Cycle details destination")).toBeInTheDocument();
+});
+
+test("holds the completed loader at 100% before showing the result", async () => {
+  jest.useFakeTimers();
+  let view;
+  let resolveCompletion;
+
+  try {
+    const settings = createSettings({
+      lastCompletedStep: 4,
+      trainingProfile: createCanonicalProfile({
+        cardioProfile: { cardioRole: "none", preferredModalities: [] },
+      }),
+    });
+    getUserSettings.mockResolvedValue(settings);
+    updateTrainingProfileSettings.mockResolvedValue(settings);
+    updateUserOnboarding.mockImplementation((payload) => {
+      if (payload.action === "COMPLETE") {
+        return new Promise((resolve) => {
+          resolveCompletion = resolve;
+        });
+      }
+      return Promise.resolve({
+        onboarding: { status: "IN_PROGRESS", lastCompletedStep: 4, isComplete: false },
+      });
+    });
+
+    view = renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Generate my program" }));
+    await waitFor(() => expect(resolveCompletion).toEqual(expect.any(Function)));
+
+    await act(async () => {
+      resolveCompletion({
+        onboarding: { status: "COMPLETED", lastCompletedStep: 5, isComplete: true },
+      });
+      await Promise.resolve();
+    });
+
+    expect(
+      screen.getByRole("progressbar", { name: "Program generation progress" })
+    ).not.toHaveAttribute("aria-valuenow", "100");
+    expect(screen.queryByRole("heading", { name: "Generated Program" })).not.toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(3200);
+    });
+    expect(
+      screen.getByRole("progressbar", { name: "Program generation progress" })
+    ).toHaveAttribute("aria-valuenow", "100");
+    expect(screen.queryByRole("heading", { name: "Generated Program" })).not.toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(499);
+    });
+    expect(screen.queryByRole("heading", { name: "Generated Program" })).not.toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    expect(screen.queryByRole("heading", { name: "Generated Program" })).not.toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(180);
+    });
+    expect(screen.getByRole("heading", { name: "Generated Program" })).toBeInTheDocument();
+  } finally {
+    view?.unmount();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  }
+});
+
+test("result Modify opens the created cycle in the multi-week builder", async () => {
+  const settings = createSettings({
+    lastCompletedStep: 4,
+    trainingProfile: createCanonicalProfile({
+      cardioProfile: { cardioRole: "none", preferredModalities: [] },
+    }),
+  });
+  getUserSettings.mockResolvedValue(settings);
+  updateTrainingProfileSettings.mockResolvedValue(settings);
+
+  renderPage();
+  fireEvent.click(await screen.findByRole("button", { name: "Generate my program" }));
+  await findGeneratedProgramHeading();
+  fireEvent.click(screen.getByRole("button", { name: "Modify" }));
+
+  expect(await screen.findByText("Cycle builder destination")).toBeInTheDocument();
+  expect(screen.queryByText("AI Builder destination")).not.toBeInTheDocument();
+});
+
+test("conflict cancellation completes onboarding without generation or deletion", async () => {
+  const settings = createSettings({
+    lastCompletedStep: 4,
+    trainingProfile: createCanonicalProfile({
+      cardioProfile: { cardioRole: "none", preferredModalities: [] },
+    }),
+  });
+  getUserSettings.mockResolvedValue(settings);
+  updateTrainingProfileSettings.mockResolvedValue(settings);
+  getOnboardingCycleConflicts.mockResolvedValue({
+    window: {
+      timezone: "America/Toronto",
+      startDate: "2026-08-17",
+      endDate: "2026-09-27",
+      durationWeeks: 6,
+    },
+    conflicts: [
+      {
+        cycleId: "cycle_existing",
+        name: "Current cycle",
+        startDate: "2026-08-10",
+        endDate: "2026-09-20",
+        updatedAt: "2026-08-10T10:00:00.000Z",
+      },
+    ],
+  });
+
+  renderPage();
+  fireEvent.click(await screen.findByRole("button", { name: "Generate my program" }));
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "No, go Home" }));
+
+  expect(await screen.findByText("Home destination")).toBeInTheDocument();
+  expect(createAIWeeklyPlanDraft).not.toHaveBeenCalled();
+  expect(createCycleFromWeeklyPlan).not.toHaveBeenCalled();
+});
+
+test("conversion retry reuses the generated weekly plan without calling AI again", async () => {
+  const settings = createSettings({
+    lastCompletedStep: 4,
+    trainingProfile: createCanonicalProfile({
+      cardioProfile: { cardioRole: "none", preferredModalities: [] },
+    }),
+  });
+  getUserSettings.mockResolvedValue(settings);
+  updateTrainingProfileSettings.mockResolvedValue(settings);
+  createCycleFromWeeklyPlan
+    .mockRejectedValueOnce(new Error("Conversion unavailable"))
+    .mockResolvedValueOnce({
+      cycleId: "cycle_new",
+      cycle: { startDate: "2026-08-17", endDate: "2026-09-27" },
+    });
+
+  renderPage();
+  fireEvent.click(await screen.findByRole("button", { name: "Generate my program" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Conversion unavailable");
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+  expect(await findGeneratedProgramHeading()).toBeInTheDocument();
+  expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+  expect(createCycleFromWeeklyPlan).toHaveBeenCalledTimes(2);
+});
+
+test("AI retry generates again only after the first AI request fails", async () => {
+  const settings = createSettings({
+    lastCompletedStep: 4,
+    trainingProfile: createCanonicalProfile({
+      cardioProfile: { cardioRole: "none", preferredModalities: [] },
+    }),
+  });
+  getUserSettings.mockResolvedValue(settings);
+  updateTrainingProfileSettings.mockResolvedValue(settings);
+  createAIWeeklyPlanDraft
+    .mockRejectedValueOnce(new Error("Generation unavailable"))
+    .mockResolvedValueOnce({
+      weeklyPlanParentId: "weekly_parent_1",
+      weeklyPlanVersionId: "weekly_version_1",
+      name: "Generated Program",
+      status: "PUBLISHED",
+    });
+
+  renderPage();
+  fireEvent.click(await screen.findByRole("button", { name: "Generate my program" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Generation unavailable");
+  expect(createCycleFromWeeklyPlan).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+  expect(await findGeneratedProgramHeading()).toBeInTheDocument();
+  expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(2);
+  expect(createCycleFromWeeklyPlan).toHaveBeenCalledTimes(1);
+});
+
+test("stale conflicts return to confirmation and reconvert without regenerating AI", async () => {
+  const settings = createSettings({
+    lastCompletedStep: 4,
+    trainingProfile: createCanonicalProfile({
+      cardioProfile: { cardioRole: "none", preferredModalities: [] },
+    }),
+  });
+  getUserSettings.mockResolvedValue(settings);
+  updateTrainingProfileSettings.mockResolvedValue(settings);
+  const staleError = new Error("Confirmation required");
+  staleError.code = "CYCLE_CONFLICT_CONFIRMATION_REQUIRED";
+  staleError.details = {
+    window: {
+      timezone: "America/Toronto",
+      startDate: "2026-08-17",
+      endDate: "2026-09-27",
+      durationWeeks: 6,
+    },
+    conflicts: [
+      {
+        cycleId: "cycle_new_conflict",
+        name: "New conflict",
+        startDate: "2026-08-20",
+        endDate: "2026-09-10",
+        updatedAt: "2026-08-10T13:00:00.000Z",
+      },
+    ],
+  };
+  createCycleFromWeeklyPlan
+    .mockRejectedValueOnce(staleError)
+    .mockResolvedValueOnce({
+      cycleId: "cycle_new",
+      cycle: { startDate: "2026-08-17", endDate: "2026-09-27" },
+    });
+
+  renderPage();
+  fireEvent.click(await screen.findByRole("button", { name: "Generate my program" }));
+  expect(await screen.findByRole("dialog")).toHaveTextContent("New conflict");
+  fireEvent.click(screen.getByRole("button", { name: "Yes, replace cycles" }));
+
+  expect(await findGeneratedProgramHeading()).toBeInTheDocument();
+  expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+  expect(createCycleFromWeeklyPlan).toHaveBeenCalledTimes(2);
+  expect(createCycleFromWeeklyPlan.mock.calls[1][0].confirmedConflicts).toEqual(
+    staleError.details.conflicts
+  );
+});
+
+test("onboarding completion retry does not repeat generation or conversion", async () => {
+  const settings = createSettings({
+    lastCompletedStep: 4,
+    trainingProfile: createCanonicalProfile({
+      cardioProfile: { cardioRole: "none", preferredModalities: [] },
+    }),
+  });
+  getUserSettings.mockResolvedValue(settings);
+  updateTrainingProfileSettings.mockResolvedValue(settings);
+  let completeAttempts = 0;
+  updateUserOnboarding.mockImplementation(async (payload) => {
+    if (payload.action === "COMPLETE") {
+      completeAttempts += 1;
+      if (completeAttempts === 1) {
+        throw new Error("Lifecycle unavailable");
+      }
+      return {
+        onboarding: { status: "COMPLETED", lastCompletedStep: 5, isComplete: true },
+      };
+    }
+    return {
+      onboarding: { status: "IN_PROGRESS", lastCompletedStep: 4, isComplete: false },
+    };
+  });
+
+  renderPage();
+  fireEvent.click(await screen.findByRole("button", { name: "Generate my program" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Lifecycle unavailable");
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+  expect(await findGeneratedProgramHeading()).toBeInTheDocument();
+  expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+  expect(createCycleFromWeeklyPlan).toHaveBeenCalledTimes(1);
+  expect(completeAttempts).toBe(2);
 });
 
 test("Generate remains disabled until Step 5 has an explicit cardio choice", async () => {

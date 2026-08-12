@@ -1,8 +1,11 @@
 import {
   createAIWeeklyPlanDraft,
+  createCycleFromWeeklyPlan,
   fetchExercises,
   fetchUserExercisePool,
   fetchUserExercisePoolResponse,
+  getAIWeeklyPlanGenerationProgress,
+  getOnboardingCycleConflicts,
   updateTrainingProfileAvailability,
   updateUserOnboarding,
   updateUserProfile,
@@ -192,6 +195,43 @@ describe("createAIWeeklyPlanDraft", () => {
     expect(result).toBe(responseBody);
   });
 
+  test("optionally sends a generation id and reads owner-scoped progress", async () => {
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ weeklyPlanParentId: "weekly_parent_ai_1" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          generationId: "generation_1",
+          status: "RUNNING",
+          stage: "BUILDING_PROGRAM",
+        }),
+      });
+
+    await createAIWeeklyPlanDraft({ generationId: "generation_1" });
+    const postBody = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(postBody).toEqual({
+      userId: expect.any(String),
+      generationId: "generation_1",
+    });
+
+    const controller = new AbortController();
+    await getAIWeeklyPlanGenerationProgress("generation_1", {
+      signal: controller.signal,
+    });
+    const [requestUrl, requestOptions] = global.fetch.mock.calls[1];
+    const url = new URL(requestUrl);
+    expect(url.pathname).toBe(
+      "/api/weekly-plans/ai-drafts/generation_1/progress"
+    );
+    expect(url.searchParams.get("userId")).toEqual(expect.any(String));
+    expect(requestOptions.signal).toBe(controller.signal);
+  });
+
   test("preserves controlled error code, details, and HTTP status", async () => {
     const details = {
       primaryGoal: "STRENGTH",
@@ -215,6 +255,66 @@ describe("createAIWeeklyPlanDraft", () => {
       details,
       status: 422,
     });
+  });
+});
+
+describe("onboarding cycle APIs", () => {
+  beforeEach(() => {
+    global.fetch = jest.fn();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("previews conflicts with the browser timezone", async () => {
+    const responseBody = {
+      window: {
+        timezone: "America/Toronto",
+        startDate: "2026-08-17",
+        endDate: "2026-09-27",
+        durationWeeks: 6,
+      },
+      conflicts: [],
+    };
+    mockJsonResponse(responseBody);
+
+    const result = await getOnboardingCycleConflicts();
+    const [requestUrl] = global.fetch.mock.calls[0];
+    const url = new URL(requestUrl);
+
+    expect(url.pathname).toBe("/api/cycles/conflicts");
+    expect(url.searchParams.get("userId")).toEqual(expect.any(String));
+    expect(url.searchParams.get("timezone")).toBeTruthy();
+    expect(result).toBe(responseBody);
+  });
+
+  test("passes the confirmed conflict snapshot to canonical conversion", async () => {
+    const responseBody = { cycleId: "cycle_new" };
+    mockJsonResponse(responseBody);
+    const payload = {
+      weeklyPlanParentId: "weekly_parent_1",
+      weeklyPlanVersionId: "weekly_version_1",
+      durationWeeks: 6,
+      confirmedConflicts: [],
+      conflictWindow: {
+        timezone: "America/Toronto",
+        startDate: "2026-08-17",
+        endDate: "2026-09-27",
+        durationWeeks: 6,
+      },
+    };
+
+    await createCycleFromWeeklyPlan(payload);
+    const [requestUrl, requestOptions] = global.fetch.mock.calls[0];
+    const body = JSON.parse(requestOptions.body);
+
+    expect(new URL(requestUrl).pathname).toBe("/api/cycles/from-weekly-plan");
+    expect(requestOptions.method).toBe("POST");
+    expect(body).toEqual(expect.objectContaining(payload));
+    expect(body.userId).toEqual(expect.any(String));
+    expect(body.timezone).toBeTruthy();
   });
 });
 

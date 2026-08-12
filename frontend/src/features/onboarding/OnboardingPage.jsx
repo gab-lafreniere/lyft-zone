@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Button,
@@ -8,14 +8,15 @@ import {
   StickyBottomActions,
 } from "../../design-v2";
 import {
+  createAIWeeklyPlanDraft,
+  createCycleFromWeeklyPlan,
   ensureCurrentUserId,
+  getOnboardingCycleConflicts,
   getUserSettings,
   updateTrainingProfileSettings,
   updateUserOnboarding,
   updateUserProfile,
 } from "../../services/api";
-import { isAIWeeklyPlanFrontendEnabled } from "../weeklyPlans/featureFlags";
-import { getAIWeeklyPlanBuilderPath } from "../weeklyPlans/routes";
 import {
   createOnboardingDraft,
   createOnboardingRecovery,
@@ -37,22 +38,48 @@ import {
   validateSetupStep,
   validateTrainingStep,
 } from "./onboardingValidation";
+import {
+  getCycleBuilderPath,
+  getCycleDetailsPath,
+} from "../multiWeek/routes";
 import { toTrainingProfilePayload } from "../settings/settingsMappers";
 import AboutYouStep from "./steps/AboutYouStep";
 import AdditionalContextStep from "./steps/AdditionalContextStep";
 import MuscleFocusStep from "./steps/MuscleFocusStep";
 import ProfileSummaryPanel from "./ProfileSummaryPanel";
+import OnboardingConflictModal from "./OnboardingConflictModal";
+import OnboardingGenerationLoader from "./OnboardingGenerationLoader";
+import OnboardingProgramResult from "./OnboardingProgramResult";
 import TrainingSetupStep from "./steps/TrainingSetupStep";
 import TrainingStep from "./steps/TrainingStep";
 import { buildProfileSummaryItems } from "./profileSummary";
+import useOnboardingGenerationProgress from "./useOnboardingGenerationProgress";
 import "./onboarding.css";
 
 const TOTAL_STEPS = 5;
+const INITIAL_PROGRAM_FLOW = {
+  phase: "step",
+  window: null,
+  conflicts: [],
+  weeklyPlan: null,
+  cycle: null,
+  failedStage: null,
+  completionDestination: "result",
+  error: "",
+};
 
-function getCompletionPath() {
-  return isAIWeeklyPlanFrontendEnabled()
-    ? getAIWeeklyPlanBuilderPath()
-    : "/program";
+function resetResultScroll(mainElement) {
+  let element = mainElement;
+  while (element) {
+    element.scrollTop = 0;
+    element.scrollLeft = 0;
+    element = element.parentElement;
+  }
+  if (document.scrollingElement) {
+    document.scrollingElement.scrollTop = 0;
+    document.scrollingElement.scrollLeft = 0;
+  }
+  window.scrollTo?.({ top: 0, left: 0, behavior: "auto" });
 }
 
 function parseRequestedStep(searchParams) {
@@ -76,6 +103,13 @@ export default function OnboardingPage() {
   const [saveError, setSaveError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [hasMovementLimitations, setHasMovementLimitations] = useState(false);
+  const [programFlow, setProgramFlow] = useState(INITIAL_PROGRAM_FLOW);
+  const pageMainRef = useRef(null);
+  const generationProgress = useOnboardingGenerationProgress(
+    programFlow.phase,
+    draft?.availability?.sessionsPerWeek,
+    draft?.availability?.durationPerSession
+  );
   const enabled = isOnboardingFrontendEnabled();
   const availabilityOptions = settings?.trainingProfile?.options?.availability || {
     sessionsPerWeek: [],
@@ -133,6 +167,23 @@ export default function OnboardingPage() {
       initialize();
     }
   }, [enabled, initialize]);
+
+  useEffect(() => {
+    if (
+      programFlow.phase === "completing" &&
+      generationProgress.completionReady
+    ) {
+      setProgramFlow((current) => current.phase === "completing"
+        ? { ...current, phase: "success" }
+        : current);
+    }
+  }, [generationProgress.completionReady, programFlow.phase]);
+
+  useLayoutEffect(() => {
+    if (programFlow.phase === "success") {
+      resetResultScroll(pageMainRef.current);
+    }
+  }, [programFlow.phase]);
 
   useEffect(() => {
     if (loadState.status !== "loaded") {
@@ -260,7 +311,7 @@ export default function OnboardingPage() {
     );
   }
 
-  async function completeOnboarding() {
+  async function saveFinalTrainingProfile() {
     const latestSettings = await getUserSettings();
     const draftToSave = mergeOnboardingStepIntoCanonical(
       createOnboardingDraft(latestSettings),
@@ -270,12 +321,151 @@ export default function OnboardingPage() {
     const payload = toTrainingProfilePayload(draftToSave);
     const response = await updateTrainingProfileSettings(payload);
     const authoritativeDraft = createOnboardingDraft(response);
-    await updateUserOnboarding({ action: "COMPLETE" });
 
     setSettings(response);
     setDraft(authoritativeDraft);
     clearOnboardingRecovery(userId);
-    navigate(getCompletionPath(), { replace: true });
+    return response;
+  }
+
+  async function completeOnboardingLifecycle(context, destination = "result") {
+    setProgramFlow({
+      ...context,
+      phase: "completing",
+      failedStage: null,
+      completionDestination: destination,
+      error: "",
+    });
+
+    try {
+      await updateUserOnboarding({ action: "COMPLETE" });
+      clearOnboardingRecovery(userId);
+      if (destination === "home") {
+        navigate("/", { replace: true });
+        return;
+      }
+      generationProgress.markSuccess();
+    } catch (error) {
+      setProgramFlow({
+        ...context,
+        phase: "error",
+        failedStage: "completion",
+        completionDestination: destination,
+        error: error?.message || "Your program is ready, but onboarding could not be completed.",
+      });
+    }
+  }
+
+  async function convertWeeklyPlan(context) {
+    setProgramFlow({ ...context, phase: "converting", failedStage: null, error: "" });
+    try {
+      const cycle = await createCycleFromWeeklyPlan({
+        weeklyPlanParentId: context.weeklyPlan.weeklyPlanParentId,
+        weeklyPlanVersionId: context.weeklyPlan.weeklyPlanVersionId,
+        name: context.weeklyPlan.name,
+        startDate: context.window.startDate,
+        durationWeeks: 6,
+        workoutDayAssignmentStrategy: "DEFAULT",
+        conflictWindow: context.window,
+        confirmedConflicts: context.conflicts,
+      });
+      generationProgress.markCycleReady();
+      await completeOnboardingLifecycle({ ...context, cycle }, "result");
+    } catch (error) {
+      if (error?.code === "CYCLE_CONFLICT_CONFIRMATION_REQUIRED" && error?.details) {
+        setProgramFlow({
+          ...context,
+          phase: "confirmation",
+          window: error.details.window,
+          conflicts: error.details.conflicts || [],
+          failedStage: null,
+          error: "",
+        });
+        return;
+      }
+      setProgramFlow({
+        ...context,
+        phase: "error",
+        failedStage: "conversion",
+        error: error?.message || "Your weekly plan was saved, but the training cycle could not be created.",
+      });
+    }
+  }
+
+  async function generateWeeklyPlan(context) {
+    setProgramFlow({ ...context, phase: "generating", failedStage: null, error: "" });
+    const generationId = generationProgress.beginAI();
+    try {
+      const weeklyPlan = await createAIWeeklyPlanDraft({ generationId });
+      generationProgress.stopAI();
+      generationProgress.markWeeklyPlanReady();
+      await convertWeeklyPlan({ ...context, weeklyPlan });
+    } catch (error) {
+      generationProgress.stopAI();
+      setProgramFlow({
+        ...context,
+        phase: "error",
+        failedStage: "ai",
+        error: error?.message || "We couldn't generate your weekly plan.",
+      });
+    }
+  }
+
+  async function checkConflictsAndContinue() {
+    setProgramFlow({ ...INITIAL_PROGRAM_FLOW, phase: "checking" });
+    try {
+      const preview = await getOnboardingCycleConflicts();
+      const context = {
+        ...INITIAL_PROGRAM_FLOW,
+        window: preview.window,
+        conflicts: preview.conflicts || [],
+      };
+      if (context.conflicts.length > 0) {
+        setProgramFlow({ ...context, phase: "confirmation" });
+      } else {
+        await generateWeeklyPlan(context);
+      }
+    } catch (error) {
+      setProgramFlow({
+        ...INITIAL_PROGRAM_FLOW,
+        phase: "error",
+        failedStage: "checking",
+        error: error?.message || "We couldn't check your training cycle schedule.",
+      });
+    }
+  }
+
+  async function beginProgramGeneration() {
+    generationProgress.reset();
+    await saveFinalTrainingProfile();
+    await checkConflictsAndContinue();
+  }
+
+  async function handleConflictConfirm() {
+    if (programFlow.weeklyPlan) {
+      await convertWeeklyPlan(programFlow);
+    } else {
+      await generateWeeklyPlan(programFlow);
+    }
+  }
+
+  async function handleConflictCancel() {
+    await completeOnboardingLifecycle(programFlow, "home");
+  }
+
+  async function handleProgramRetry() {
+    if (programFlow.failedStage === "checking") {
+      await checkConflictsAndContinue();
+    } else if (programFlow.failedStage === "ai") {
+      await generateWeeklyPlan(programFlow);
+    } else if (programFlow.failedStage === "conversion") {
+      await convertWeeklyPlan(programFlow);
+    } else if (programFlow.failedStage === "completion") {
+      await completeOnboardingLifecycle(
+        programFlow,
+        programFlow.completionDestination || "result"
+      );
+    }
   }
 
   async function handleContinue() {
@@ -315,7 +505,7 @@ export default function OnboardingPage() {
       } else if (step < TOTAL_STEPS) {
         await saveCanonicalStep(step);
       } else {
-        await completeOnboarding();
+        await beginProgramGeneration();
       }
     } catch (error) {
       const nextErrors = {};
@@ -332,7 +522,7 @@ export default function OnboardingPage() {
   }
 
   function handleBack() {
-    if (step <= 1 || isSaving) {
+    if (step <= 1 || isSaving || programFlow.phase !== "step") {
       return;
     }
     const previousStep = step - 1;
@@ -399,13 +589,69 @@ export default function OnboardingPage() {
     );
   }
 
+  function renderProgramFlow() {
+    if (["checking", "generating", "converting", "completing"].includes(programFlow.phase)) {
+      return (
+        <OnboardingGenerationLoader
+          stage={programFlow.phase}
+          percent={generationProgress.percent}
+          message={generationProgress.message}
+          profile={draft}
+          isExiting={generationProgress.isCompletionExiting}
+        />
+      );
+    }
+
+    if (programFlow.phase === "success") {
+      const cycleId = programFlow.cycle?.cycleId || programFlow.cycle?.cycle?.id;
+      return (
+        <OnboardingProgramResult
+          weeklyPlan={programFlow.weeklyPlan}
+          cycle={programFlow.cycle}
+          profile={draft}
+          onModify={() => navigate(getCycleBuilderPath(cycleId))}
+          onDetails={() => navigate(getCycleDetailsPath(cycleId))}
+        />
+      );
+    }
+
+    if (programFlow.phase === "error") {
+      return (
+        <section className="mx-auto grid max-w-md gap-4 py-20 text-center">
+          <h1 className="font-lz-v2-display text-2xl font-bold text-lz-v2-text-strong">
+            We couldn&apos;t finish your program
+          </h1>
+          <p className="text-sm leading-6 text-lz-v2-danger" role="alert">
+            {programFlow.error}
+          </p>
+          <Button onClick={handleProgramRetry}>Try again</Button>
+        </section>
+      );
+    }
+
+    return (
+      <>
+        {renderStep()}
+        {saveError ? (
+          <p className="mt-6 text-sm font-semibold text-lz-v2-danger" role="alert">
+            {saveError}
+          </p>
+        ) : null}
+      </>
+    );
+  }
+
   return (
     <DesignV2Scope>
       <MobilePage
-        className={`lz-onboarding-page${step === TOTAL_STEPS ? " lz-onboarding-page--final" : ""}`}
-        hasStickyActions={loadState.status === "loaded"}
+        className={`lz-onboarding-page${step === TOTAL_STEPS ? " lz-onboarding-page--final" : ""}${["checking", "generating", "converting", "completing"].includes(programFlow.phase) ? " lz-onboarding-page--generation" : ""}${programFlow.phase === "success" ? " lz-onboarding-page--result" : ""}`}
+        hasStickyActions={
+          loadState.status === "loaded" &&
+          (programFlow.phase === "step" || programFlow.phase === "success")
+        }
+        mainProps={{ ref: pageMainRef }}
         header={
-          <>
+          programFlow.phase === "step" ? <>
             <ProgressIndicator
               className="lz-onboarding-progress-top"
               value={step}
@@ -419,7 +665,7 @@ export default function OnboardingPage() {
                   type="button"
                   className="min-h-11 min-w-11 rounded-full text-left text-sm font-bold text-lz-v2-text-muted disabled:opacity-0"
                   onClick={handleBack}
-                  disabled={step <= 1 || isSaving}
+                  disabled={step <= 1 || isSaving || programFlow.phase !== "step"}
                   aria-label="Go to previous onboarding step"
                 >
                   Back
@@ -432,7 +678,13 @@ export default function OnboardingPage() {
                 </span>
               </div>
             </div>
-          </>
+          </> : (
+            <div className="lz-onboarding-brand-header">
+              <p className="font-lz-v2-display text-lg font-bold uppercase text-lz-v2-text-strong">
+                Lyft <span className="text-lz-v2-action">Zone</span>
+              </p>
+            </div>
+          )
         }
       >
         {loadState.status === "error" ? (
@@ -444,14 +696,7 @@ export default function OnboardingPage() {
             <Button onClick={initialize}>Try again</Button>
           </div>
         ) : loadState.status === "loaded" && draft && profile ? (
-          <>
-            {renderStep()}
-            {saveError ? (
-              <p className="mt-6 text-sm font-semibold text-lz-v2-danger" role="alert">
-                {saveError}
-              </p>
-            ) : null}
-          </>
+          renderProgramFlow()
         ) : (
           <p className="py-20 text-center text-lz-v2-text-muted" role="status">
             Preparing your profile…
@@ -459,7 +704,7 @@ export default function OnboardingPage() {
         )}
       </MobilePage>
 
-      {loadState.status === "loaded" ? (
+      {loadState.status === "loaded" && programFlow.phase === "step" ? (
         <StickyBottomActions
           aria-label="Onboarding actions"
           className={step === TOTAL_STEPS ? "lz-onboarding-final-actions" : ""}
@@ -479,6 +724,15 @@ export default function OnboardingPage() {
             {step === TOTAL_STEPS ? "Generate my program" : "Continue"}
           </Button>
         </StickyBottomActions>
+      ) : null}
+
+      {loadState.status === "loaded" && programFlow.phase === "confirmation" ? (
+        <OnboardingConflictModal
+          conflicts={programFlow.conflicts}
+          onCancel={handleConflictCancel}
+          onConfirm={handleConflictConfirm}
+          isBusy={isSaving}
+        />
       ) : null}
     </DesignV2Scope>
   );

@@ -93,9 +93,25 @@ async function writeWeeklyPlanPipelineArtifacts({
   };
 }
 
+async function rewriteWeeklyPlanPipelineOutput8({ runDirectory, output8 }) {
+  if (typeof runDirectory !== 'string' || !runDirectory.trim()) {
+    throw new Error('runDirectory is required to rewrite Output 8');
+  }
+  const output8Descriptor = CANONICAL_OUTPUT_FILES.find(
+    ([key]) => key === 'output8'
+  );
+  await writeFileAtomically(
+    runDirectory,
+    output8Descriptor[1],
+    serializeOutput(output8, output8Descriptor[2])
+  );
+  return path.join(runDirectory, output8Descriptor[1]);
+}
+
 module.exports = {
   CANONICAL_OUTPUT_FILES,
   DEFAULT_PIPELINE_ARTIFACT_BASE_DIRECTORY,
   createRunId,
+  rewriteWeeklyPlanPipelineOutput8,
   writeWeeklyPlanPipelineArtifacts,
 };

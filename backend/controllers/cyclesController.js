@@ -9,6 +9,7 @@ const {
   getCycleDetails,
   getCycleFull,
   getHomeDashboard,
+  getOnboardingCycleConflicts,
   getProgramOverviewV2,
   getProgramsOverview,
   openOrCreateCycleEditDraft,
@@ -50,6 +51,7 @@ function handleError(req, res, error, operation, internalError = DEFAULT_INTERNA
       error: {
         code: error.code,
         message: error.message,
+        ...(error.details === undefined ? {} : { details: error.details }),
       },
     });
   }
@@ -84,6 +86,18 @@ async function createCycleFromWeeklyPlanHandler(req, res) {
     return res.status(201).json(response);
   } catch (error) {
     return handleError(req, res, error, 'create_cycle_from_weekly_plan');
+  }
+}
+
+async function getOnboardingCycleConflictsHandler(req, res) {
+  try {
+    const response = await getOnboardingCycleConflicts(
+      req.query.userId,
+      req.query.timezone
+    );
+    return res.status(200).json(response);
+  } catch (error) {
+    return handleError(req, res, error, 'get_onboarding_cycle_conflicts');
   }
 }
 
@@ -247,6 +261,7 @@ module.exports = {
   getCycleDetailsHandler,
   getCycleFullHandler,
   getHomeDashboardHandler,
+  getOnboardingCycleConflictsHandler,
   getProgramOverviewV2Handler,
   getProgramsOverviewHandler,
   openOrCreateCycleEditDraftHandler,

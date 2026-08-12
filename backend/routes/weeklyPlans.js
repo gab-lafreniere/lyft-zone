@@ -4,6 +4,7 @@ const {
   createAIWeeklyPlanDraftHandler,
   createWeeklyPlanHandler,
   deleteWeeklyPlanHandler,
+  getAIWeeklyPlanDraftProgressHandler,
   getWeeklyPlanDetailsHandler,
   listWeeklyPlansHandler,
   openOrCreateEditDraftHandler,
@@ -15,6 +16,7 @@ const {
 const router = express.Router();
 
 router.post('/ai-drafts', createAIWeeklyPlanDraftHandler);
+router.get('/ai-drafts/:generationId/progress', getAIWeeklyPlanDraftProgressHandler);
 router.post('/', createWeeklyPlanHandler);
 router.get('/', listWeeklyPlansHandler);
 router.delete('/:weeklyPlanParentId', deleteWeeklyPlanHandler);

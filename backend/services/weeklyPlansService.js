@@ -905,6 +905,8 @@ async function createWeeklyPlan(payload, { initialStatus = 'DRAFT' } = {}) {
       where: { id: createdParent.id },
       include: weeklyPlanParentInclude(userId),
     });
+  }, {
+    timeout: 20000,
   });
 
   return mapVersionToBuilderPayload(

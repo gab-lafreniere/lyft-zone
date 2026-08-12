@@ -51,6 +51,7 @@ async function buildTextualAIWeeklyPlanPromptForUser(
     userId: userId.trim(),
     promptVersion,
     sessionsPerWeek: context.availability.sessionsPerWeek,
+    durationPerSession: context.availability.durationPerSession,
     systemMessage,
     userMessage,
     inputText,

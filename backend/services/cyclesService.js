@@ -1,6 +1,9 @@
+const { Prisma } = require('@prisma/client');
 const { getPrisma } = require('../lib/prisma');
 const { ApiError } = require('./usersService');
-const { regenerateScheduledSessionsForPublishedCycle } = require('./scheduledSessionsService');
+const {
+  synchronizeScheduledSessionsForPublishedCycle,
+} = require('./scheduledSessionsService');
 const { validateAndNormalizeCardioBlocks } = require('./cardioPrescription');
 const {
   normalizeNullableNumber,
@@ -13,12 +16,14 @@ const {
   compareDateKeys,
   diffDateKeys,
   getEndOfMondayWeek,
+  getFirstMondayOnOrAfter,
   getLocalDateTimeParts,
   getStartOfMondayWeek,
   getStartOfSundayWeek,
   getTodayDateKey,
   isWithinGraceWindow,
   isDateWithinRange,
+  isValidTimeZone,
   parseDateInput,
   rangesOverlap,
   resolveEffectiveTimezone,
@@ -31,6 +36,16 @@ const TRAINING_MODES = new Set(['FIXED', 'AI_COACH']);
 const PLAN_SOURCE_TYPES = new Set(['SYSTEM', 'USER', 'AI']);
 const PLAN_STATUSES = new Set(['DRAFT', 'PUBLISHED', 'SUPERSEDED']);
 const MAX_CYCLE_DURATION_WEEKS = 8;
+const ONBOARDING_CYCLE_DURATION_WEEKS = 6;
+const DEFAULT_WORKOUT_DAYS = [
+  'MONDAY',
+  'TUESDAY',
+  'WEDNESDAY',
+  'THURSDAY',
+  'FRIDAY',
+  'SATURDAY',
+  'SUNDAY',
+];
 const DAY_OF_WEEK = new Set([
   'MONDAY',
   'TUESDAY',
@@ -590,6 +605,31 @@ function normalizeWorkoutDayAssignments(assignments, sourceVersion) {
   return assignmentMap;
 }
 
+function resolveWorkoutDayAssignments(payload, sourceVersion) {
+  if (payload.workoutDayAssignmentStrategy === 'DEFAULT') {
+    const sourceWorkouts = Array.isArray(sourceVersion?.workouts)
+      ? [...sourceVersion.workouts].sort((left, right) => left.orderIndex - right.orderIndex)
+      : [];
+
+    if (sourceWorkouts.length === 0 || sourceWorkouts.length > DEFAULT_WORKOUT_DAYS.length) {
+      throw new ApiError(
+        400,
+        'VALIDATION_ERROR',
+        'The default workout schedule requires between 1 and 7 weekly workouts.'
+      );
+    }
+
+    return new Map(
+      sourceWorkouts.map((workout, index) => [
+        workout.orderIndex,
+        DEFAULT_WORKOUT_DAYS[index],
+      ])
+    );
+  }
+
+  return normalizeWorkoutDayAssignments(payload.workoutDayAssignments, sourceVersion);
+}
+
 function normalizeWorkoutsInput(workouts = []) {
   return Array.isArray(workouts)
     ? workouts.map((workout, workoutIndex) => ({
@@ -786,8 +826,7 @@ function collectExerciseIdsFromWeeks(weeks = []) {
   );
 }
 
-async function assertUserExists(userId) {
-  const prisma = getPrisma();
+async function assertUserExists(userId, prisma = getPrisma()) {
   const normalizedUserId = normalizeOptionalString(userId);
 
   if (!normalizedUserId) {
@@ -1170,6 +1209,10 @@ async function loadCycleForUser(tx, cycleId, userId) {
 
   if (!cycle) {
     throw new ApiError(404, 'NOT_FOUND', 'Training cycle not found');
+  }
+
+  if (cycle.status === 'ARCHIVED') {
+    throw new ApiError(409, 'CYCLE_ARCHIVED', 'Archived training cycles cannot be modified');
   }
 
   return cycle;
@@ -1992,9 +2035,13 @@ function buildDocumentFromWeeklyVersion(version, durationWeeks, workoutDayAssign
   };
 }
 
-function validateNoOverlap(cycles, nextStartDateKey, nextEndDateKey, currentCycleId = null) {
-  const overlappingCycle = cycles.find((cycle) => {
+function findOverlappingCycles(cycles, nextStartDateKey, nextEndDateKey, currentCycleId = null) {
+  return cycles.filter((cycle) => {
     if (currentCycleId && cycle.id === currentCycleId) {
+      return false;
+    }
+
+    if (cycle.status === 'ARCHIVED') {
       return false;
     }
 
@@ -2002,10 +2049,207 @@ function validateNoOverlap(cycles, nextStartDateKey, nextEndDateKey, currentCycl
     const existingEnd = toDateKey(cycle.endDate);
     return existingStart <= nextEndDateKey && existingEnd >= nextStartDateKey;
   });
+}
+
+function validateNoOverlap(cycles, nextStartDateKey, nextEndDateKey, currentCycleId = null) {
+  const overlappingCycle = findOverlappingCycles(
+    cycles,
+    nextStartDateKey,
+    nextEndDateKey,
+    currentCycleId
+  )[0];
 
   if (overlappingCycle) {
     throw new ApiError(409, 'DATE_OVERLAP', 'This date range overlaps an existing cycle');
   }
+}
+
+function serializeCycleConflict(cycle, requestedTimezone) {
+  const timezone = resolveEffectiveTimezone(cycle.timezone, requestedTimezone, DEFAULT_TIMEZONE);
+  return {
+    cycleId: cycle.id,
+    name: cycle.name,
+    startDate: toDateKey(cycle.startDate),
+    endDate: toDateKey(cycle.endDate),
+    temporalStatus: deriveTemporalStatus(cycle, timezone),
+    updatedAt: cycle.updatedAt instanceof Date
+      ? cycle.updatedAt.toISOString()
+      : String(cycle.updatedAt),
+  };
+}
+
+async function loadOverlappingCycles(
+  db,
+  userId,
+  startDateKey,
+  endDateKey,
+  currentCycleId = null
+) {
+  return db.trainingCycle.findMany({
+    where: {
+      userId,
+      status: { not: 'ARCHIVED' },
+      startDate: { lte: parseDateInput(endDateKey) },
+      endDate: { gte: parseDateInput(startDateKey) },
+      ...(currentCycleId ? { id: { not: currentCycleId } } : {}),
+    },
+    orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }],
+    select: {
+      id: true,
+      name: true,
+      startDate: true,
+      endDate: true,
+      timezone: true,
+      status: true,
+      updatedAt: true,
+    },
+  });
+}
+
+function buildOnboardingCycleWindow(timezone, now = new Date()) {
+  if (!isValidTimeZone(timezone)) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'timezone must be a valid IANA timezone');
+  }
+
+  const todayDateKey = getTodayDateKey(timezone, now);
+  const startDate = getFirstMondayOnOrAfter(todayDateKey);
+  return {
+    timezone,
+    startDate,
+    endDate: addDays(startDate, ONBOARDING_CYCLE_DURATION_WEEKS * 7 - 1),
+    durationWeeks: ONBOARDING_CYCLE_DURATION_WEEKS,
+  };
+}
+
+async function getOnboardingCycleConflicts(userId, requestedTimezone, options = {}) {
+  const prisma = options.prisma || getPrisma();
+  await assertUserExists(userId, prisma);
+  const timezone = String(requestedTimezone || '').trim();
+  const window = buildOnboardingCycleWindow(timezone, options.now || new Date());
+  const conflicts = await loadOverlappingCycles(
+    prisma,
+    userId,
+    window.startDate,
+    window.endDate
+  );
+
+  return {
+    window,
+    conflicts: conflicts.map((cycle) => serializeCycleConflict(cycle, timezone)),
+  };
+}
+
+function normalizeConfirmedConflicts(value) {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  return value.map((conflict) => ({
+    cycleId: String(conflict?.cycleId || '').trim(),
+    startDate: toDateKey(conflict?.startDate),
+    endDate: toDateKey(conflict?.endDate),
+    updatedAt: String(conflict?.updatedAt || '').trim(),
+  }));
+}
+
+function conflictSnapshotsMatch(confirmed, current) {
+  if (!Array.isArray(confirmed) || confirmed.length !== current.length) {
+    return false;
+  }
+
+  const confirmedById = new Map(confirmed.map((entry) => [entry.cycleId, entry]));
+  return current.every((entry) => {
+    const snapshot = confirmedById.get(entry.cycleId);
+    return Boolean(
+      snapshot &&
+      snapshot.startDate === entry.startDate &&
+      snapshot.endDate === entry.endDate &&
+      snapshot.updatedAt === entry.updatedAt
+    );
+  });
+}
+
+async function archiveConflictingCycles(
+  tx,
+  conflicts,
+  replacementStartDateKey,
+  requestedTimezone,
+  now
+) {
+  const archivedCycles = [];
+
+  for (const conflict of conflicts) {
+    const timezone = resolveEffectiveTimezone(
+      conflict.timezone,
+      requestedTimezone,
+      DEFAULT_TIMEZONE
+    );
+    const sessions = await tx.scheduledSession.findMany({
+      where: {
+        workout: {
+          planWeek: {
+            plan: {
+              trainingCycleId: conflict.id,
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+        completedAt: true,
+        scheduledStartAt: true,
+      },
+    });
+    const replaceableSessionIds = sessions
+      .filter((session) => {
+        if (session.status === 'COMPLETED' || session.completedAt != null) {
+          return false;
+        }
+
+        return getLocalDateTimeParts(session.scheduledStartAt, timezone).dateKey >=
+          replacementStartDateKey;
+      })
+      .map((session) => session.id);
+
+    if (replaceableSessionIds.length > 0) {
+      await tx.scheduledSession.deleteMany({
+        where: { id: { in: replaceableSessionIds } },
+      });
+    }
+
+    await tx.trainingCycle.update({
+      where: { id: conflict.id },
+      data: {
+        status: 'ARCHIVED',
+        archivedAt: now,
+      },
+    });
+    archivedCycles.push({
+      cycleId: conflict.id,
+      removedPlanningSessionCount: replaceableSessionIds.length,
+    });
+  }
+
+  return archivedCycles;
+}
+
+async function runSerializableCycleTransaction(prisma, operation) {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await prisma.$transaction(operation, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 5000,
+        timeout: 30000,
+      });
+    } catch (error) {
+      if (error?.code !== 'P2034' || attempt === 3) {
+        throw error;
+      }
+    }
+  }
+
+  throw new ApiError(409, 'CONFLICT', 'Cycle replacement conflicted with another request');
 }
 
 async function createCycle(payload) {
@@ -2049,7 +2293,7 @@ async function createCycle(payload) {
   }
 
   const existingCycles = await prisma.trainingCycle.findMany({
-    where: { userId },
+    where: { userId, status: { not: 'ARCHIVED' } },
     select: { id: true, startDate: true, endDate: true },
   });
   validateNoOverlap(existingCycles, startDateKey, endDateKey);
@@ -2089,11 +2333,15 @@ async function createPlanForCycle(cycleId, payload) {
 
   const cycle = await prisma.trainingCycle.findUnique({
     where: { id: cycleId },
-    select: { id: true },
+    select: { id: true, status: true },
   });
 
   if (!cycle) {
     throw new ApiError(404, 'NOT_FOUND', 'Training cycle not found');
+  }
+
+  if (cycle.status === 'ARCHIVED') {
+    throw new ApiError(409, 'CYCLE_ARCHIVED', 'Archived training cycles cannot be modified');
   }
 
   const plan = await prisma.$transaction(async (tx) => {
@@ -2124,24 +2372,57 @@ async function createPlanForCycle(cycleId, payload) {
 
 async function createCycleFromWeeklyPlan(payload) {
   const prisma = getPrisma();
-  const user = await assertUserExists(payload.userId);
+  const user = await assertUserExists(payload.userId, prisma);
 
   const weeklyPlanParentId = normalizeOptionalString(payload.weeklyPlanParentId);
   if (!weeklyPlanParentId) {
     throw new ApiError(400, 'VALIDATION_ERROR', 'weeklyPlanParentId is required');
   }
 
-  const { startDateKey, endDateKey, durationWeeks } = normalizeCanonicalMultiWeekDateRange(
-    payload.startDate,
-    payload.durationWeeks,
-    payload.endDate
-  );
-
   const effectiveTimezone = resolveEffectiveTimezone(
     payload.timezone,
     user?.profile?.timezone,
     DEFAULT_TIMEZONE
   );
+  const confirmedConflicts = normalizeConfirmedConflicts(payload.confirmedConflicts);
+  const isOnboardingReplacement = confirmedConflicts !== null;
+  const canonicalWindow = isOnboardingReplacement
+    ? buildOnboardingCycleWindow(effectiveTimezone)
+    : null;
+  const normalizedRange = isOnboardingReplacement
+    ? {
+        startDateKey: canonicalWindow.startDate,
+        endDateKey: canonicalWindow.endDate,
+        durationWeeks: canonicalWindow.durationWeeks,
+      }
+    : normalizeCanonicalMultiWeekDateRange(
+        payload.startDate,
+        payload.durationWeeks,
+        payload.endDate
+      );
+  const { startDateKey, endDateKey, durationWeeks } = normalizedRange;
+
+  if (isOnboardingReplacement) {
+    const confirmedWindow = payload.conflictWindow || {};
+    const windowMatches =
+      confirmedWindow.timezone === canonicalWindow.timezone &&
+      confirmedWindow.startDate === canonicalWindow.startDate &&
+      confirmedWindow.endDate === canonicalWindow.endDate &&
+      Number(confirmedWindow.durationWeeks) === canonicalWindow.durationWeeks;
+
+    if (!windowMatches) {
+      const fresh = await getOnboardingCycleConflicts(payload.userId, effectiveTimezone, {
+        prisma,
+      });
+      throw new ApiError(
+        409,
+        'CYCLE_CONFLICT_CONFIRMATION_REQUIRED',
+        'The training cycle window changed and must be confirmed again.',
+        fresh
+      );
+    }
+  }
+
   const todayDateKey = getTodayDateKey(effectiveTimezone);
   const currentWeekMondayDateKey = getStartOfMondayWeek(todayDateKey);
 
@@ -2185,14 +2466,26 @@ async function createCycleFromWeeklyPlan(payload) {
     );
   }
 
-  const existingCycles = await prisma.trainingCycle.findMany({
-    where: { userId: payload.userId },
-    select: { id: true, startDate: true, endDate: true },
-  });
-  validateNoOverlap(existingCycles, startDateKey, endDateKey);
+  const weeklyPlanVersionId = normalizeOptionalString(payload.weeklyPlanVersionId);
+  if (isOnboardingReplacement && !weeklyPlanVersionId) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'weeklyPlanVersionId is required for onboarding cycle conversion.'
+    );
+  }
+  if (weeklyPlanVersionId && weeklyPlanVersionId !== sourceVersion.id) {
+    throw new ApiError(
+      409,
+      'WEEKLY_PLAN_VERSION_CHANGED',
+      'The published weekly plan changed before cycle conversion.'
+    );
+  }
 
-  const workoutDayAssignments = normalizeWorkoutDayAssignments(
-    payload.workoutDayAssignments,
+  const workoutDayAssignments = resolveWorkoutDayAssignments(
+    isOnboardingReplacement
+      ? { ...payload, workoutDayAssignmentStrategy: 'DEFAULT' }
+      : payload,
     sourceVersion
   );
   const document = buildDocumentFromWeeklyVersion(
@@ -2208,7 +2501,60 @@ async function createCycleFromWeeklyPlan(payload) {
       path: `weeks[${weekIndex}].workouts`,
     });
   });
-  const created = await prisma.$transaction(async (tx) => {
+  const created = await runSerializableCycleTransaction(prisma, async (tx) => {
+    const currentSourceParent = await tx.weeklyPlanParent.findFirst({
+      where: {
+        id: weeklyPlanParentId,
+        userId: payload.userId,
+      },
+      select: {
+        latestPublishedVersionId: true,
+      },
+    });
+
+    if (!currentSourceParent || currentSourceParent.latestPublishedVersionId !== sourceVersion.id) {
+      throw new ApiError(
+        409,
+        'WEEKLY_PLAN_VERSION_CHANGED',
+        'The published weekly plan changed before cycle conversion.'
+      );
+    }
+
+    const currentConflicts = await loadOverlappingCycles(
+      tx,
+      payload.userId,
+      startDateKey,
+      endDateKey
+    );
+    const serializedConflicts = currentConflicts.map((cycle) =>
+      serializeCycleConflict(cycle, effectiveTimezone)
+    );
+    let replacedCycles = [];
+
+    if (isOnboardingReplacement) {
+      if (!conflictSnapshotsMatch(confirmedConflicts, serializedConflicts)) {
+        throw new ApiError(
+          409,
+          'CYCLE_CONFLICT_CONFIRMATION_REQUIRED',
+          'The conflicting training cycles changed and must be confirmed again.',
+          {
+            window: canonicalWindow,
+            conflicts: serializedConflicts,
+          }
+        );
+      }
+
+      replacedCycles = await archiveConflictingCycles(
+        tx,
+        currentConflicts,
+        startDateKey,
+        effectiveTimezone,
+        new Date()
+      );
+    } else {
+      validateNoOverlap(currentConflicts, startDateKey, endDateKey);
+    }
+
     const cycle = await tx.trainingCycle.create({
       data: {
         userId: payload.userId,
@@ -2239,37 +2585,14 @@ async function createCycleFromWeeklyPlan(payload) {
 
     const publishedPlan = await appendPlanWeeks(tx, basePublishedPlan.id, document.weeks);
 
-    return { cycle, publishedPlan };
-  });
-
-  try {
-    await regenerateScheduledSessionsForPublishedCycle(created.cycle.id, {
+    await synchronizeScheduledSessionsForPublishedCycle(tx, cycle.id, {
       userId: payload.userId,
       timezone: effectiveTimezone,
       regenerateFromDateKey: startDateKey,
     });
-  } catch (error) {
-    logCycleServiceError(
-      'create_cycle_from_weekly_plan',
-      'sync_scheduled_sessions',
-      {
-        userId: payload.userId,
-        cycleId: created.cycle.id,
-        publishedPlanId: created.publishedPlan.id,
-      },
-      error
-    );
 
-    await prisma.trainingCycle.delete({
-      where: { id: created.cycle.id },
-    });
-
-    throw new ApiError(
-      500,
-      'SCHEDULE_SYNC_FAILED',
-      'Cycle creation failed while synchronizing scheduled sessions.'
-    );
-  }
+    return { cycle, publishedPlan, replacedCycles };
+  });
 
   const temporalStatus = deriveTemporalStatus(created.cycle, effectiveTimezone);
   return {
@@ -2279,7 +2602,11 @@ async function createCycleFromWeeklyPlan(payload) {
     status: created.publishedPlan.status,
     temporalStatus,
     timezone: effectiveTimezone,
+    startDate: startDateKey,
+    endDate: endDateKey,
+    durationWeeks,
     cycle: created.cycle,
+    replacedCycles: created.replacedCycles,
     builderPayload: buildCycleBuilderPayload(created.cycle, created.publishedPlan),
     draftState: {
       state: 'fresh',
@@ -2556,7 +2883,7 @@ async function getProgramsOverview(userId, requestedTimezone) {
   await assertUserExists(userId);
 
   const cycles = await prisma.trainingCycle.findMany({
-    where: { userId },
+    where: { userId, status: { not: 'ARCHIVED' } },
     orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }],
     include: {
       plans: {
@@ -2597,7 +2924,7 @@ async function getProgramOverviewV2(userId, requestedTimezone) {
   await assertUserExists(userId);
 
   const cycles = await prisma.trainingCycle.findMany({
-    where: { userId },
+    where: { userId, status: { not: 'ARCHIVED' } },
     orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }],
     include: {
       plans: {
@@ -3479,7 +3806,7 @@ async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
       ensureNotPastDate(nextEndDateKey, todayDateKey, 'endDate');
 
       const existingCycles = await tx.trainingCycle.findMany({
-        where: { userId },
+        where: { userId, status: { not: 'ARCHIVED' } },
         select: { id: true, startDate: true, endDate: true },
       });
       validateNoOverlap(existingCycles, normalizedStartDateKey, nextEndDateKey, cycle.id);
@@ -3502,7 +3829,7 @@ async function updateUpcomingDraftTimeline(cycleId, planId, payload = {}) {
 
       if (compareDateKeys(nextEndDateKey, currentEndDateKey) > 0) {
         const existingCycles = await tx.trainingCycle.findMany({
-          where: { userId },
+          where: { userId, status: { not: 'ARCHIVED' } },
           select: { id: true, startDate: true, endDate: true },
         });
         validateNoOverlap(existingCycles, normalizedStartDateKey, nextEndDateKey, cycle.id);
@@ -3600,6 +3927,55 @@ async function deleteCycle(cycleId, payload = {}) {
 
   return prisma.$transaction(async (tx) => {
     const cycle = await loadCycleForUser(tx, cycleId, userId);
+    const sessions = await tx.scheduledSession.findMany({
+      where: {
+        workout: {
+          planWeek: {
+            plan: {
+              trainingCycleId: cycle.id,
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+        completedAt: true,
+      },
+    });
+    const hasProtectedExecution = sessions.some(
+      (session) => session.status === 'COMPLETED' || session.completedAt != null
+    );
+
+    if (hasProtectedExecution) {
+      const planningSessionIds = sessions
+        .filter(
+          (session) =>
+            session.completedAt == null &&
+            (session.status === 'PLANNED' || session.status === 'RESCHEDULED')
+        )
+        .map((session) => session.id);
+
+      if (planningSessionIds.length > 0) {
+        await tx.scheduledSession.deleteMany({
+          where: { id: { in: planningSessionIds } },
+        });
+      }
+
+      await tx.trainingCycle.update({
+        where: { id: cycle.id },
+        data: {
+          status: 'ARCHIVED',
+          archivedAt: new Date(),
+        },
+      });
+
+      return {
+        deleted: false,
+        archived: true,
+        cycleId: cycle.id,
+      };
+    }
 
     await tx.scheduledSession.deleteMany({
       where: {
@@ -3619,6 +3995,7 @@ async function deleteCycle(cycleId, payload = {}) {
 
     return {
       deleted: true,
+      archived: false,
       cycleId: cycle.id,
     };
   });
@@ -3900,6 +4277,7 @@ async function loadHomeSessionsByDateForUser(
           plan: {
             trainingCycle: {
               userId,
+              status: { not: 'ARCHIVED' },
             },
           },
         },
@@ -3989,6 +4367,7 @@ async function loadHomeWeeklyPerformanceForUser(
           plan: {
             trainingCycle: {
               userId,
+              status: { not: 'ARCHIVED' },
             },
           },
         },
@@ -4092,7 +4471,7 @@ async function getCanonicalHomeDashboard(userId, requestedTimezone, requestedSel
   const scheduleEndDateKey = addDays(scheduleStartDateKey, 13);
 
   const cycles = await prisma.trainingCycle.findMany({
-    where: { userId },
+    where: { userId, status: { not: 'ARCHIVED' } },
     include: {
       plans: {
         orderBy: { versionNumber: 'desc' },
@@ -4189,7 +4568,7 @@ async function getHomeDashboard(userId, requestedTimezone) {
   await assertUserExists(userId);
 
   const cycles = await prisma.trainingCycle.findMany({
-    where: { userId },
+    where: { userId, status: { not: 'ARCHIVED' } },
     include: {
       plans: {
         orderBy: { versionNumber: 'desc' },
@@ -4260,6 +4639,7 @@ module.exports = {
   deleteCycle,
   extendCycleDraft,
   getCanonicalHomeDashboard,
+  getOnboardingCycleConflicts,
   getCycleDetails,
   getCycleFull,
   getHomeDashboard,
@@ -4271,4 +4651,12 @@ module.exports = {
   stableStringify,
   updateCycleDraft,
   updateUpcomingDraftTimeline,
+  _test: {
+    archiveConflictingCycles,
+    buildOnboardingCycleWindow,
+    conflictSnapshotsMatch,
+    findOverlappingCycles,
+    resolveWorkoutDayAssignments,
+    runSerializableCycleTransaction,
+  },
 };

@@ -230,14 +230,29 @@ export async function createWeeklyPlanDraft(programPayload) {
   return readJsonResponse(response);
 }
 
-export async function createAIWeeklyPlanDraft({ signal } = {}) {
+export async function createAIWeeklyPlanDraft({ signal, generationId } = {}) {
   const userId = await ensureCurrentUserId();
   const response = await fetch(`${BACKEND_URL}/api/weekly-plans/ai-drafts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId }),
+    body: JSON.stringify({
+      userId,
+      ...(generationId ? { generationId } : {}),
+    }),
     ...(signal ? { signal } : {}),
   });
+
+  return readJsonResponse(response);
+}
+
+export async function getAIWeeklyPlanGenerationProgress(generationId, { signal } = {}) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/weekly-plans/ai-drafts/${encodeURIComponent(
+      generationId
+    )}/progress?${new URLSearchParams({ userId }).toString()}`,
+    signal ? { signal } : undefined
+  );
 
   return readJsonResponse(response);
 }
@@ -426,6 +441,18 @@ export async function createCycleFromWeeklyPlan(payload) {
       timezone: payload.timezone || getLocalTimezone(),
     }),
   });
+
+  return readJsonResponse(response);
+}
+
+export async function getOnboardingCycleConflicts() {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/cycles/conflicts?${new URLSearchParams({
+      userId,
+      timezone: getLocalTimezone(),
+    }).toString()}`
+  );
 
   return readJsonResponse(response);
 }

@@ -14,6 +14,11 @@ const {
   buildSimpleWeeklyPlanSkeleton,
 } = require('../../src/domain/simpleWeeklyPlanPipeline/skeletonBuilder');
 const {
+  PROVIDER_ENTITY_GROUP_KEYS,
+  SIMPLE_WEEKLY_PLAN_FILL_PROVIDER_VERSION,
+  buildCanonicalProviderEntities,
+} = require('../../src/domain/simpleWeeklyPlanPipeline/fillSchema');
+const {
   buildSimpleWeeklyPlanStructureSchema,
 } = require('../../src/domain/simpleWeeklyPlanPipeline/structureSchema');
 const {
@@ -69,20 +74,26 @@ function poolFromLookup(lookup, addUnused = false) {
 }
 
 function providerFillOutputFromPhaseOne(fills, skeleton) {
+  const entities = buildCanonicalProviderEntities(skeleton);
   return {
-    schemaVersion: fills.schemaVersion,
+    schemaVersion: SIMPLE_WEEKLY_PLAN_FILL_PROVIDER_VERSION,
     geometryHash: fills.geometryHash,
-    fills: skeleton.slots.map((slot) => {
-      const value = fills.fills[slot.id];
-      if (
-        slot.kind === 'exerciseId' ||
-        slot.kind === 'blockRestSeconds' ||
-        slot.kind === 'exerciseNotes'
-      ) {
-        return { slotId: slot.id, kind: slot.kind, value };
-      }
-      return { slotId: slot.id, kind: slot.kind, ...value };
-    }),
+    fills: {
+      strengthExercises: entities.strengthExercises.map((entity) => ({
+        exerciseId: fills.fills[entity.exerciseIdSlot.id],
+        defaults: fills.fills[entity.defaultsSlot.id],
+        sets: entity.setSlots.map((slot) => fills.fills[slot.id]),
+        notes: fills.fills[entity.notesSlot.id],
+      })),
+      cardioExercises: entities.cardioExercises.map((entity) => ({
+        exerciseId: fills.fills[entity.exerciseIdSlot.id],
+        prescription: fills.fills[entity.cardioPrescriptionSlot.id],
+        notes: fills.fills[entity.notesSlot.id],
+      })),
+      blockRests: entities.blockRests.map((entity) => ({
+        value: fills.fills[entity.restSlot.id],
+      })),
+    },
   };
 }
 
@@ -181,7 +192,7 @@ async function createScenario(t, options = {}) {
           skeleton
         );
         if (options.invalidFills) {
-          options.invalidFills(value);
+          options.invalidFills(value, skeleton);
         }
         return {
           value,
@@ -198,6 +209,7 @@ async function createScenario(t, options = {}) {
     outputDirectory: temporaryRoot,
     runId: options.runId || 'mock-run',
     provider,
+    onProgress: options.onProgress,
     dependencies: {
       env: {},
       prisma,
@@ -258,6 +270,7 @@ async function createScenario(t, options = {}) {
     prisma,
     promptCalls,
     result,
+    skeleton,
     structure,
   };
 }
@@ -295,6 +308,27 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
       '- SUPERSET: number of complete rounds set performed for the two-exercise block;'
     )
   );
+  assert.ok(
+    call2.userMessage.includes(
+      '- list every executable block in execution order, with exactly one blocks[] entry for each source-plan block;'
+    )
+  );
+  assert.equal(
+    call2.userMessage.includes('- list every block in execution order;'),
+    false
+  );
+  assert.ok(
+    call2.userMessage.includes(
+      '- Consecutive blocks remain separate even when they have the same type and the same setCount. Never collapse or omit repeated-looking blocks.'
+    )
+  );
+  const structureSelfCheck = [
+    'Before returning the JSON, verify each workout once:',
+    '- every source-plan block is represented exactly once;',
+    '- the blocks[] count matches the number of executable source-plan blocks;',
+    '- no consecutive repeated-looking blocks were collapsed or skipped.',
+  ].join('\n');
+  assert.ok(call2.userMessage.includes(structureSelfCheck));
   assert.equal(call2.userMessage.includes('roundCount'), false);
   assert.equal(call2.userMessage.includes('setCounts'), false);
   assert.equal(call2.userMessage.includes('exerciseId'), false);
@@ -305,16 +339,41 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
   assert.ok(call3.userMessage.includes(scenario.generatedPlanText.trim()));
   assert.equal(call3.userMessage.includes('SYSTEM PROFILE CONTENT'), false);
   assert.equal(call3.userMessage.includes('USER PROFILE CONTENT'), false);
-  assert.ok(call3.userMessage.includes('PLAN SKELETON AND SLOT REGISTRY'));
+  assert.ok(call3.userMessage.includes('PLAN SKELETON AND ENTITY REGISTRY'));
   assert.equal(call3.userMessage.includes('ALLOWED EXERCISES'), false);
   const call3Instructions = call3.userMessage.split(
-    '\n\nPLAN SKELETON AND SLOT REGISTRY\n'
+    '\n\nPLAN SKELETON AND ENTITY REGISTRY\n'
   )[0];
   assert.equal(call3Instructions.includes('exerciseName'), false);
   assert.equal(JSON.stringify(call3.schema).includes('exerciseName'), false);
+  assert.equal(call3.formatName, 'simple_weekly_plan_fills_v4');
+  assert.equal(call3.schema.properties.schemaVersion.const, 4);
+  assert.equal(JSON.stringify(call3.schema).includes('slotId'), false);
+  assert.equal(JSON.stringify(call3.schema).includes('slotIndex'), false);
+  assert.equal(JSON.stringify(call3.schema).includes('"kind"'), false);
+  assert.ok(
+    call3Instructions.includes(
+      'Each strength exercise object must contain all and only that exercise\'s exerciseId, defaults, sets, and notes.'
+    )
+  );
+  assert.ok(
+    call3Instructions.includes(
+      'Each sets array must contain only sets belonging to its own exercise and must match its entityRegistry setCount.'
+    )
+  );
+  assert.ok(
+    call3Instructions.includes(
+      'Never carry a value from one exercise into the next.'
+    )
+  );
+  assert.ok(
+    call3Instructions.includes(
+      'Do not return slotId, slotIndex, kind, pointer, or workout/block/exercise coordinates. The backend owns all addressing.'
+    )
+  );
   assert.ok(
     call3.userMessage.includes(
-      "If the skeleton contains more set slots for an exercise than the source plan explicitly lists because of an inconsistent SUPERSET set count, fill the missing set slots using that same exercise's stated repetition range, RIR, tempo, rest, and notes."
+      "If entityRegistry expects more sets for an exercise than the source explicitly lists because of inconsistent SUPERSET geometry, emit the expected count using only that same exercise's stated values."
     )
   );
   assert.ok(
@@ -328,18 +387,65 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
     )
   );
   const call3InstructionsIndex = call3.userMessage.indexOf(
-    'Fill the provided slot registry using the source plan.'
+    'Fill the entity-local contract using the source plan.'
   );
   const call3SkeletonIndex = call3.userMessage.indexOf(
-    '\nPLAN SKELETON AND SLOT REGISTRY\n'
+    '\nPLAN SKELETON AND ENTITY REGISTRY\n'
   );
   const call3SourceIndex = call3.userMessage.indexOf('\nSOURCE PLAN\n');
   assert.ok(call3InstructionsIndex >= 0);
   assert.ok(call3SkeletonIndex > call3InstructionsIndex);
   assert.ok(call3SourceIndex > call3SkeletonIndex);
-  assert.equal(call3.schema.properties.fills.type, 'array');
-  assert.equal(call3.schema.properties.fills.minItems, 195);
-  assert.equal(call3.schema.properties.fills.maxItems, 195);
+  const call3RegistryHeader = '\nPLAN SKELETON AND ENTITY REGISTRY\n';
+  const call3Registry = JSON.parse(
+    call3.userMessage.slice(
+      call3SkeletonIndex + call3RegistryHeader.length,
+      call3SourceIndex
+    ).trim()
+  );
+  assert.deepEqual(call3Registry.document, scenario.skeleton.document);
+  const entities = buildCanonicalProviderEntities(scenario.skeleton);
+  assert.deepEqual(
+    call3Registry.entityRegistry,
+    {
+      strengthExercises: entities.strengthExercises.map((entity) => ({
+        setCount: entity.setSlots.length,
+      })),
+      cardioExerciseCount: entities.cardioExercises.length,
+      blockRestCount: entities.blockRests.length,
+    }
+  );
+  const entityRegistryText = JSON.stringify(call3Registry.entityRegistry);
+  for (const forbidden of [
+    'slotId',
+    'slotIndex',
+    'pointer',
+    'kind',
+    'workoutIndex',
+    'blockIndex',
+    'exerciseIndex',
+    'w1.b1',
+  ]) {
+    assert.equal(entityRegistryText.includes(forbidden), false, forbidden);
+  }
+  assert.equal(call3.schema.properties.fills.type, 'object');
+  assert.equal(call3.schema.properties.fills.additionalProperties, false);
+  assert.deepEqual(
+    call3.schema.properties.fills.required,
+    PROVIDER_ENTITY_GROUP_KEYS
+  );
+  assert.deepEqual(
+    Object.keys(call3.schema.properties.fills.properties),
+    PROVIDER_ENTITY_GROUP_KEYS
+  );
+  PROVIDER_ENTITY_GROUP_KEYS.forEach((key) => {
+    const groupSchema = call3.schema.properties.fills.properties[key];
+    assert.equal(groupSchema.minItems, entities[key].length);
+    assert.equal(groupSchema.maxItems, entities[key].length);
+  });
+  assert.equal(entities.strengthExercises.length, 28);
+  assert.equal(entities.cardioExercises.length, 0);
+  assert.equal(entities.blockRests.length, 7);
   assert.equal(
     JSON.stringify(call3.schema).includes('exr_incline_barbell_bench_press'),
     false
@@ -371,6 +477,11 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
     )
   );
   const output3 = scenario.output['03-input-ai_prompt-2.txt'];
+  assert.ok(
+    output3.includes(
+      `${structureSelfCheck}\n\nSTRUCTURED OUTPUT CONFIGURATION`
+    )
+  );
   const output3Headings = [
     'SYSTEM MESSAGE',
     'USER MESSAGE',
@@ -415,7 +526,7 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
     'SYSTEM MESSAGE',
     'USER MESSAGE',
     'STRUCTURED OUTPUT CONFIGURATION',
-    'PLAN SKELETON AND SLOT REGISTRY',
+    'PLAN SKELETON AND ENTITY REGISTRY',
     'SOURCE PLAN',
     'MODEL INPUT METADATA',
   ];
@@ -429,6 +540,19 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
   }, -1);
   assert.equal(output6.includes('ALLOWED EXERCISES'), false);
   assert.equal(output6.includes('exr_unused_pool_item'), false);
+  assert.ok(output6.includes('simple_weekly_plan_fills_v4'));
+  for (const removedRegistryTerm of [
+    'slotGroups',
+    'strengthSetTargets',
+    'cardioPrescriptions',
+    'blockRestSeconds',
+  ]) {
+    assert.equal(
+      output6.includes(removedRegistryTerm),
+      false,
+      removedRegistryTerm
+    );
+  }
   assert.ok(
     output6.includes(
       call3.schema.properties.geometryHash.const
@@ -479,6 +603,15 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
       scenario.output['07-output-ai_completed-plan.json']
     )
   );
+  const measuredCallDurations = scenario.output[
+    '08-output-backend_validation-result.json'
+  ].aiUsage.calls.map((call) => call.durationMs);
+  assert.equal(
+    measuredCallDurations.every(
+      (durationMs) => Number.isSafeInteger(durationMs) && durationMs >= 0
+    ),
+    true
+  );
   assert.deepEqual(
     scenario.output['08-output-backend_validation-result.json'].aiUsage,
     {
@@ -492,6 +625,7 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
           outputTokens: 100,
           reasoningTokens: 60,
           totalTokens: 1100,
+          durationMs: measuredCallDurations[0],
           estimatedCostUsd: 0.001065,
         },
         {
@@ -503,6 +637,7 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
           outputTokens: 50,
           reasoningTokens: 0,
           totalTokens: 550,
+          durationMs: measuredCallDurations[1],
           estimatedCostUsd: 0.00025,
         },
         {
@@ -514,6 +649,7 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
           outputTokens: 200,
           reasoningTokens: 100,
           totalTokens: 2200,
+          durationMs: measuredCallDurations[2],
           estimatedCostUsd: 0.00082,
         },
       ],
@@ -526,6 +662,22 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
         estimatedCostUsd: 0.002135,
       },
     }
+  );
+  assert.deepEqual(
+    scenario.output['08-output-backend_validation-result.json'].timing
+      .generationContext,
+    {
+      sessionsPerWeek: 3,
+      durationPerSession: null,
+      generatedWorkoutCount: 3,
+      generatedExerciseCount: 28,
+      generatedSetCount: 104,
+    }
+  );
+  assert.equal(
+    scenario.output['08-output-backend_validation-result.json'].timing
+      .persistenceOutcome,
+    'PENDING'
   );
   assert.equal(
     JSON.stringify(
@@ -557,13 +709,38 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
   );
 });
 
+test('public progress stages follow real boundaries and callback failures are harmless', async (t) => {
+  const stages = [];
+  const scenario = await createScenario(t, {
+    runId: 'progress-stages',
+    onProgress(stage) {
+      stages.push(stage);
+      if (stage === 'EXTRACTING_STRUCTURE') {
+        throw new Error('best effort progress failure');
+      }
+    },
+  });
+
+  assert.equal(scenario.result.valid, true);
+  assert.deepEqual(stages, [
+    'PROFILE_SETUP',
+    'DESIGNING_PROGRAM',
+    'EXTRACTING_STRUCTURE',
+    'BUILDING_PROGRAM',
+    'VALIDATING_PROGRAM',
+  ]);
+});
+
 test('the complete backend lookup remains independent from prompt serialization', async (t) => {
   const scenario = await createScenario(t, {
-    invalidFills(value) {
-      const exerciseIdFill = value.fills.find(
-        (entry) => entry.slotId === 'w1.b1.e1.id'
+    invalidFills(value, skeleton) {
+      const exerciseIndex = buildCanonicalProviderEntities(
+        skeleton
+      ).strengthExercises.findIndex(
+        (entity) => entity.exerciseIdSlot.id === 'w1.b1.e1.id'
       );
-      exerciseIdFill.value = 'exr_unused_pool_item';
+      value.fills.strengthExercises[exerciseIndex].exerciseId =
+        'exr_unused_pool_item';
     },
     runId: 'complete-lookup',
   });
@@ -584,11 +761,14 @@ test('the complete backend lookup remains independent from prompt serialization'
 
 test('an exercise ID outside the complete backend lookup is rejected', async (t) => {
   const scenario = await createScenario(t, {
-    invalidFills(value) {
-      const exerciseIdFill = value.fills.find(
-        (entry) => entry.slotId === 'w1.b1.e1.id'
+    invalidFills(value, skeleton) {
+      const exerciseIndex = buildCanonicalProviderEntities(
+        skeleton
+      ).strengthExercises.findIndex(
+        (entity) => entity.exerciseIdSlot.id === 'w1.b1.e1.id'
       );
-      exerciseIdFill.value = 'exr_outside_pool';
+      value.fills.strengthExercises[exerciseIndex].exerciseId =
+        'exr_outside_pool';
     },
     runId: 'outside-lookup',
   });
@@ -772,10 +952,13 @@ for (const scenarioDefinition of [
   {
     name: 'fill validation',
     options: {
-      invalidFills(value) {
-        value.fills = value.fills.filter(
-          (entry) => entry.slotId !== 'w1.b1.e1.s1'
+      invalidFills(value, skeleton) {
+        const exerciseIndex = buildCanonicalProviderEntities(
+          skeleton
+        ).strengthExercises.findIndex(
+          (entity) => entity.exerciseIdSlot.id === 'w1.b1.e1.id'
         );
+        value.fills.strengthExercises[exerciseIndex].sets.pop();
       },
       runId: 'fail-fills',
     },
@@ -888,6 +1071,61 @@ test('unknown model or incomplete usage makes costs and affected totals unavaila
   assert.equal(aiUsage.totals.cachedInputTokens, null);
   assert.equal(aiUsage.totals.outputTokens, 350);
   assert.equal(aiUsage.totals.estimatedCostUsd, null);
+});
+
+test('failed generation retains completed-call usage and estimated cost in Output 8', async (t) => {
+  const scenario = await createScenario(t, {
+    invalidFills(value, skeleton) {
+      const exerciseIndex = buildCanonicalProviderEntities(
+        skeleton
+      ).strengthExercises.findIndex(
+        (entity) => entity.exerciseIdSlot.id === 'w1.b1.e1.id'
+      );
+      value.fills.strengthExercises[exerciseIndex].sets.pop();
+    },
+    runId: 'failed-generation-usage',
+  });
+  const output8 =
+    scenario.output['08-output-backend_validation-result.json'];
+
+  assert.equal(output8.status, 'NOT_PRODUCED');
+  assert.equal(output8.blockedByOutput, 7);
+  assert.equal(output8.aiUsage.calls.length, 3);
+  assert.deepEqual(
+    output8.aiUsage.calls.map(({ call, stage }) => ({ call, stage })),
+    [
+      { call: 1, stage: 'CALL_1_PLAN_TEXT' },
+      { call: 2, stage: 'CALL_2_STRUCTURE' },
+      { call: 3, stage: 'CALL_3_FILLS' },
+    ]
+  );
+  assert.equal(
+    output8.aiUsage.calls.every(
+      (call) => Number.isSafeInteger(call.durationMs) && call.durationMs >= 0
+    ),
+    true
+  );
+  assert.equal(output8.aiUsage.totals.totalTokens, 3850);
+  assert.equal(output8.aiUsage.totals.estimatedCostUsd, 0.002135);
+  assert.equal(output8.timing.persistenceOutcome, 'NOT_ATTEMPTED');
+});
+
+test('failed generation totals include the completed calls available before call 3', async (t) => {
+  const invalidStructure =
+    await loadJsonFixture('03-extracted-structure.json');
+  invalidStructure.workout_1.blocks[0].setCount = 0;
+  const scenario = await createScenario(t, {
+    invalidStructure,
+    runId: 'partial-failed-generation-usage',
+  });
+  const aiUsage = scenario.output[
+    '08-output-backend_validation-result.json'
+  ].aiUsage;
+
+  assert.equal(aiUsage.calls.length, 2);
+  assert.equal(aiUsage.totals.inputTokens, 1500);
+  assert.equal(aiUsage.totals.totalTokens, 1650);
+  assert.equal(aiUsage.totals.estimatedCostUsd, 0.001315);
 });
 
 test('the final preflight function body contains no Prisma write operation', async () => {

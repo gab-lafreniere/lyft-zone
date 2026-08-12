@@ -3,10 +3,11 @@ const {
 } = require('./structureSchema');
 const {
   buildSimpleWeeklyPlanFillProviderSchema,
+  buildCanonicalProviderEntities,
 } = require('./fillSchema');
 
 const STRUCTURE_OUTPUT_FORMAT_NAME = 'simple_weekly_plan_structure_v2';
-const FILL_OUTPUT_FORMAT_NAME = 'simple_weekly_plan_fills_v1';
+const FILL_OUTPUT_FORMAT_NAME = 'simple_weekly_plan_fills_v4';
 
 function buildStructureExtractionRequest({
   generatedPlanText,
@@ -19,7 +20,7 @@ function buildStructureExtractionRequest({
     '',
     'For each required workout:',
     '- copy its workout name from the source plan;',
-    '- list every block in execution order;',
+    '- list every executable block in execution order, with exactly one blocks[] entry for each source-plan block;',
     '- classify each block as SINGLE, SUPERSET, or CARDIO;',
     '- provide one setCount for the entire block.',
     '',
@@ -34,6 +35,12 @@ function buildStructureExtractionRequest({
     '- Do not duplicate the set count for a SUPERSET.',
     '- Do not return exercise names or exercise IDs.',
     '- Do not add, remove, merge, split, redesign, or correct workouts or blocks.',
+    '- Consecutive blocks remain separate even when they have the same type and the same setCount. Never collapse or omit repeated-looking blocks.',
+    '',
+    'Before returning the JSON, verify each workout once:',
+    '- every source-plan block is represented exactly once;',
+    '- the blocks[] count matches the number of executable source-plan blocks;',
+    '- no consecutive repeated-looking blocks were collapsed or skipped.',
   ].join('\n');
   const sourcePlan = String(generatedPlanText || '');
 
@@ -52,30 +59,54 @@ function buildFillExtractionRequest({
   skeleton,
 }) {
   const sourcePlan = String(generatedPlanText || '');
-  const skeletonText = JSON.stringify(skeleton);
+  const entities = buildCanonicalProviderEntities(skeleton);
+  const entityRegistry = {
+    strengthExercises: entities.strengthExercises.map((entity) => ({
+      setCount: entity.setSlots.length,
+    })),
+    cardioExerciseCount: entities.cardioExercises.length,
+    blockRestCount: entities.blockRests.length,
+  };
+  const skeletonText = JSON.stringify({
+    schemaVersion: skeleton?.schemaVersion,
+    geometryHash: skeleton?.geometryHash,
+    document: skeleton?.document,
+    entityRegistry,
+  });
 
   return {
     formatName: FILL_OUTPUT_FORMAT_NAME,
     schema: buildSimpleWeeklyPlanFillProviderSchema(skeleton),
     systemMessage: 'You are a faithful training-plan data extractor.',
     userMessage: [
-      'Fill the provided slot registry using the source plan.',
+      'Fill the entity-local contract using the source plan.',
+      'Preserve the source plan exactly.',
       'Do not redesign, improve, correct, merge, split, add, remove or reorder anything.',
       '',
       'Return only:',
       '- schemaVersion',
       '- geometryHash',
-      '- fills as an array containing exactly one typed entry per slotId',
+      '- fills as an object containing exactly: strengthExercises, cardioExercises, blockRests',
+      '',
+      'Use canonical source-plan order:',
+      '- strengthExercises follows non-CARDIO exercises in workout, block, then exercise order;',
+      '- cardioExercises follows CARDIO exercises in workout, block, then exercise order;',
+      '- blockRests follows SUPERSET blocks in workout then block order.',
+      'Each strength exercise object must contain all and only that exercise\'s exerciseId, defaults, sets, and notes.',
+      'Each cardio exercise object must contain all and only that exercise\'s exerciseId, prescription, and notes.',
+      'Each sets array must contain only sets belonging to its own exercise and must match its entityRegistry setCount.',
+      'Never carry a value from one exercise into the next.',
+      'Do not return slotId, slotIndex, kind, pointer, or workout/block/exercise coordinates. The backend owns all addressing.',
       '',
       'Preserve exactly exercise IDs, repetitions, repetition ranges, duration targets, per-side meaning, RIR, tempo, rest, notes, and cardio prescriptions.',
       'For a source RIR range such as 1 to 2, use targetRir 2.',
-      "If the skeleton contains more set slots for an exercise than the source plan explicitly lists because of an inconsistent SUPERSET set count, fill the missing set slots using that same exercise's stated repetition range, RIR, tempo, rest, and notes.",
+      "If entityRegistry expects more sets for an exercise than the source explicitly lists because of inconsistent SUPERSET geometry, emit the expected count using only that same exercise's stated values.",
       '',
       'Do not change the exercise, block geometry, or number of sets.',
       'Copy each exerciseId exactly from the SOURCE PLAN.',
       'Do not return the completed Weekly Plan document.',
       '',
-      'PLAN SKELETON AND SLOT REGISTRY',
+      'PLAN SKELETON AND ENTITY REGISTRY',
       skeletonText,
       '',
       'SOURCE PLAN',

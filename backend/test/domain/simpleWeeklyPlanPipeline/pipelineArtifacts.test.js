@@ -13,6 +13,7 @@ const {
 } = require('../../../src/domain/simpleWeeklyPlanPipeline/finalValidation');
 const {
   CANONICAL_OUTPUT_FILES,
+  rewriteWeeklyPlanPipelineOutput8,
   writeWeeklyPlanPipelineArtifacts,
 } = require('../../../services/weeklyPlanPipelineArtifactWriter');
 const {
@@ -352,6 +353,32 @@ test('artifact writer creates exactly eight canonical autonomous files with mode
       assert.doesNotThrow(() => JSON.parse(content));
     }
   }
+  await rewriteWeeklyPlanPipelineOutput8({
+    runDirectory: written.runDirectory,
+    output8: { valid: true, timing: { persistenceOutcome: 'SUCCEEDED' } },
+  });
+  assert.deepEqual(
+    JSON.parse(
+      await fs.readFile(
+        path.join(
+          written.runDirectory,
+          '08-output-backend_validation-result.json'
+        ),
+        'utf8'
+      )
+    ),
+    { valid: true, timing: { persistenceOutcome: 'SUCCEEDED' } }
+  );
+  assert.equal((await fs.readdir(written.runDirectory)).length, 8);
+  assert.equal(
+    (await fs.stat(
+      path.join(
+        written.runDirectory,
+        '08-output-backend_validation-result.json'
+      )
+    )).mode & 0o777,
+    0o600
+  );
   await assert.rejects(
     writeWeeklyPlanPipelineArtifacts({
       outputs,

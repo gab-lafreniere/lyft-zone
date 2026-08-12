@@ -1,5 +1,14 @@
 const DEFAULT_TIMEZONE = 'America/Toronto';
 
+function isValidTimeZone(timeZone) {
+  try {
+    Intl.DateTimeFormat('en-US', { timeZone }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function formatDateKey(parts) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
@@ -131,6 +140,13 @@ function getStartOfMondayWeek(dateKey) {
   return addDays(dateKey, mondayOffset);
 }
 
+function getFirstMondayOnOrAfter(dateKey) {
+  const currentWeekMonday = getStartOfMondayWeek(dateKey);
+  return currentWeekMonday === dateKey
+    ? currentWeekMonday
+    : addDays(currentWeekMonday, 7);
+}
+
 function getEndOfMondayWeek(dateKey) {
   return addDays(getStartOfMondayWeek(dateKey), 6);
 }
@@ -150,11 +166,13 @@ module.exports = {
   diffDateKeys,
   getEndOfMondayWeek,
   getDayOfWeek,
+  getFirstMondayOnOrAfter,
   getLocalDateTimeParts,
   getStartOfMondayWeek,
   getStartOfSundayWeek,
   getTodayDateKey,
   isDateWithinRange,
+  isValidTimeZone,
   isWithinGraceWindow,
   parseDateInput,
   rangesOverlap,

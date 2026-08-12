@@ -3,6 +3,7 @@ import {
   CARDIO_ROLE_OPTIONS,
   EQUIPMENT_SETUP_OPTIONS,
   EXPERIENCE_OPTIONS,
+  PRIMARY_GOAL_OPTIONS,
 } from "../settings/settingsOptions";
 
 const CARDIO_LABELS = {
@@ -55,4 +56,28 @@ export function buildCompactSummaryText(items) {
     .filter((item) => compactKeys.has(item.key))
     .map((item) => item.label)
     .join(" · ");
+}
+
+export function buildGenerationProfileChips(draft) {
+  const chips = [];
+  const sessions = Number(draft?.availability?.sessionsPerWeek);
+  const goal = findLabel(PRIMARY_GOAL_OPTIONS, draft?.primaryGoal);
+  const experience = findLabel(EXPERIENCE_OPTIONS, draft?.experience);
+  const primaryFocus = AREA_LABELS[draft?.musclePriorities?.primaryFocus] || "";
+  const equipment = findLabel(
+    EQUIPMENT_SETUP_OPTIONS,
+    draft?.environment?.equipmentPreset
+  );
+
+  if (Number.isFinite(sessions) && sessions > 0) {
+    chips.push({ key: "sessions", label: `${sessions} Sessions/Wk` });
+  }
+  if (goal) chips.push({ key: "goal", label: goal });
+  if (experience) chips.push({ key: "experience", label: experience });
+  if (primaryFocus) {
+    chips.push({ key: "priority", label: `${primaryFocus} Priority`, accent: true });
+  }
+  if (equipment) chips.push({ key: "equipment", label: equipment });
+
+  return chips;
 }

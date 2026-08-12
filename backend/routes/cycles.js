@@ -8,6 +8,7 @@ const {
   getCycleDetailsHandler,
   getCycleFullHandler,
   getHomeDashboardHandler,
+  getOnboardingCycleConflictsHandler,
   getProgramOverviewV2Handler,
   getProgramsOverviewHandler,
   openOrCreateCycleEditDraftHandler,
@@ -22,6 +23,7 @@ const router = express.Router();
 router.get('/overview', getProgramsOverviewHandler);
 router.get('/program-overview-v2', getProgramOverviewV2Handler);
 router.get('/home-dashboard', getHomeDashboardHandler);
+router.get('/conflicts', getOnboardingCycleConflictsHandler);
 router.post('/from-weekly-plan', createCycleFromWeeklyPlanHandler);
 router.post('/', createCycleHandler);
 router.post('/:cycleId/plans', createPlanForCycleHandler);

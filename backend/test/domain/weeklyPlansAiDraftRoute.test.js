@@ -86,6 +86,10 @@ require.cache[presentationPath] = {
 };
 
 const weeklyPlansRouter = require('../../routes/weeklyPlans');
+const {
+  beginGenerationProgress,
+  clearGenerationProgressForTests,
+} = require('../../services/weeklyPlanAiProgressRegistry');
 
 function findRoute(path, method) {
   return weeklyPlansRouter.stack.find(
@@ -164,6 +168,7 @@ test.beforeEach(() => {
   calls.presentation.length = 0;
   pipelineResult = createSuccessfulPipelineResult();
   presentationError = null;
+  clearGenerationProgressForTests();
 });
 
 test('POST /api/weekly-plans/ai-drafts runs once, persists published, and returns only the public contract', async () => {
@@ -213,6 +218,76 @@ test('POST /api/weekly-plans/ai-drafts runs once, persists published, and return
     JSON.stringify(res.body),
     /exr_private|PRIVATE_WORKOUT_METRICS|generatedPlanText|completedDocument|output[1-8]|builderPayload|artifact|token|model|pool/i
   );
+});
+
+test('optional generationId enables progress without changing the POST response', async () => {
+  const res = await invokeAIDraftsRoute({
+    body: { userId: 'user_123', generationId: 'generation_123' },
+  });
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(typeof calls.pipeline[0].onProgress, 'function');
+  assert.doesNotMatch(JSON.stringify(res.body), /generation_123/);
+
+  const route = findRoute('/ai-drafts/:generationId/progress', 'get');
+  const progressRes = {
+    statusCode: null,
+    body: null,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(body) {
+      this.body = body;
+      return this;
+    },
+  };
+  await route.route.stack[0].handle(
+    {
+      params: { generationId: 'generation_123' },
+      query: { userId: 'user_123' },
+    },
+    progressRes
+  );
+  assert.equal(progressRes.statusCode, 200);
+  assert.deepEqual(progressRes.body, {
+    generationId: 'generation_123',
+    status: 'SUCCEEDED',
+    stage: 'SAVING_PROGRAM',
+    updatedAt: progressRes.body.updatedAt,
+  });
+});
+
+test('progress GET hides missing and wrong-owner records', async () => {
+  beginGenerationProgress({
+    generationId: 'owned_generation',
+    userId: 'owner',
+  });
+  const route = findRoute('/ai-drafts/:generationId/progress', 'get');
+
+  for (const [generationId, userId] of [
+    ['missing_generation', 'owner'],
+    ['owned_generation', 'other'],
+  ]) {
+    const res = {
+      statusCode: null,
+      body: null,
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      json(body) {
+        this.body = body;
+        return this;
+      },
+    };
+    await route.route.stack[0].handle(
+      { params: { generationId }, query: { userId } },
+      res
+    );
+    assert.equal(res.statusCode, 404);
+    assert.equal(res.body.error.code, 'AI_GENERATION_PROGRESS_NOT_FOUND');
+  }
 });
 
 test('invalid or incomplete pipeline result never persists', async () => {

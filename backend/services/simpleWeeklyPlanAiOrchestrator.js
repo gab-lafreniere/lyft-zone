@@ -1,3 +1,4 @@
+const { performance } = require('node:perf_hooks');
 const {
   buildTextualAIWeeklyPlanPromptForUser,
 } = require('./programGenerationTextPromptService');
@@ -205,7 +206,11 @@ function normalizeAiUsageValue(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-function buildAiUsageCall({ call, stage, model, usage }) {
+function normalizeDurationMs(value) {
+  return Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
+}
+
+function buildAiUsageCall({ call, stage, model, usage, durationMs = null }) {
   const normalizedUsage = Object.fromEntries(
     AI_USAGE_FIELDS.map((field) => [
       field,
@@ -218,6 +223,7 @@ function buildAiUsageCall({ call, stage, model, usage }) {
     stage,
     model,
     ...normalizedUsage,
+    durationMs: normalizeDurationMs(durationMs),
     estimatedCostUsd: estimateOpenAiCostUsd({
       model,
       usage: normalizedUsage,
@@ -225,9 +231,52 @@ function buildAiUsageCall({ call, stage, model, usage }) {
   };
 }
 
+function reportProgressSafely(onProgress, stage) {
+  if (typeof onProgress !== 'function') {
+    return;
+  }
+  try {
+    const result = onProgress(stage);
+    if (result && typeof result.catch === 'function') {
+      result.catch((error) => {
+        console.warn('[simpleWeeklyPlanAiOrchestrator] progress callback failed', {
+          stage,
+          error: error?.message || String(error),
+        });
+      });
+    }
+  } catch (error) {
+    console.warn('[simpleWeeklyPlanAiOrchestrator] progress callback failed', {
+      stage,
+      error: error?.message || String(error),
+    });
+  }
+}
+
+function summarizeCompletedDocument(document = {}) {
+  const workouts = Array.isArray(document.workouts) ? document.workouts : [];
+  let generatedExerciseCount = 0;
+  let generatedSetCount = 0;
+  workouts.forEach((workout) => {
+    (Array.isArray(workout?.blocks) ? workout.blocks : []).forEach((block) => {
+      (Array.isArray(block?.exercises) ? block.exercises : []).forEach((exercise) => {
+        generatedExerciseCount += 1;
+        generatedSetCount += Array.isArray(exercise?.setTemplates)
+          ? exercise.setTemplates.length
+          : 0;
+      });
+    });
+  });
+  return {
+    generatedWorkoutCount: workouts.length,
+    generatedExerciseCount,
+    generatedSetCount,
+  };
+}
+
 function sumCompleteAiUsageField(calls, field) {
   if (
-    calls.length !== 3 ||
+    calls.length === 0 ||
     calls.some((call) => call[field] === null)
   ) {
     return null;
@@ -305,7 +354,7 @@ function renderFillModelInputArtifact({
     maxOutputTokens,
   });
   const fillSections = [
-    'PLAN SKELETON AND SLOT REGISTRY',
+    'PLAN SKELETON AND ENTITY REGISTRY',
     fillRequest.skeletonText,
     '',
     'SOURCE PLAN',
@@ -338,7 +387,7 @@ function renderFillModelInputArtifact({
     'SYSTEM MESSAGE',
     'USER MESSAGE',
     'STRUCTURED OUTPUT CONFIGURATION',
-    'PLAN SKELETON AND SLOT REGISTRY',
+    'PLAN SKELETON AND ENTITY REGISTRY',
     'SOURCE PLAN',
     'MODEL INPUT METADATA',
   ];
@@ -386,9 +435,42 @@ async function runSimpleWeeklyPlanAiPipeline({
   provider,
   timeouts,
   maxOutputTokens,
+  onProgress,
   dependencies = {},
   runId = createRunId(),
 }) {
+  const monotonicNow = dependencies.monotonicNow || (() => performance.now());
+  const pipelineStartedAt = monotonicNow();
+  const stageDurations = {
+    contextPreparationMs: null,
+    programTextGenerationMs: null,
+    structureExtractionMs: null,
+    deterministicBuildMs: null,
+    fillGenerationMs: null,
+    validationMs: null,
+    persistenceMs: null,
+  };
+  let activeTimingStage = null;
+  let activeTimingStartedAt = null;
+  function startTimingStage(stage) {
+    if (activeTimingStage) {
+      stageDurations[activeTimingStage] = normalizeDurationMs(
+        monotonicNow() - activeTimingStartedAt
+      );
+    }
+    activeTimingStage = stage;
+    activeTimingStartedAt = monotonicNow();
+  }
+  function closeTimingStage() {
+    if (!activeTimingStage) {
+      return;
+    }
+    stageDurations[activeTimingStage] = normalizeDurationMs(
+      monotonicNow() - activeTimingStartedAt
+    );
+    activeTimingStage = null;
+    activeTimingStartedAt = null;
+  }
   const outputs = createEmptyOutputs();
   const config = resolveSimpleWeeklyPlanAiConfig(
     dependencies.env || process.env,
@@ -428,10 +510,13 @@ async function runSimpleWeeklyPlanAiPipeline({
   let rawFillOutput = null;
   let blockingError = null;
   let failureReceived;
+  let prompt = null;
 
   try {
     currentOutput = 1;
-    const prompt = await buildPrompt(
+    reportProgressSafely(onProgress, 'PROFILE_SETUP');
+    startTimingStage('contextPreparationMs');
+    prompt = await buildPrompt(
       userId,
       {},
       prismaDependencies
@@ -444,6 +529,9 @@ async function runSimpleWeeklyPlanAiPipeline({
     });
 
     currentOutput = 2;
+    reportProgressSafely(onProgress, 'DESIGNING_PROGRAM');
+    startTimingStage('programTextGenerationMs');
+    const call1StartedAt = monotonicNow();
     const call1 = await aiProvider.generate({
       stage: 'CALL_1_PLAN_TEXT',
       model: config.models.call1,
@@ -464,11 +552,14 @@ async function runSimpleWeeklyPlanAiPipeline({
         stage: 'CALL_1_PLAN_TEXT',
         model: call1.model || config.models.call1,
         usage: call1.usage,
+        durationMs: monotonicNow() - call1StartedAt,
       })
     );
     outputs.output2 = call1.value.trim();
 
     currentOutput = 3;
+    reportProgressSafely(onProgress, 'EXTRACTING_STRUCTURE');
+    startTimingStage('structureExtractionMs');
     const structureRequest = buildStructureExtractionRequest({
       generatedPlanText: outputs.output2,
       sessionsPerWeek: prompt.sessionsPerWeek,
@@ -480,6 +571,7 @@ async function runSimpleWeeklyPlanAiPipeline({
     });
 
     currentOutput = 4;
+    const call2StartedAt = monotonicNow();
     const call2 = await aiProvider.generate({
       stage: 'CALL_2_STRUCTURE',
       model: config.models.call2,
@@ -497,6 +589,7 @@ async function runSimpleWeeklyPlanAiPipeline({
         stage: 'CALL_2_STRUCTURE',
         model: call2.model || config.models.call2,
         usage: call2.usage,
+        durationMs: monotonicNow() - call2StartedAt,
       })
     );
     extractedStructure = call2.value;
@@ -514,6 +607,8 @@ async function runSimpleWeeklyPlanAiPipeline({
     outputs.output4 = extractedStructure;
 
     currentOutput = 5;
+    reportProgressSafely(onProgress, 'BUILDING_PROGRAM');
+    startTimingStage('deterministicBuildMs');
     structureGeometry = adaptSimpleWeeklyPlanStructureToLegacyGeometry(
       extractedStructure,
       { sessionsPerWeek: prompt.sessionsPerWeek }
@@ -543,6 +638,8 @@ async function runSimpleWeeklyPlanAiPipeline({
     });
 
     currentOutput = 7;
+    startTimingStage('fillGenerationMs');
+    const call3StartedAt = monotonicNow();
     const call3 = await aiProvider.generate({
       stage: 'CALL_3_FILLS',
       model: config.models.call3,
@@ -560,11 +657,15 @@ async function runSimpleWeeklyPlanAiPipeline({
         stage: 'CALL_3_FILLS',
         model: call3.model || config.models.call3,
         usage: call3.usage,
+        durationMs: monotonicNow() - call3StartedAt,
       })
     );
     rawFillOutput = call3.value;
     failureReceived = rawFillOutput;
-    fillOutput = normalizeSimpleWeeklyPlanProviderFills(rawFillOutput);
+    fillOutput = normalizeSimpleWeeklyPlanProviderFills(
+      rawFillOutput,
+      skeleton
+    );
     const fillValidation = validateSimpleWeeklyPlanFills({
       skeleton,
       fillOutput,
@@ -593,6 +694,8 @@ async function runSimpleWeeklyPlanAiPipeline({
     failureReceived = undefined;
 
     currentOutput = 8;
+    reportProgressSafely(onProgress, 'VALIDATING_PROGRAM');
+    startTimingStage('validationMs');
     const finalValidation = await validateFinalWeeklyPlan({
       completedDocument: outputs.output7,
       runtimeUserId: userId,
@@ -602,7 +705,9 @@ async function runSimpleWeeklyPlanAiPipeline({
       ...finalValidation,
       aiUsage: buildAiUsageReport(aiUsageCalls),
     };
+    closeTimingStage();
   } catch (error) {
+    closeTimingStage();
     blockingError = markFailureOutputs(
       outputs,
       currentOutput,
@@ -611,6 +716,28 @@ async function runSimpleWeeklyPlanAiPipeline({
       failureReceived
     );
   }
+
+  const complexity = summarizeCompletedDocument(outputs.output7);
+  outputs.output8 = {
+    ...outputs.output8,
+    aiUsage: buildAiUsageReport(aiUsageCalls),
+    timing: {
+      totalDurationMs: null,
+      stageDurations,
+      generationContext: {
+        sessionsPerWeek: Number.isSafeInteger(prompt?.sessionsPerWeek)
+          ? prompt.sessionsPerWeek
+          : null,
+        durationPerSession: Number.isSafeInteger(prompt?.durationPerSession)
+          ? prompt.durationPerSession
+          : null,
+        ...complexity,
+      },
+      persistenceOutcome: outputs.output8?.valid === true
+        ? 'PENDING'
+        : 'NOT_ATTEMPTED',
+    },
+  };
 
   const artifacts = await writeArtifacts({
     outputs,
@@ -637,6 +764,7 @@ async function runSimpleWeeklyPlanAiPipeline({
         ? Object.keys(fillOutput.fills).length
         : 0,
     output8: outputs.output8,
+    pipelineDurationMs: normalizeDurationMs(monotonicNow() - pipelineStartedAt),
     completedDocument: isValid ? outputs.output7 : null,
     metrics: isValid ? outputs.output8.metrics : null,
     generatedPlanText: isValid ? outputs.output2 : null,

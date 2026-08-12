@@ -29,6 +29,7 @@ function createPrismaMock(options = {}) {
     parentUpdateData: null,
     versionCreateCount: 0,
     transactionCount: 0,
+    transactionOptions: null,
     userFindUniqueArgs: [],
     exerciseFindManyArgs: [],
   };
@@ -74,6 +75,9 @@ function createPrismaMock(options = {}) {
     weeklyPlanVersion: {
       create: async ({ data }) => {
         calls.versionCreateCount += 1;
+        if (options.versionCreateError) {
+          throw options.versionCreateError;
+        }
         calls.versionData = data;
         return {
           id: 'version_123',
@@ -99,8 +103,9 @@ function createPrismaMock(options = {}) {
           return options.exercises || [];
         },
       },
-      $transaction: async (callback) => {
+      $transaction: async (callback, transactionOptions) => {
         calls.transactionCount += 1;
+        calls.transactionOptions = transactionOptions;
         return callback(tx);
       },
     },
@@ -384,6 +389,55 @@ test('createWeeklyPlan manual flow continues without generationContext', async (
   assert.equal(mock.calls.transactionCount, 1);
   assert.equal(mock.calls.parentCreateCount, 1);
   assert.equal(mock.calls.versionCreateCount, 1);
+});
+
+test('createWeeklyPlan bounds its interactive transaction at 20 seconds', async () => {
+  const mock = createPrismaMock();
+  prisma = mock.prisma;
+
+  await createWeeklyPlan({
+    userId: 'user_123',
+    source: 'manual',
+    name: 'Bounded transaction',
+    sessionsPerWeek: 1,
+    workouts: [],
+  });
+
+  assert.equal(mock.calls.transactionCount, 1);
+  assert.deepEqual(mock.calls.transactionOptions, {
+    timeout: 20000,
+  });
+  assert.equal(mock.calls.parentCreateCount, 1);
+  assert.equal(mock.calls.versionCreateCount, 1);
+  assert.deepEqual(mock.calls.parentUpdateData, {
+    latestDraftVersionId: 'version_123',
+    latestPublishedVersionId: null,
+  });
+});
+
+test('createWeeklyPlan still propagates transaction errors before parent update', async () => {
+  const transactionError = new Error('version create failed');
+  const mock = createPrismaMock({ versionCreateError: transactionError });
+  prisma = mock.prisma;
+
+  await assert.rejects(
+    () => createWeeklyPlan({
+      userId: 'user_123',
+      source: 'manual',
+      name: 'Failed transaction',
+      sessionsPerWeek: 1,
+      workouts: [],
+    }),
+    (error) => error === transactionError
+  );
+
+  assert.equal(mock.calls.transactionCount, 1);
+  assert.deepEqual(mock.calls.transactionOptions, {
+    timeout: 20000,
+  });
+  assert.equal(mock.calls.parentCreateCount, 1);
+  assert.equal(mock.calls.versionCreateCount, 1);
+  assert.equal(mock.calls.parentUpdateData, null);
 });
 
 test('createWeeklyPlan AI flow writes generationContext on WeeklyPlanVersion', async () => {
