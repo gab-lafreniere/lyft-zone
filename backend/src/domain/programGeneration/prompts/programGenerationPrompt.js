@@ -10,9 +10,12 @@ const {
   buildAppliedBlockedConstraintsNarrative,
   buildAthleteProfileNarrative,
 } = require('./programGenerationProfileNarrative');
+const {
+  buildProgramGenerationSessionDirectives,
+} = require('./programGenerationSessionDirectives');
 
 const PROGRAM_GENERATION_PROMPT_VERSION =
-  'ai-weekly-plan-text-prompt-v1.2.0';
+  'ai-weekly-plan-text-prompt-v1.4.0';
 
 class ProgramGenerationPromptError extends Error {
   constructor(code, message) {
@@ -104,15 +107,21 @@ function buildProgramGenerationPrompt({ context } = {}) {
     athleteBrief,
     eligibleExercisePool,
     poolCoverageNotes,
-    trainingMetricsGuidance: _trainingMetricsGuidance,
+    trainingMetricsGuidance,
   } = promptInput;
   let athleteProfileNarrative;
   let appliedBlockedConstraintsNarrative;
+  let sessionDirectives;
   try {
     athleteProfileNarrative =
       buildAthleteProfileNarrative(athleteBrief);
     appliedBlockedConstraintsNarrative =
       buildAppliedBlockedConstraintsNarrative(appliedConstraints);
+    sessionDirectives = buildProgramGenerationSessionDirectives({
+      requestedDurationMinutes: trainingMetricsGuidance.requestedMinutes,
+      experience: athleteBrief.experience,
+      cardioRole: athleteBrief.cardio?.role,
+    });
   } catch (error) {
     if (error instanceof ProgramGenerationProfileNarrativeError) {
       throw new ProgramGenerationPromptError(
@@ -133,6 +142,14 @@ function buildProgramGenerationPrompt({ context } = {}) {
     `Prompt version: ${PROGRAM_GENERATION_PROMPT_VERSION}`,
     '',
     athleteProfileNarrative,
+    ...(sessionDirectives.length > 0
+      ? [
+        '',
+        'DURATION-SPECIFIC SESSION DIRECTIVES',
+        'These duration-specific session directives override weaker general cardio wording when applicable.',
+        ...sessionDirectives.map((directive) => `- ${directive}`),
+      ]
+      : []),
     '',
     'Use only exercises from the eligible exercise pool.',
     'Return a clear human-readable training plan, not JSON.',

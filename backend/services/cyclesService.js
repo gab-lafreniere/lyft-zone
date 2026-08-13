@@ -435,12 +435,103 @@ function getCurrentCycleWeekNumber(cycle, timeZone, now = new Date()) {
 
 async function appendPlanWeeks(tx, planId, weeks = []) {
   for (const week of weeks) {
-    await tx.planWeek.create({
+    const createdWeek = await tx.planWeek.create({
       data: {
         planId,
-        ...buildPlanCreateWeeksInput([week])[0],
+        ...buildPlanWeekScalarCreateInput(week),
       },
     });
+
+    const workoutEntries = week.workouts.map((workout) => ({
+      source: workout,
+      data: {
+        planWeekId: createdWeek.id,
+        ...buildWorkoutScalarCreateInput(workout),
+      },
+    }));
+    const createdWorkouts = workoutEntries.length > 0
+      ? await tx.workout.createManyAndReturn({
+        data: workoutEntries.map((entry) => entry.data),
+      })
+      : [];
+    const workoutIdByOrder = buildCreatedIdByParentAndOrder(
+      createdWorkouts,
+      'planWeekId',
+      'Workout'
+    );
+
+    const blockEntries = workoutEntries.flatMap(({ source: workout }) => {
+      const workoutId = requireCreatedGraphId(
+        workoutIdByOrder,
+        createdWeek.id,
+        workout.orderIndex,
+        'Workout'
+      );
+      return workout.blocks.map((block) => ({
+        source: block,
+        data: {
+          workoutId,
+          ...buildWorkoutBlockScalarCreateInput(block),
+        },
+      }));
+    });
+    const createdBlocks = blockEntries.length > 0
+      ? await tx.workoutBlock.createManyAndReturn({
+        data: blockEntries.map((entry) => entry.data),
+      })
+      : [];
+    const blockIdByOrder = buildCreatedIdByParentAndOrder(
+      createdBlocks,
+      'workoutId',
+      'WorkoutBlock'
+    );
+
+    const exerciseEntries = blockEntries.flatMap(({ source: block, data: blockData }) => {
+      const workoutBlockId = requireCreatedGraphId(
+        blockIdByOrder,
+        blockData.workoutId,
+        block.orderIndex,
+        'WorkoutBlock'
+      );
+      return block.exercises.map((exercise) => ({
+        source: exercise,
+        data: {
+          workoutBlockId,
+          ...buildBlockExerciseScalarCreateInput(exercise),
+        },
+      }));
+    });
+    const createdExercises = exerciseEntries.length > 0
+      ? await tx.blockExercise.createManyAndReturn({
+        data: exerciseEntries.map((entry) => entry.data),
+      })
+      : [];
+    const exerciseIdByOrder = buildCreatedIdByParentAndOrder(
+      createdExercises,
+      'workoutBlockId',
+      'BlockExercise'
+    );
+
+    const setTemplateData = exerciseEntries.flatMap(
+      ({ source: exercise, data: exerciseData }) => {
+        const blockExerciseId = requireCreatedGraphId(
+          exerciseIdByOrder,
+          exerciseData.workoutBlockId,
+          exercise.orderIndex,
+          'BlockExercise'
+        );
+        return exercise.setTemplates.map((setTemplate) => ({
+          blockExerciseId,
+          ...buildSetTemplateScalarCreateInput(setTemplate),
+        }));
+      }
+    );
+
+    if (setTemplateData.length > 0) {
+      await tx.exerciseSetTemplate.createMany({
+        data: setTemplateData,
+      });
+    }
   }
 
   return tx.plan.findUnique({
@@ -1538,8 +1629,73 @@ function normalizeWorkoutBlockFields(workout) {
   );
 }
 
-function buildWorkoutBlocksCreateInput(blocks = []) {
-  return blocks.map((block) => ({
+function buildCreatedGraphKey(parentId, orderIndex) {
+  return `${parentId}:${orderIndex}`;
+}
+
+function buildCreatedIdByParentAndOrder(rows, parentField, entityName) {
+  const result = new Map();
+
+  rows.forEach((row) => {
+    const key = buildCreatedGraphKey(row[parentField], row.orderIndex);
+    if (!row.id || result.has(key)) {
+      throw new ApiError(
+        500,
+        'INTERNAL_SERVER_ERROR',
+        `Unable to resolve cloned ${entityName} identity`
+      );
+    }
+    result.set(key, row.id);
+  });
+
+  return result;
+}
+
+function requireCreatedGraphId(idByOrder, parentId, orderIndex, entityName) {
+  const id = idByOrder.get(buildCreatedGraphKey(parentId, orderIndex));
+  if (!id) {
+    throw new ApiError(
+      500,
+      'INTERNAL_SERVER_ERROR',
+      `Unable to resolve cloned ${entityName} identity`
+    );
+  }
+  return id;
+}
+
+function buildSetTemplateScalarCreateInput(setTemplate) {
+  return {
+    setIndex: setTemplate.setIndex,
+    setType: setTemplate.setType,
+    targetReps: setTemplate.targetReps ?? undefined,
+    minReps: setTemplate.minReps ?? undefined,
+    maxReps: setTemplate.maxReps ?? undefined,
+    targetSeconds: setTemplate.targetSeconds ?? undefined,
+    targetRir: setTemplate.targetRir ?? undefined,
+    targetRpe: setTemplate.targetRpe ?? undefined,
+    tempo: setTemplate.tempo ?? undefined,
+    restSeconds: setTemplate.restSeconds ?? undefined,
+    notes: setTemplate.notes ?? undefined,
+  };
+}
+
+function buildBlockExerciseScalarCreateInput(exercise) {
+  return {
+    exerciseId: exercise.exerciseId,
+    orderIndex: exercise.orderIndex,
+    executionNotes: exercise.executionNotes ?? undefined,
+    defaultTempo: exercise.defaultTempo ?? undefined,
+    defaultRestSeconds: exercise.defaultRestSeconds ?? undefined,
+    defaultTargetRir: exercise.defaultTargetRir ?? undefined,
+    defaultTargetRpe: exercise.defaultTargetRpe ?? undefined,
+    intensificationMethod: exercise.intensificationMethod ?? undefined,
+    cardioPrescription: exercise.cardioPrescription ?? undefined,
+    notes: exercise.notes ?? undefined,
+  };
+}
+
+function buildWorkoutBlockScalarCreateInput(block) {
+  return {
     orderIndex: block.orderIndex,
     blockType: block.blockType,
     label: block.label || undefined,
@@ -1547,57 +1703,54 @@ function buildWorkoutBlocksCreateInput(blocks = []) {
     restStrategy: block.restStrategy ?? undefined,
     restSeconds: block.restSeconds ?? undefined,
     notes: block.notes ?? undefined,
+  };
+}
+
+function buildWorkoutBlocksCreateInput(blocks = []) {
+  return blocks.map((block) => ({
+    ...buildWorkoutBlockScalarCreateInput(block),
     blockExercises: {
       create: block.exercises.map((exercise) => ({
-        exerciseId: exercise.exerciseId,
-        orderIndex: exercise.orderIndex,
-        executionNotes: exercise.executionNotes ?? undefined,
-        defaultTempo: exercise.defaultTempo ?? undefined,
-        defaultRestSeconds: exercise.defaultRestSeconds ?? undefined,
-        defaultTargetRir: exercise.defaultTargetRir ?? undefined,
-        defaultTargetRpe: exercise.defaultTargetRpe ?? undefined,
-        intensificationMethod: exercise.intensificationMethod ?? undefined,
-        cardioPrescription: exercise.cardioPrescription ?? undefined,
-        notes: exercise.notes ?? undefined,
+        ...buildBlockExerciseScalarCreateInput(exercise),
         setTemplates: {
-          create: exercise.setTemplates.map((setTemplate) => ({
-            setIndex: setTemplate.setIndex,
-            setType: setTemplate.setType,
-            targetReps: setTemplate.targetReps ?? undefined,
-            minReps: setTemplate.minReps ?? undefined,
-            maxReps: setTemplate.maxReps ?? undefined,
-            targetSeconds: setTemplate.targetSeconds ?? undefined,
-            targetRir: setTemplate.targetRir ?? undefined,
-            targetRpe: setTemplate.targetRpe ?? undefined,
-            tempo: setTemplate.tempo ?? undefined,
-            restSeconds: setTemplate.restSeconds ?? undefined,
-            notes: setTemplate.notes ?? undefined,
-          })),
+          create: exercise.setTemplates.map(buildSetTemplateScalarCreateInput),
         },
       })),
     },
   }));
 }
 
-function buildWorkoutCreateInput(workout) {
+function buildWorkoutScalarCreateInput(workout) {
   return {
     name: workout.name,
     orderIndex: workout.orderIndex,
     scheduledDay: workout.scheduledDay || undefined,
     estimatedDurationMinutes: workout.estimatedDurationMinutes ?? undefined,
     notes: workout.notes ?? undefined,
+  };
+}
+
+function buildWorkoutCreateInput(workout) {
+  return {
+    ...buildWorkoutScalarCreateInput(workout),
     blocks: {
       create: buildWorkoutBlocksCreateInput(workout.blocks),
     },
   };
 }
 
-function buildPlanCreateWeeksInput(weeks = []) {
-  return weeks.map((week) => ({
+function buildPlanWeekScalarCreateInput(week) {
+  return {
     weekNumber: week.weekNumber,
     orderIndex: week.orderIndex,
     label: week.label || null,
     notes: week.notes || null,
+  };
+}
+
+function buildPlanCreateWeeksInput(weeks = []) {
+  return weeks.map((week) => ({
+    ...buildPlanWeekScalarCreateInput(week),
     workouts: {
       create: week.workouts.map((workout) => buildWorkoutCreateInput(workout)),
     },
@@ -2007,6 +2160,7 @@ function buildDocumentFromWeeklyVersion(version, durationWeeks, workoutDayAssign
           targetSeconds: normalizeNullableInteger(setTemplate.targetSeconds),
           targetRir: normalizeNullableNumber(setTemplate.targetRir),
           targetRpe: normalizeNullableNumber(setTemplate.targetRpe),
+          tempo: setTemplate.tempo,
           restSeconds: normalizeNullableInteger(setTemplate.restSeconds),
           notes: setTemplate.notes,
         })),
@@ -4652,7 +4806,9 @@ module.exports = {
   updateCycleDraft,
   updateUpcomingDraftTimeline,
   _test: {
+    appendPlanWeeks,
     archiveConflictingCycles,
+    buildDocumentFromWeeklyVersion,
     buildOnboardingCycleWindow,
     conflictSnapshotsMatch,
     findOverlappingCycles,

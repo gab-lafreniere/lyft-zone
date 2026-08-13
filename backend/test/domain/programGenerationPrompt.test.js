@@ -79,7 +79,7 @@ test('text prompt contains the dynamic athlete, safe constraints, and eligible p
 
   assert.equal(
     PROGRAM_GENERATION_PROMPT_VERSION,
-    'ai-weekly-plan-text-prompt-v1.2.0'
+    'ai-weekly-plan-text-prompt-v1.4.0'
   );
   assert.equal(prompt.promptVersion, PROGRAM_GENERATION_PROMPT_VERSION);
   assert.equal(
@@ -106,6 +106,102 @@ test('text prompt contains the dynamic athlete, safe constraints, and eligible p
   assert.match(prompt.userMessage, /include both a brief, light cardio warm-up/);
   assert.match(prompt.userMessage, /ex_bench/);
   assert.match(prompt.userMessage, /ex_row/);
+});
+
+test('advanced 120-minute warm-up-and-cardio prompt receives the complete session directive set', () => {
+  const { userMessage } = buildProgramGenerationPrompt({
+    context: createTextContext({
+      availability: {
+        sessionsPerWeek: 6,
+        durationPerSession: 120,
+      },
+      experience: 'advanced',
+      cardioProfile: {
+        cardioRole: 'warm_up_and_cardio',
+        preferredModalities: ['stationary_bike'],
+      },
+    }),
+  });
+  const sectionStart = userMessage.indexOf(
+    'DURATION-SPECIFIC SESSION DIRECTIVES'
+  );
+  const sectionEnd = userMessage.indexOf(
+    '\n\nUse only exercises from the eligible exercise pool.'
+  );
+  const section = userMessage.slice(sectionStart, sectionEnd);
+
+  assert.equal(sectionStart > 0, true);
+  assert.equal(sectionEnd > sectionStart, true);
+  assert.match(
+    section,
+    /must include a 5-minute light cardio warm-up as the first executable block of every workout/
+  );
+  assert.match(
+    section,
+    /must include at least 30 minutes of easy post-workout cardio at the end of each workout/
+  );
+  assert.match(
+    section,
+    /easy, low-interference, conversational steady-state work.*does not reduce resistance-training quality or recovery/
+  );
+  assert.match(
+    section,
+    /advanced athlete with substantial training time available.*high-volume but recoverable resistance-training session/
+  );
+  assert.match(
+    section,
+    /may appropriately extend beyond a conventional 18–20 working sets/
+  );
+  assert.match(
+    section,
+    /Generally avoid exceeding approximately 30 direct working sets per week for any single muscle group/
+  );
+  assert.match(section, /Do not add junk volume merely to fill time/);
+  assert.match(section, /explicit executable CARDIO block/);
+  assert.match(
+    userMessage,
+    /prefers Stationary Bike for cardio\. Use a matching eligible cardio exercise when available/
+  );
+});
+
+test('duration-specific cardio directives stay within their canonical roles', () => {
+  const warmUpOnly = buildProgramGenerationPrompt({
+    context: createTextContext({
+      availability: { sessionsPerWeek: 4, durationPerSession: 120 },
+      cardioProfile: {
+        cardioRole: 'warm_up_only',
+        preferredModalities: ['stationary_bike'],
+      },
+    }),
+  }).userMessage;
+  assert.match(warmUpOnly, /must include a 5-minute light cardio warm-up/);
+  assert.doesNotMatch(warmUpOnly, /at least 30 minutes of easy post-workout cardio/);
+  assert.doesNotMatch(warmUpOnly, /Any post-workout cardio should be easy/);
+
+  const none = buildProgramGenerationPrompt({
+    context: createTextContext({
+      availability: { sessionsPerWeek: 4, durationPerSession: 120 },
+      cardioProfile: { cardioRole: 'none', preferredModalities: [] },
+    }),
+  }).userMessage;
+  assert.doesNotMatch(none, /first executable block/);
+  assert.doesNotMatch(none, /Any post-workout cardio should be easy/);
+  assert.doesNotMatch(none, /explicit executable CARDIO block/);
+  assert.match(none, /advanced athlete with substantial training time available/);
+
+  const cardioSessions = buildProgramGenerationPrompt({
+    context: createTextContext({
+      availability: { sessionsPerWeek: 4, durationPerSession: 120 },
+      cardioProfile: {
+        cardioRole: 'cardio_sessions',
+        preferredModalities: ['stationary_bike'],
+      },
+    }),
+  }).userMessage;
+  assert.doesNotMatch(cardioSessions, /first executable block/);
+  assert.doesNotMatch(cardioSessions, /at least 30 minutes of easy post-workout cardio/);
+  assert.doesNotMatch(cardioSessions, /Any post-workout cardio should be easy/);
+  assert.match(cardioSessions, /explicit executable CARDIO block/);
 });
 
 test('text prompt includes only generalized demographics when available', () => {
@@ -165,7 +261,7 @@ test('text prompt adds only the single SUPERSET set-count rule', () => {
   );
   assert.equal(
     createHash('sha256').update(withoutRule).digest('hex'),
-    '1bfe69ae40958a6b71971d527262348b3764fcc2d3bf90e804c47a05b042af1b'
+    '70e23f927af05cb33278ced04df5d15ccf5eb7a3717ab26d5a9212a31a317b6e'
   );
   assert.equal(
     createHash('sha256').update(prompt.systemMessage).digest('hex'),
@@ -348,7 +444,7 @@ test('real development profile renders the expected narrative master-prompt bloc
     'ATHLETE PROFILE AND TRAINING REQUEST'
   );
   const profileEnd = userMessage.indexOf(
-    '\n\nUse only exercises from the eligible exercise pool.'
+    '\n\nDURATION-SPECIFIC SESSION DIRECTIVES'
   );
   const profile = userMessage.slice(profileStart, profileEnd);
 
