@@ -4,10 +4,13 @@ const Ajv = require('ajv');
 
 const {
   PROVIDER_ENTITY_GROUP_KEYS,
+  PROVIDER_VALIDATOR_CACHE_LIMIT,
   SIMPLE_WEEKLY_PLAN_FILL_PROVIDER_VERSION,
   buildCanonicalProviderEntities,
   buildSimpleWeeklyPlanFillProviderSchema,
+  getProviderOutputValidator,
   normalizeSimpleWeeklyPlanProviderFills,
+  providerValidatorCacheSize,
 } = require('../../../src/domain/simpleWeeklyPlanPipeline/fillSchema');
 const {
   buildSimpleWeeklyPlanSkeleton,
@@ -515,12 +518,109 @@ test('internal validation compiles a geometryHash-independent schema', () => {
   assert.equal(
     JSON.stringify(firstSchema),
     JSON.stringify(secondSchema),
-    'two runs with identical geometry must reuse one compiled validator'
+    'two runs with identical geometry must build an identical internal schema'
   );
   assert.equal(
     JSON.stringify(firstSchema).includes(first.geometryHash),
     false,
     'the run hash must not appear in the internally compiled schema'
+  );
+});
+
+// Schema equality is a precondition for reuse, not evidence of it: Ajv keys its compile
+// cache on object identity, so identical-but-freshly-built schemas used to compile and
+// retain a separate validator every generation. These tests assert the compiled artefact
+// itself, which is what actually consumed the memory.
+function skeletonWithBlocks(blockCount) {
+  return buildSkeletonForSchemaIdentity({
+    schemaVersion: 1,
+    planName: 'p',
+    workouts: [{
+      name: 'Day A',
+      blocks: Array.from({ length: blockCount }, () => ({
+        blockType: 'SINGLE',
+        roundCount: null,
+        setCounts: [3],
+      })),
+    }],
+  });
+}
+
+test('two runs with the same geometry reuse one compiled validator', () => {
+  const first = skeletonWithName('Day A');
+  const second = skeletonWithName('Day B');
+
+  assert.notEqual(
+    first.geometryHash,
+    second.geometryHash,
+    'the two skeletons must differ, otherwise this test proves nothing'
+  );
+
+  assert.equal(
+    getProviderOutputValidator(first),
+    getProviderOutputValidator(second),
+    'the same compiled validator instance must serve both runs'
+  );
+});
+
+test('a different geometry compiles its own validator', () => {
+  assert.notEqual(
+    getProviderOutputValidator(skeletonWithBlocks(1)),
+    getProviderOutputValidator(skeletonWithBlocks(2)),
+    'distinct geometries must not share a validator'
+  );
+});
+
+test('validator reuse survives the real normalization path', () => {
+  const skeleton = skeletonWithBlocks(1);
+  const expected = getProviderOutputValidator(skeleton);
+
+  const value = {
+    schemaVersion: SIMPLE_WEEKLY_PLAN_FILL_PROVIDER_VERSION,
+    geometryHash: skeleton.geometryHash,
+    fills: {
+      strengthExercises: [{
+        exerciseId: 'exr_x',
+        tempo: null,
+        notes: null,
+        sets: [{ mode: 'reps', targetReps: 8, targetRir: 2, notes: null }],
+      }],
+      cardioExercises: [],
+      blockRests: [{ value: 90 }],
+    },
+  };
+
+  // Counting compiles directly: a cache miss would grow the cache.
+  const before = providerValidatorCacheSize();
+  for (let run = 0; run < 25; run += 1) {
+    try {
+      normalizeSimpleWeeklyPlanProviderFills(structuredClone(value), skeleton);
+    } catch {
+      // Shape errors are irrelevant here; only validator reuse is under test.
+    }
+  }
+
+  assert.equal(
+    providerValidatorCacheSize(),
+    before,
+    '25 normalizations of one geometry must not compile a new validator'
+  );
+  assert.equal(
+    getProviderOutputValidator(skeleton),
+    expected,
+    'the cached validator must still be the one the pipeline uses'
+  );
+});
+
+test('the validator cache is bounded and evicts the oldest geometry', () => {
+  const overflow = PROVIDER_VALIDATOR_CACHE_LIMIT + 10;
+  for (let blockCount = 1; blockCount <= overflow; blockCount += 1) {
+    getProviderOutputValidator(skeletonWithBlocks(blockCount));
+  }
+
+  assert.ok(
+    providerValidatorCacheSize() <= PROVIDER_VALIDATOR_CACHE_LIMIT,
+    `cache grew to ${providerValidatorCacheSize()}, above the ${PROVIDER_VALIDATOR_CACHE_LIMIT} bound`
   );
 });
 

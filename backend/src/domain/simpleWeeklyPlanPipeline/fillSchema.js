@@ -253,10 +253,55 @@ function buildSimpleWeeklyPlanFillProviderSchema(
   });
 }
 
-const providerOutputAjv = new Ajv({
-  allErrors: true,
-  strict: false,
-});
+// Compiled-validator reuse.
+//
+// The internal validation schema is geometryHash-free, so two runs with the same plan
+// geometry build byte-identical schemas. That alone does not reuse anything: Ajv keys
+// its compile cache on the schema *object identity*, so handing it a freshly built —
+// though structurally identical — object every generation compiled and retained a new
+// validator every time (measured: ~87 KB retained per generation, never released).
+// Keying on the serialized schema is what actually makes the reuse happen.
+//
+// Each distinct schema gets its own Ajv instance rather than sharing one. A compiled
+// validator holds its instance alive, so an evicted entry takes its validator *and* its
+// Ajv scope with it; sharing one instance would leave the compiled artefact stranded in
+// that instance's own cache and defeat the eviction.
+const PROVIDER_VALIDATOR_CACHE_LIMIT = 32;
+const providerValidatorCache = new Map();
+
+function getProviderOutputValidator(skeleton) {
+  // pinGeometryHash: false is what makes the schema stable across runs. The hash itself
+  // is still verified exactly, by identity, in normalizeSimpleWeeklyPlanProviderFills
+  // before this validator ever runs.
+  const schema = buildSimpleWeeklyPlanFillProviderSchema(skeleton, {
+    pinGeometryHash: false,
+  });
+  const key = JSON.stringify(schema);
+
+  const cached = providerValidatorCache.get(key);
+  if (cached) {
+    // Re-insert so recently used geometries are evicted last.
+    providerValidatorCache.delete(key);
+    providerValidatorCache.set(key, cached);
+    return cached;
+  }
+
+  const validate = new Ajv({
+    allErrors: true,
+    strict: false,
+  }).compile(schema);
+
+  providerValidatorCache.set(key, validate);
+  if (providerValidatorCache.size > PROVIDER_VALIDATOR_CACHE_LIMIT) {
+    const oldest = providerValidatorCache.keys().next().value;
+    providerValidatorCache.delete(oldest);
+  }
+  return validate;
+}
+
+function providerValidatorCacheSize() {
+  return providerValidatorCache.size;
+}
 
 function providerFillError(code, message, details) {
   const error = new Error(message);
@@ -309,9 +354,7 @@ function normalizeSimpleWeeklyPlanProviderFills(value = {}, skeleton = {}) {
     assertProviderArrayCount(value.fills, key, entities[key].length);
   });
 
-  const validateOutput = providerOutputAjv.compile(
-    buildSimpleWeeklyPlanFillProviderSchema(skeleton, { pinGeometryHash: false })
-  );
+  const validateOutput = getProviderOutputValidator(skeleton);
   if (!validateOutput(value)) {
     const message = 'Provider entity-local fills do not match the v4 contract';
     throw providerFillError('INVALID_ENTITY_LOCAL_PROVIDER_FILL', message, {
@@ -380,11 +423,15 @@ function normalizeSimpleWeeklyPlanProviderFills(value = {}, skeleton = {}) {
 module.exports = {
   FILL_KINDS,
   PROVIDER_ENTITY_GROUP_KEYS,
+  PROVIDER_VALIDATOR_CACHE_LIMIT,
   SIMPLE_WEEKLY_PLAN_FILL_PROVIDER_VERSION,
   SIMPLE_WEEKLY_PLAN_FILL_VERSION,
   STRENGTH_TARGET_MODES,
   buildCanonicalProviderEntities,
   buildSimpleWeeklyPlanFillProviderSchema,
+  // Exported for the reuse/bound regression tests; not part of the pipeline contract.
+  getProviderOutputValidator,
   normalizeSimpleWeeklyPlanProviderFills,
+  providerValidatorCacheSize,
   simpleWeeklyPlanFillSchema,
 };
