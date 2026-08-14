@@ -10,10 +10,46 @@ const CANONICAL_OUTPUT_FILES = Object.freeze([
   ['output3', '03-input-ai_prompt-2.txt', 'text'],
   ['output4', '04-output-ai_extracted-structure.json', 'json'],
   ['output5', '05-output-backend_plan-skeleton.json', 'json'],
-  ['output6', '06-input-ai_prompt-3.txt', 'text'],
-  ['output7', '07-output-ai_completed-plan.json', 'json'],
+  ['output6', '06-output-backend_deterministic-fills.json', 'json'],
+  ['output7', '07-output-backend_completed-plan.json', 'json'],
   ['output8', '08-output-backend_validation-result.json', 'json'],
 ]);
+const OPTIONAL_SIDECAR_FILES = Object.freeze([
+  ['output6b', '06b-input-ai_fill-fallback.json', 'json'],
+  ['output6c', '06c-output-ai_fill-fallback.json', 'json'],
+]);
+
+// Superseded attempts are preserved beside the canonical chain and never overwrite it.
+// Canonical 01-08 always describe the attempt that produced Output 07, so the primary
+// debugging path stays internally consistent; every earlier attempt remains auditable.
+const ATTEMPT_SIDECAR_KEY_PATTERN = /^(0[1-4])-a([1-9])$/;
+const ATTEMPT_VERIFICATION_KEY_PATTERN = /^04-a([1-9])-verification$/;
+
+function resolveAttemptSidecar(key) {
+  const verification = String(key).match(ATTEMPT_VERIFICATION_KEY_PATTERN);
+  if (verification) {
+    return {
+      filename: `04-a${verification[1]}-verification.json`,
+      format: 'json',
+    };
+  }
+
+  const match = String(key).match(ATTEMPT_SIDECAR_KEY_PATTERN);
+  if (!match) {
+    return null;
+  }
+  const [, outputNumber, attempt] = match;
+  const canonical = CANONICAL_OUTPUT_FILES.find(
+    ([, filename]) => filename.startsWith(`${outputNumber}-`)
+  );
+  if (!canonical) {
+    return null;
+  }
+  return {
+    filename: canonical[1].replace(/^(\d{2})-/, `$1-a${attempt}-`),
+    format: canonical[2],
+  };
+}
 
 function createRunId(now = new Date()) {
   const timestamp = now
@@ -51,6 +87,8 @@ async function writeFileAtomically(directory, filename, content) {
 
 async function writeWeeklyPlanPipelineArtifacts({
   outputs,
+  sidecars = {},
+  attemptSidecars = {},
   runId = createRunId(),
   baseDirectory = DEFAULT_PIPELINE_ARTIFACT_BASE_DIRECTORY,
 }) {
@@ -62,6 +100,18 @@ async function writeWeeklyPlanPipelineArtifacts({
   ) {
     throw new Error('Exactly outputs output1 through output8 are required');
   }
+  const allowedSidecarKeys = OPTIONAL_SIDECAR_FILES.map(([key]) => key);
+  const receivedSidecarKeys = Object.keys(sidecars || {});
+  if (receivedSidecarKeys.some((key) => !allowedSidecarKeys.includes(key))) {
+    throw new Error('Unknown Weekly Plan pipeline artifact sidecar');
+  }
+  const attemptSidecarEntries = Object.keys(attemptSidecars || {}).map((key) => {
+    const descriptor = resolveAttemptSidecar(key);
+    if (!descriptor) {
+      throw new Error('Unknown Weekly Plan pipeline attempt sidecar');
+    }
+    return [key, descriptor.filename, descriptor.format];
+  });
   if (!/^[A-Za-z0-9_-]+$/.test(runId)) {
     throw new Error('runId contains invalid characters');
   }
@@ -83,11 +133,34 @@ async function writeWeeklyPlanPipelineArtifacts({
       serializeOutput(outputs[key], format)
     );
   }
+  for (const [key, filename, format] of OPTIONAL_SIDECAR_FILES) {
+    if (!Object.prototype.hasOwnProperty.call(sidecars, key)) continue;
+    await writeFileAtomically(
+      runDirectory,
+      filename,
+      serializeOutput(sidecars[key], format)
+    );
+  }
+  for (const [key, filename, format] of attemptSidecarEntries) {
+    await writeFileAtomically(
+      runDirectory,
+      filename,
+      serializeOutput(attemptSidecars[key], format)
+    );
+  }
+
+  const writtenFiles = [
+    ...CANONICAL_OUTPUT_FILES,
+    ...OPTIONAL_SIDECAR_FILES.filter(([key]) =>
+      Object.prototype.hasOwnProperty.call(sidecars, key)
+    ),
+    ...attemptSidecarEntries,
+  ];
 
   return {
     runId,
     runDirectory,
-    files: CANONICAL_OUTPUT_FILES.map(([, filename]) =>
+    files: writtenFiles.map(([, filename]) =>
       path.join(runDirectory, filename)
     ),
   };
@@ -111,7 +184,9 @@ async function rewriteWeeklyPlanPipelineOutput8({ runDirectory, output8 }) {
 module.exports = {
   CANONICAL_OUTPUT_FILES,
   DEFAULT_PIPELINE_ARTIFACT_BASE_DIRECTORY,
+  OPTIONAL_SIDECAR_FILES,
   createRunId,
+  resolveAttemptSidecar,
   rewriteWeeklyPlanPipelineOutput8,
   writeWeeklyPlanPipelineArtifacts,
 };

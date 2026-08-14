@@ -31,6 +31,11 @@ test('provider configuration has isolated defaults and accepts pipeline-specific
       OPENAI_SIMPLE_WEEKLY_PLAN_MAX_OUTPUT_TOKENS_3: '203',
     }),
     {
+      deterministicFillsEnabled: true,
+      // Bound Plan migration defaults: the current production path stays selected
+      // until the flags are flipped explicitly.
+      extractionMode: 'GEOMETRY_ONLY',
+      recoveryLevel: 'OFF',
       models: {
         call1: 'model-one',
         call2: 'model-two',
@@ -39,6 +44,12 @@ test('provider configuration has isolated defaults and accepts pipeline-specific
       timeouts: { call1: 101, call2: 102, call3: 103 },
       maxOutputTokens: { call1: 201, call2: 202, call3: 203 },
     }
+  );
+  assert.equal(
+    resolveSimpleWeeklyPlanAiConfig({
+      SIMPLE_WEEKLY_PLAN_DETERMINISTIC_FILLS_ENABLED: 'false',
+    }).deterministicFillsEnabled,
+    false
   );
 });
 

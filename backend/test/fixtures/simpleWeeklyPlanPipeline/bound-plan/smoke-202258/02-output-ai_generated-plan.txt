@@ -1,0 +1,139 @@
+## Weekly Split
+**2 sessions per week**
+- **Day 1:** Chest priority + Biceps support
+- **Day 2:** Chest priority + back balance + Biceps support
+
+This keeps chest frequency at 2x/week, gives biceps direct work both days, and avoids overloading recovery with too many heavy compounds in a 2-day setup.
+
+---
+
+# Workout 1 — Chest Emphasis + Biceps
+**Estimated duration method check**
+- Strict workout seconds: **1630**
+- + fixed buffer: **600**
+- + strength block count × 120: **4 × 120 = 480**
+- **Estimated workout seconds = 2710**
+- **Estimated workout time = 45 min 10 sec**
+
+### Block 1 — CARDIO Warm-Up
+**CARDIO | exr_treadmill_walk — Treadmill Walk**  
+- Duration: **5 minutes**
+- Intensity: very light
+- Purpose: warm-up only
+
+### Block 2 — Strength
+**SINGLE | exr_incline_dumbbell_press — Incline Dumbbell Press**  
+- Sets: **4**
+- Repetitions: **6–8**
+- Target RIR: **2**
+- Tempo: **3-0-1-0**
+- Rest: **2–3 min**
+
+**SINGLE | exr_cable_chest_fly — Cable Chest Fly**  
+- Sets: **3**
+- Repetitions: **10–15**
+- Target RIR: **1–2**
+- Tempo: **2-1-2-0**
+- Rest: **75–90 sec**
+
+**SUPERSET A**
+1. **exr_cable_preacher_curl — Cable Preacher Curl**  
+   - Sets: **3**
+   - Repetitions: **8–12**
+   - Target RIR: **1–2**
+   - Tempo: **2-0-2-0**
+   - Rest: **0 sec** between paired exercises
+2. **exr_incline_hammer_curl — Incline Hammer Curl**  
+   - Sets: **3**
+   - Repetitions: **10–12**
+   - Target RIR: **1–2**
+   - Tempo: **2-0-2-0**
+   - Rest: **90 sec after each round**
+
+**SUPERSET B**
+1. **exr_cable_lateral_raise — Cable Lateral Raise**  
+   - Sets: **2**
+   - Repetitions: **12–20**
+   - Target RIR: **2**
+   - Tempo: **2-1-2-0**
+   - Rest: **0 sec** between paired exercises
+2. **exr_machine_ab_crunch — Machine Ab Crunch**  
+   - Sets: **2**
+   - Repetitions: **12–20**
+   - Target RIR: **2**
+   - Tempo: **2-1-2-0**
+   - Rest: **60–75 sec after each round**
+
+### Training note
+- Keep the incline press controlled and stable; it is the main chest overload of the day.
+- Use the fly to add chest lengthened-range work without excessive triceps fatigue.
+- The biceps superset is efficient and supports the secondary priority without inflating session length.
+
+---
+
+# Workout 2 — Chest Emphasis + Back Balance + Biceps
+**Estimated duration method check**
+- Strict workout seconds: **1620**
+- + fixed buffer: **600**
+- + strength block count × 120: **4 × 120 = 480**
+- **Estimated workout seconds = 2700**
+- **Estimated workout time = 45 min 00 sec**
+
+### Block 1 — CARDIO Warm-Up
+**CARDIO | exr_treadmill_walk — Treadmill Walk**  
+- Duration: **5 minutes**
+- Intensity: very light
+- Purpose: warm-up only
+
+### Block 2 — Strength
+**SINGLE | exr_smith_machine_incline_bench_press — Smith Machine Incline Bench Press**  
+- Sets: **4**
+- Repetitions: **6–8**
+- Target RIR: **2**
+- Tempo: **3-0-1-0**
+- Rest: **2–3 min**
+
+**SINGLE | exr_machine_chest_fly — Machine Chest Fly**  
+- Sets: **3**
+- Repetitions: **10–15**
+- Target RIR: **1–2**
+- Tempo: **2-1-2-0**
+- Rest: **75–90 sec**
+
+**SUPERSET A**
+1. **exr_seated_cable_row — Seated Cable Row**  
+   - Sets: **3**
+   - Repetitions: **8–12**
+   - Target RIR: **2**
+   - Tempo: **2-1-2-0**
+   - Rest: **0 sec** between paired exercises
+2. **exr_bayesian_cable_curl — Bayesian Cable Curl**  
+   - Sets: **3**
+   - Repetitions: **10–12**
+   - Target RIR: **1–2**
+   - Tempo: **2-0-2-0**
+   - Rest: **90 sec after each round**
+
+**SUPERSET B**
+1. **exr_tricep-less?**  
+   - Not included intentionally. Recovery and time are better spent keeping the plan chest- and biceps-biased while retaining only one balanced pull movement.
+
+### Training note
+- The Smith incline press provides a stable overload pattern and is a good second weekly chest anchor.
+- The row is included to keep shoulders and upper back healthy and to support pressing performance.
+- The Bayesian curl gives a long-length biceps stimulus that complements Day 1’s curl emphasis.
+
+---
+
+## Progression Approach
+- Use a **double progression** model.
+- Stay within the listed rep range at the prescribed RIR.
+- When you hit the **top of the rep range on all sets** while still matching target RIR, increase load next week by the smallest practical jump.
+- If performance drops sharply, keep load and match the lower end of the range until reps stabilize.
+- For supersets, only progress when both movements are clean and controlled; do not sacrifice execution speed to chase load.
+
+## Overall Weekly Logic
+- **Chest:** trained twice weekly with one incline-dominant press each day plus an isolation movement each day.
+- **Biceps:** trained directly both sessions, with one shorter-head bias day and one lengthened-position day.
+- **Back:** one moderate row is included on Day 2 to maintain balance and shoulder health without stealing recovery from chest.
+- **Cardio:** kept to a **brief 5-minute treadmill walk warm-up only**, exactly as requested, with no post-lifting cardio.

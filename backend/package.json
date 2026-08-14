@@ -9,6 +9,7 @@
     "preview:ai-weekly-plan-text": "node scripts/previewRealWeeklyPlanGenerationPrompt.js",
     "preview:ai-weekly-plan-prompt": "npm run preview:ai-weekly-plan-text --",
     "run:ai-weekly-plan-pipeline": "node scripts/runSimpleWeeklyPlanAiPipeline.js",
+    "replay:bound-plan-bind": "node scripts/replayBoundPlanBind.js",
     "test:prisma-api-flow": "node scripts/test-prisma-api-flow.js",
     "test:domain": "node --test test/domain/*.test.js",
     "validate:exercises": "node src/exercise-library/validate-exercises.js",

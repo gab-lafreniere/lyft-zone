@@ -77,10 +77,15 @@ function buildExerciseNotesProviderValueSchema() {
 
 function buildExerciseDefaultsProviderSchema() {
   return buildProviderObjectSchema({
-    tempo: {
+    // null is the canonical "tempo unspecified" representation across the domain:
+    // the skeleton initialises defaultTempo to null, Prisma stores it nullable, and
+    // mapVersionToBuilderPayload applies the 3010 presentation default when it is null.
+    // A qualitative source tempo such as "controlled" is an absence, not an ambiguity,
+    // so it must not be forced into a four-digit value.
+    tempo: nullable({
       type: 'string',
       pattern: '^[0-9]{4}$',
-    },
+    }),
     restSeconds: nullable({
       type: 'integer',
       minimum: 0,
@@ -198,7 +203,17 @@ function buildBlockRestProviderSchema() {
   });
 }
 
-function buildSimpleWeeklyPlanFillProviderSchema(skeleton = {}) {
+// pinGeometryHash embeds the run's hash as a const. That is a real guard on the
+// provider-facing Structured Output contract, but it makes the schema unique per
+// generation. Compiling a unique schema retains its generated validator source for the
+// process lifetime (measured at ~87 KB per generation on a shared Ajv instance, and no
+// better on a throwaway one). Internal validation therefore compiles a hash-free
+// schema, which the shared instance can reuse; the geometryHash is still checked
+// exactly, by identity, in normalizeSimpleWeeklyPlanProviderFills before AJV runs.
+function buildSimpleWeeklyPlanFillProviderSchema(
+  skeleton = {},
+  { pinGeometryHash = true } = {}
+) {
   const entities = buildCanonicalProviderEntities(skeleton);
 
   return buildProviderObjectSchema({
@@ -206,10 +221,15 @@ function buildSimpleWeeklyPlanFillProviderSchema(skeleton = {}) {
       type: 'integer',
       const: SIMPLE_WEEKLY_PLAN_FILL_PROVIDER_VERSION,
     },
-    geometryHash: {
-      type: 'string',
-      const: skeleton.geometryHash,
-    },
+    geometryHash: pinGeometryHash
+      ? {
+        type: 'string',
+        const: skeleton.geometryHash,
+      }
+      : {
+        type: 'string',
+        pattern: '^sha256:[0-9a-f]{64}$',
+      },
     fills: buildProviderObjectSchema({
       strengthExercises: {
         type: 'array',
@@ -290,7 +310,7 @@ function normalizeSimpleWeeklyPlanProviderFills(value = {}, skeleton = {}) {
   });
 
   const validateOutput = providerOutputAjv.compile(
-    buildSimpleWeeklyPlanFillProviderSchema(skeleton)
+    buildSimpleWeeklyPlanFillProviderSchema(skeleton, { pinGeometryHash: false })
   );
   if (!validateOutput(value)) {
     const message = 'Provider entity-local fills do not match the v4 contract';

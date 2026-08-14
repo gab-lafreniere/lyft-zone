@@ -1,0 +1,194 @@
+{
+  "schemaVersion": 1,
+  "planName": "Weekly structure",
+  "workouts": [
+    {
+      "name": "Day 1 — Chest Priority A",
+      "blocks": [
+        {
+          "type": "CARDIO",
+          "restAfterRound": null,
+          "exercises": [
+            {
+              "exerciseId": "exr_treadmill_walk",
+              "sets": null,
+              "reps": null,
+              "rir": null,
+              "rpe": null,
+              "tempo": null,
+              "rest": null,
+              "duration": "5 minutes",
+              "intensity": "light",
+              "machineSettings": null,
+              "notes": null
+            }
+          ]
+        },
+        {
+          "type": "SINGLE",
+          "restAfterRound": null,
+          "exercises": [
+            {
+              "exerciseId": "exr_incline_dumbbell_press",
+              "sets": 4,
+              "reps": "6–8",
+              "rir": "1–2",
+              "rpe": null,
+              "tempo": "3-0-1-0",
+              "rest": "2–3 min",
+              "duration": null,
+              "intensity": null,
+              "machineSettings": null,
+              "notes": null
+            }
+          ]
+        },
+        {
+          "type": "SUPERSET",
+          "restAfterRound": "45–60 sec after the paired movement",
+          "exercises": [
+            {
+              "exerciseId": "exr_cable_chest_fly",
+              "sets": 3,
+              "reps": "10–15",
+              "rir": "1–2",
+              "rpe": null,
+              "tempo": "2-1-2-0",
+              "rest": null,
+              "duration": null,
+              "intensity": null,
+              "machineSettings": null,
+              "notes": null
+            },
+            {
+              "exerciseId": "exr_incline_dumbbell_curl",
+              "sets": 3,
+              "reps": "8–12",
+              "rir": "1–2",
+              "rpe": null,
+              "tempo": "3-0-2-0",
+              "rest": null,
+              "duration": null,
+              "intensity": null,
+              "machineSettings": null,
+              "notes": null
+            }
+          ]
+        },
+        {
+          "type": "SINGLE",
+          "restAfterRound": null,
+          "exercises": [
+            {
+              "exerciseId": "exr_face_pull",
+              "sets": 2,
+              "reps": "12–20",
+              "rir": "2",
+              "rpe": null,
+              "tempo": "2-1-2-1",
+              "rest": "60 sec",
+              "duration": null,
+              "intensity": null,
+              "machineSettings": null,
+              "notes": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Day 2 — Chest Priority B",
+      "blocks": [
+        {
+          "type": "CARDIO",
+          "restAfterRound": null,
+          "exercises": [
+            {
+              "exerciseId": "exr_treadmill_walk",
+              "sets": null,
+              "reps": null,
+              "rir": null,
+              "rpe": null,
+              "tempo": null,
+              "rest": null,
+              "duration": "5 minutes",
+              "intensity": "light",
+              "machineSettings": null,
+              "notes": null
+            }
+          ]
+        },
+        {
+          "type": "SINGLE",
+          "restAfterRound": null,
+          "exercises": [
+            {
+              "exerciseId": "exr_machine_chest_press",
+              "sets": 4,
+              "reps": "8–10",
+              "rir": "1–2",
+              "rpe": null,
+              "tempo": "2-0-2-0",
+              "rest": "2 min",
+              "duration": null,
+              "intensity": null,
+              "machineSettings": null,
+              "notes": null
+            }
+          ]
+        },
+        {
+          "type": "SUPERSET",
+          "restAfterRound": "45–60 sec after the paired movement",
+          "exercises": [
+            {
+              "exerciseId": "exr_incline_cable_fly",
+              "sets": 3,
+              "reps": "10–15",
+              "rir": "1–2",
+              "rpe": null,
+              "tempo": "2-1-2-0",
+              "rest": null,
+              "duration": null,
+              "intensity": null,
+              "machineSettings": null,
+              "notes": null
+            },
+            {
+              "exerciseId": "exr_chest_supported_cable_row",
+              "sets": 3,
+              "reps": "8–12",
+              "rir": "1–2",
+              "rpe": null,
+              "tempo": "2-1-2-0",
+              "rest": null,
+              "duration": null,
+              "intensity": null,
+              "machineSettings": null,
+              "notes": null
+            }
+          ]
+        },
+        {
+          "type": "SINGLE",
+          "restAfterRound": null,
+          "exercises": [
+            {
+              "exerciseId": "exr_cable_rope_curl",
+              "sets": 3,
+              "reps": "10–14",
+              "rir": "1–2",
+              "rpe": null,
+              "tempo": "2-0-2-0",
+              "rest": "75 sec",
+              "duration": null,
+              "intensity": null,
+              "machineSettings": null,
+              "notes": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

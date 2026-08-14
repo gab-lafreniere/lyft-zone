@@ -24,6 +24,12 @@ const {
   normalizeSimpleWeeklyPlanProviderFills,
 } = require('../src/domain/simpleWeeklyPlanPipeline/fillSchema');
 const {
+  resolveDeterministicWeeklyPlanFills,
+} = require('../src/domain/simpleWeeklyPlanPipeline/deterministicFillResolver');
+const {
+  mergeWeeklyPlanFillFallback,
+} = require('../src/domain/simpleWeeklyPlanPipeline/fillFallback');
+const {
   materializeSimpleWeeklyPlan,
 } = require('../src/domain/simpleWeeklyPlanPipeline/fillMaterializer');
 const {
@@ -34,9 +40,27 @@ const {
   buildEligibleExerciseLookup,
 } = require('../src/domain/simpleWeeklyPlanPipeline/compactExerciseLookup');
 const {
+  buildBoundPlanExtractionRequest,
   buildFillExtractionRequest,
   buildStructureExtractionRequest,
 } = require('../src/domain/simpleWeeklyPlanPipeline/aiPrompts');
+const {
+  verifyBoundPlan,
+} = require('../src/domain/simpleWeeklyPlanPipeline/boundPlanVerification');
+const {
+  resolveBoundPlanWeeklyPlanFills,
+} = require('../src/domain/simpleWeeklyPlanPipeline/boundPlanFillResolver');
+const {
+  adaptBoundPlanToGeometry,
+} = require('../src/domain/simpleWeeklyPlanPipeline/structureGeometryAdapter');
+const {
+  ACTIONS,
+  decideRecoveryAction,
+} = require('../src/domain/simpleWeeklyPlanPipeline/pipelineRecoveryPolicy');
+const {
+  buildBinderRetryDirective,
+  buildCreatorRepairRequest,
+} = require('../src/domain/simpleWeeklyPlanPipeline/retryDirectives');
 const {
   createSimpleWeeklyPlanOpenAIProvider,
   renderSimpleWeeklyPlanModelInput,
@@ -51,6 +75,9 @@ const {
 const {
   estimateOpenAiCostUsd,
 } = require('../src/ai/openAiPricing');
+const {
+  resolveWeeklyPlanFillFallback,
+} = require('./simpleWeeklyPlanFillFallbackService');
 
 const OUTPUT_DESCRIPTOR_BY_NUMBER = new Map(
   CANONICAL_OUTPUT_FILES.map((descriptor, index) => [
@@ -127,7 +154,7 @@ function createEmptyOutputs() {
     output3: notProducedText(1, pending),
     output4: notProducedJson(1, pending),
     output5: notProducedJson(1, pending),
-    output6: notProducedText(1, pending),
+    output6: notProducedJson(1, pending),
     output7: notProducedJson(1, pending),
     output8: notProducedJson(1, pending),
   };
@@ -428,6 +455,232 @@ function buildStatus(outputs) {
   );
 }
 
+function pipelineError(code, message, details = null) {
+  const error = new Error(message);
+  error.code = code;
+  if (details) {
+    error.details = Array.isArray(details) ? details : [details];
+  }
+  return error;
+}
+
+// Turns a verification failure into the facts the backend is allowed to state to
+// Call #1. Only counts, coordinates and the offending identifier travel; the backend
+// never suggests how the coach should fix the plan.
+function repairFactsFor(constraint, failures) {
+  if (constraint === 'WORKOUT_COUNT') {
+    const failure = failures.find(
+      (entry) => entry.code === 'BOUND_PLAN_WORKOUT_COUNT_MISMATCH'
+    );
+    return { received: failure?.received, expected: failure?.expected };
+  }
+  if (constraint === 'SUPERSET_EQUAL_SETS') {
+    const failure = failures.find(
+      (entry) => entry.code === 'BOUND_PLAN_SUPERSET_SET_COUNT_UNEQUAL'
+    );
+    const match = String(failure?.path || '')
+      .match(/workouts\/(\d+)\/blocks\/(\d+)/);
+    return {
+      location: match
+        ? `workout ${Number(match[1]) + 1}, block ${Number(match[2]) + 1}`
+        : 'a superset block',
+      received: (failure?.received || []).join(' and '),
+    };
+  }
+  const failure = failures.find(
+    (entry) => entry.code === 'BOUND_PLAN_EXERCISE_OUTSIDE_POOL'
+  );
+  return { received: failure?.received };
+}
+
+/**
+ * Binds Call #1's plan into a BoundPlan, recovering from a defective bind or from a
+ * violated Call #1 hard constraint.
+ *
+ * Budgets are enforced by pipelineRecoveryPolicy: at most 2 creator attempts, at most
+ * 2 binder attempts per creator output and 4 in total. Every superseded attempt is
+ * archived as a sidecar; the canonical chain always describes the winning attempt.
+ */
+async function bindPlanWithRecovery(context) {
+  const {
+    aiProvider,
+    config,
+    prompt,
+    eligibleExerciseLookup,
+    sessionsPerWeek,
+    monotonicNow,
+    aiUsageCalls,
+    modelsUsed,
+    attemptSidecars,
+    ledger,
+    outputs,
+    recordCall1,
+  } = context;
+
+  let planText = context.initialPlanText;
+  let promptArtifact = context.initialPromptArtifact;
+  let correctiveDirective = null;
+  let previousConstraintsForPlan = null;
+
+  for (;;) {
+    // Canonical 01/02 describe the creator output currently being bound, so a repaired
+    // plan is never absent from the artifacts even if all of its binds fail.
+    outputs.output1 = promptArtifact;
+    outputs.output2 = planText;
+
+    const bindRequest = buildBoundPlanExtractionRequest({
+      generatedPlanText: planText,
+      correctiveDirective,
+    });
+    const bindArtifact = renderStructureModelInputArtifact({
+      structureRequest: bindRequest,
+      model: config.models.call2,
+      maxOutputTokens: config.maxOutputTokens.call2,
+    });
+    // Assigned before the call so a failed bind never leaves Output 03 claiming the
+    // pipeline never started while 03-aN proves a prompt was rendered.
+    outputs.output3 = bindArtifact;
+
+    const startedAt = monotonicNow();
+    const call2 = await aiProvider.generate({
+      stage: 'CALL_2_BIND_PLAN',
+      model: config.models.call2,
+      systemMessage: bindRequest.systemMessage,
+      userMessage: bindRequest.userMessage,
+      schema: bindRequest.schema,
+      formatName: bindRequest.formatName,
+      timeoutMs: config.timeouts.call2,
+      maxOutputTokens: config.maxOutputTokens.call2,
+    });
+    ledger.binderAttempts += 1;
+    modelsUsed.push(call2.model || config.models.call2);
+    aiUsageCalls.push({
+      ...buildAiUsageCall({
+        call: 2,
+        stage: 'CALL_2_BIND_PLAN',
+        model: call2.model || config.models.call2,
+        usage: call2.usage,
+        durationMs: monotonicNow() - startedAt,
+      }),
+      attempt: ledger.binderAttempts,
+    });
+
+    const boundPlan = call2.value;
+    const verification = verifyBoundPlan({
+      boundPlan,
+      generatedPlanText: planText,
+      eligibleExerciseLookup,
+      sessionsPerWeek,
+    });
+    ledger.coverage = verification.coverage;
+
+    const decision = decideRecoveryAction({
+      failures: verification.failures,
+      coverage: verification.coverage,
+      state: {
+        recoveryLevel: config.recoveryLevel,
+        creatorAttempt: ledger.creatorAttempts,
+        binderAttemptForPlan: ledger.binderAttemptsForCurrentPlan,
+        binderAttemptsTotal: ledger.binderAttempts,
+        creatorRepairUsed: ledger.creatorRepairUsed,
+        previousConstraintsForPlan,
+      },
+    });
+
+    if (decision.action === ACTIONS.PROCEED) {
+      ledger.timeline.push({
+        attempt: ledger.binderAttempts,
+        call: 2,
+        outcome: 'ACCEPTED',
+        ...(decision.reason ? { reason: decision.reason } : {}),
+        warnings: verification.warnings.map((warning) => warning.code),
+      });
+      return {
+        boundPlan,
+        planText,
+        promptArtifact,
+        bindArtifact,
+        verification,
+      };
+    }
+
+    // Archive the superseded bind before anything overwrites it.
+    const supersededIndex = ledger.binderAttempts;
+    attemptSidecars[`03-a${supersededIndex}`] = bindArtifact;
+    attemptSidecars[`04-a${supersededIndex}`] = boundPlan;
+    attemptSidecars[`04-a${supersededIndex}-verification`] = {
+      valid: verification.valid,
+      failures: verification.failures,
+      warnings: verification.warnings,
+      coverage: verification.coverage,
+      decision: decision.action,
+      reason: decision.reason,
+    };
+    ledger.timeline.push({
+      attempt: supersededIndex,
+      call: 2,
+      outcome: 'REJECTED',
+      reason: decision.reason,
+      codes: decision.failureCodes || decision.classification.codes,
+      ...(decision.coverage ? { coverage: decision.coverage } : {}),
+    });
+
+    if (decision.action === ACTIONS.FAIL_CLOSED) {
+      throw pipelineError(
+        decision.code || 'BOUND_PLAN_VERIFICATION_FAILED',
+        'Bound plan verification failed',
+        verification.failures.length
+          ? verification.failures
+          : [{ code: decision.code, reason: decision.reason, coverage: decision.coverage }]
+      );
+    }
+
+    if (decision.action === ACTIONS.RETRY_BINDER) {
+      correctiveDirective = buildBinderRetryDirective(
+        decision.failureCodes || decision.classification.codes
+      );
+      previousConstraintsForPlan = decision.classification.constraints;
+      ledger.binderAttemptsForCurrentPlan += 1;
+      continue;
+    }
+
+    // REPAIR_CREATOR: regenerate the complete plan with one backend-stated violation.
+    const repairRequest = buildCreatorRepairRequest({
+      systemMessage: prompt.systemMessage,
+      userMessage: prompt.userMessage,
+      previousPlanText: planText,
+      constraint: decision.constraint,
+      facts: repairFactsFor(decision.constraint, verification.failures),
+    });
+    attemptSidecars['01-a1'] = promptArtifact;
+    attemptSidecars['02-a1'] = planText;
+
+    const repaired = await recordCall1({
+      systemMessage: repairRequest.systemMessage,
+      userMessage: repairRequest.userMessage,
+      attempt: ledger.creatorAttempts + 1,
+    });
+
+    ledger.creatorAttempts += 1;
+    ledger.creatorRepairUsed = true;
+    ledger.creatorRepairReason = decision.code
+      || `CREATOR_REPAIR_${decision.constraint}`;
+    ledger.creatorRepairViolation = repairRequest.violation;
+    ledger.binderAttemptsForCurrentPlan = 1;
+    ledger.timeline.push({
+      attempt: ledger.creatorAttempts,
+      call: 1,
+      outcome: 'REPAIRED',
+      constraint: decision.constraint,
+    });
+
+    planText = repaired.planText;
+    promptArtifact = repaired.promptArtifact;
+    correctiveDirective = null;
+    previousConstraintsForPlan = null;
+  }
+}
+
 async function runSimpleWeeklyPlanAiPipeline({
   userId,
   outputDirectory,
@@ -435,6 +688,9 @@ async function runSimpleWeeklyPlanAiPipeline({
   provider,
   timeouts,
   maxOutputTokens,
+  deterministicFillsEnabled,
+  extractionMode,
+  recoveryLevel,
   onProgress,
   dependencies = {},
   runId = createRunId(),
@@ -474,8 +730,16 @@ async function runSimpleWeeklyPlanAiPipeline({
   const outputs = createEmptyOutputs();
   const config = resolveSimpleWeeklyPlanAiConfig(
     dependencies.env || process.env,
-    { models, timeouts, maxOutputTokens }
+    {
+      models,
+      timeouts,
+      maxOutputTokens,
+      deterministicFillsEnabled,
+      extractionMode,
+      recoveryLevel,
+    }
   );
+  const boundPlanMode = config.extractionMode === 'BOUND_PLAN';
   const aiProvider =
     provider ||
     createSimpleWeeklyPlanOpenAIProvider({
@@ -508,9 +772,51 @@ async function runSimpleWeeklyPlanAiPipeline({
   let skeleton = null;
   let fillOutput = null;
   let rawFillOutput = null;
+  const artifactSidecars = {};
+  const fillResolutionObservability = {
+    mode: config.extractionMode === 'BOUND_PLAN'
+      ? 'BOUND_PLAN_DETERMINISTIC'
+      : config.deterministicFillsEnabled
+        ? 'DETERMINISTIC_WITH_FALLBACK'
+        : 'LEGACY_FULL_AI',
+    resolverVersion: null,
+    deterministicFieldCount: null,
+    totalFieldCount: null,
+    unresolvedFieldCount: null,
+    unresolvedRate: null,
+    fallbackRequired: false,
+    fallbackFieldCount: 0,
+    fallbackDurationMs: null,
+    fallbackInputTokens: null,
+    fallbackOutputTokens: null,
+    fallbackCostUsd: null,
+    fallbackValidationOutcome: 'NOT_REQUIRED',
+  };
   let blockingError = null;
   let failureReceived;
   let prompt = null;
+  let boundPlan = null;
+  const attemptSidecars = {};
+  const attemptLedger = {
+    creatorAttempts: 1,
+    binderAttempts: 0,
+    binderAttemptsForCurrentPlan: 1,
+    creatorRepairUsed: false,
+    creatorRepairReason: null,
+    creatorRepairViolation: null,
+    timeline: [],
+    coverage: null,
+  };
+  // Built lazily so the GEOMETRY_ONLY path keeps attributing a pool failure to
+  // Output 6 exactly as it does today, while BOUND_PLAN can verify at Output 4.
+  let eligibleLookupPromise = null;
+  function getEligibleExerciseLookup() {
+    if (!eligibleLookupPromise) {
+      eligibleLookupPromise = buildPool(userId, {}, prismaDependencies)
+        .then(buildEligibleExerciseLookup);
+    }
+    return eligibleLookupPromise;
+  }
 
   try {
     currentOutput = 1;
@@ -528,139 +834,316 @@ async function runSimpleWeeklyPlanAiPipeline({
       maxOutputTokens: config.maxOutputTokens.call1,
     });
 
+    // Shared by the initial generation and by a creator repair. The initial call uses
+    // the locked prompt unchanged; a repair appends one backend-authored violation and
+    // the previous plan, assembled in retryDirectives.js.
+    async function recordCall1({ systemMessage, userMessage, attempt = 1 }) {
+      const startedAt = monotonicNow();
+      const call1 = await aiProvider.generate({
+        stage: 'CALL_1_PLAN_TEXT',
+        model: config.models.call1,
+        systemMessage,
+        userMessage,
+        timeoutMs: config.timeouts.call1,
+        maxOutputTokens: config.maxOutputTokens.call1,
+      });
+      if (typeof call1.value !== 'string' || !call1.value.trim()) {
+        throw pipelineError('EMPTY_OUTPUT_2', 'Call 1 returned empty plan text');
+      }
+      modelsUsed.push(call1.model || config.models.call1);
+      aiUsageCalls.push({
+        ...buildAiUsageCall({
+          call: 1,
+          stage: 'CALL_1_PLAN_TEXT',
+          model: call1.model || config.models.call1,
+          usage: call1.usage,
+          durationMs: monotonicNow() - startedAt,
+        }),
+        // Attempt numbering is a BOUND_PLAN concern; adding it in GEOMETRY_ONLY would
+        // change the legacy Output 08 shape and break the rollback guarantee.
+        ...(boundPlanMode ? { attempt } : {}),
+      });
+      return {
+        planText: call1.value.trim(),
+        promptArtifact: renderSimpleWeeklyPlanModelInput({
+          model: config.models.call1,
+          systemMessage,
+          userMessage,
+          maxOutputTokens: config.maxOutputTokens.call1,
+        }),
+      };
+    }
+
     currentOutput = 2;
     reportProgressSafely(onProgress, 'DESIGNING_PROGRAM');
     startTimingStage('programTextGenerationMs');
-    const call1StartedAt = monotonicNow();
-    const call1 = await aiProvider.generate({
-      stage: 'CALL_1_PLAN_TEXT',
-      model: config.models.call1,
+    const initialCall1 = await recordCall1({
       systemMessage: prompt.systemMessage,
       userMessage: prompt.userMessage,
-      timeoutMs: config.timeouts.call1,
-      maxOutputTokens: config.maxOutputTokens.call1,
+      attempt: 1,
     });
-    if (typeof call1.value !== 'string' || !call1.value.trim()) {
-      const error = new Error('Call 1 returned empty plan text');
-      error.code = 'EMPTY_OUTPUT_2';
-      throw error;
-    }
-    modelsUsed.push(call1.model || config.models.call1);
-    aiUsageCalls.push(
-      buildAiUsageCall({
-        call: 1,
-        stage: 'CALL_1_PLAN_TEXT',
-        model: call1.model || config.models.call1,
-        usage: call1.usage,
-        durationMs: monotonicNow() - call1StartedAt,
-      })
-    );
-    outputs.output2 = call1.value.trim();
+    outputs.output2 = initialCall1.planText;
 
     currentOutput = 3;
     reportProgressSafely(onProgress, 'EXTRACTING_STRUCTURE');
     startTimingStage('structureExtractionMs');
-    const structureRequest = buildStructureExtractionRequest({
-      generatedPlanText: outputs.output2,
-      sessionsPerWeek: prompt.sessionsPerWeek,
-    });
-    outputs.output3 = renderStructureModelInputArtifact({
-      structureRequest,
-      model: config.models.call2,
-      maxOutputTokens: config.maxOutputTokens.call2,
-    });
+    let eligibleExerciseLookup = null;
 
-    currentOutput = 4;
-    const call2StartedAt = monotonicNow();
-    const call2 = await aiProvider.generate({
-      stage: 'CALL_2_STRUCTURE',
-      model: config.models.call2,
-      systemMessage: structureRequest.systemMessage,
-      userMessage: structureRequest.userMessage,
-      schema: structureRequest.schema,
-      formatName: structureRequest.formatName,
-      timeoutMs: config.timeouts.call2,
-      maxOutputTokens: config.maxOutputTokens.call2,
-    });
-    modelsUsed.push(call2.model || config.models.call2);
-    aiUsageCalls.push(
-      buildAiUsageCall({
-        call: 2,
-        stage: 'CALL_2_STRUCTURE',
-        model: call2.model || config.models.call2,
-        usage: call2.usage,
-        durationMs: monotonicNow() - call2StartedAt,
-      })
-    );
-    extractedStructure = call2.value;
-    const structureValidation =
-      validateSimpleWeeklyPlanStructure(extractedStructure, {
+    if (boundPlanMode) {
+      eligibleExerciseLookup = await getEligibleExerciseLookup();
+      currentOutput = 4;
+      const bound = await bindPlanWithRecovery({
+        aiProvider,
+        config,
+        prompt,
+        eligibleExerciseLookup,
+        sessionsPerWeek: prompt.sessionsPerWeek,
+        monotonicNow,
+        aiUsageCalls,
+        modelsUsed,
+        attemptSidecars,
+        ledger: attemptLedger,
+        outputs,
+        recordCall1,
+        initialPlanText: outputs.output2,
+        initialPromptArtifact: outputs.output1,
+      });
+      // Canonical 01/02/03 were kept current inside the bind loop.
+      boundPlan = bound.boundPlan;
+      outputs.output4 = boundPlan;
+    } else {
+      const structureRequest = buildStructureExtractionRequest({
+        generatedPlanText: outputs.output2,
         sessionsPerWeek: prompt.sessionsPerWeek,
       });
-    if (!structureValidation.valid) {
-      const error = new Error('Output #4 structure validation failed');
-      error.code = 'OUTPUT_4_STRUCTURE_INVALID';
-      error.details = structureValidation.errors;
-      failureReceived = extractedStructure;
-      throw error;
+      outputs.output3 = renderStructureModelInputArtifact({
+        structureRequest,
+        model: config.models.call2,
+        maxOutputTokens: config.maxOutputTokens.call2,
+      });
+
+      currentOutput = 4;
+      const call2StartedAt = monotonicNow();
+      const call2 = await aiProvider.generate({
+        stage: 'CALL_2_STRUCTURE',
+        model: config.models.call2,
+        systemMessage: structureRequest.systemMessage,
+        userMessage: structureRequest.userMessage,
+        schema: structureRequest.schema,
+        formatName: structureRequest.formatName,
+        timeoutMs: config.timeouts.call2,
+        maxOutputTokens: config.maxOutputTokens.call2,
+      });
+      modelsUsed.push(call2.model || config.models.call2);
+      aiUsageCalls.push(
+        buildAiUsageCall({
+          call: 2,
+          stage: 'CALL_2_STRUCTURE',
+          model: call2.model || config.models.call2,
+          usage: call2.usage,
+          durationMs: monotonicNow() - call2StartedAt,
+        })
+      );
+      extractedStructure = call2.value;
+      const structureValidation =
+        validateSimpleWeeklyPlanStructure(extractedStructure, {
+          sessionsPerWeek: prompt.sessionsPerWeek,
+        });
+      if (!structureValidation.valid) {
+        const error = new Error('Output #4 structure validation failed');
+        error.code = 'OUTPUT_4_STRUCTURE_INVALID';
+        error.details = structureValidation.errors;
+        failureReceived = extractedStructure;
+        throw error;
+      }
+      outputs.output4 = extractedStructure;
     }
-    outputs.output4 = extractedStructure;
 
     currentOutput = 5;
     reportProgressSafely(onProgress, 'BUILDING_PROGRAM');
     startTimingStage('deterministicBuildMs');
-    structureGeometry = adaptSimpleWeeklyPlanStructureToLegacyGeometry(
-      extractedStructure,
-      { sessionsPerWeek: prompt.sessionsPerWeek }
-    );
+    structureGeometry = boundPlanMode
+      ? adaptBoundPlanToGeometry(boundPlan)
+      : adaptSimpleWeeklyPlanStructureToLegacyGeometry(
+        extractedStructure,
+        { sessionsPerWeek: prompt.sessionsPerWeek }
+      );
     skeleton = buildSkeleton(structureGeometry);
     outputs.output5 = skeleton;
 
     currentOutput = 6;
-    const poolResult = await buildPool(
-      userId,
-      {},
-      prismaDependencies
-    );
-    const eligibleExerciseLookup = buildEligibleExerciseLookup(poolResult);
-    buildCompactExerciseLookup({
-      generatedPlanText: outputs.output2,
-      eligibleExerciseLookup,
-    });
-    const fillRequest = buildFillExtractionRequest({
-      generatedPlanText: outputs.output2,
-      skeleton,
-    });
-    outputs.output6 = renderFillModelInputArtifact({
-      fillRequest,
-      model: config.models.call3,
-      maxOutputTokens: config.maxOutputTokens.call3,
-    });
+    if (!eligibleExerciseLookup) {
+      eligibleExerciseLookup = await getEligibleExerciseLookup();
+    }
+    startTimingStage('fillGenerationMs');
+    if (boundPlanMode || config.deterministicFillsEnabled) {
+      const resolverStartedAt = monotonicNow();
+      const deterministic = boundPlanMode
+        ? resolveBoundPlanWeeklyPlanFills({
+          boundPlan,
+          skeleton,
+          eligibleExerciseLookup,
+        })
+        : resolveDeterministicWeeklyPlanFills({
+          generatedPlanText: outputs.output2,
+          skeleton,
+          eligibleExerciseLookup,
+        });
+      const deterministicDurationMs = normalizeDurationMs(
+        monotonicNow() - resolverStartedAt
+      );
+      fillResolutionObservability.resolverVersion = deterministic.resolverVersion;
+      fillResolutionObservability.deterministicFieldCount =
+        deterministic.deterministicallyResolvedFieldCount;
+      fillResolutionObservability.totalFieldCount = deterministic.totalFieldCount;
+      fillResolutionObservability.unresolvedFieldCount = deterministic.unresolvedFieldCount;
+      fillResolutionObservability.unresolvedRate = deterministic.totalFieldCount > 0
+        ? deterministic.unresolvedFieldCount / deterministic.totalFieldCount
+        : 0;
+      fillResolutionObservability.fallbackRequired = deterministic.fallbackRequired;
+      fillResolutionObservability.fallbackFieldCount = deterministic.unresolvedFieldCount;
+      outputs.output6 = {
+        geometryHash: deterministic.geometryHash,
+        resolverVersion: deterministic.resolverVersion,
+        providerFills: deterministic.providerFills,
+        totalFieldCount: deterministic.totalFieldCount,
+        deterministicallyResolvedFieldCount:
+          deterministic.deterministicallyResolvedFieldCount,
+        unresolvedFieldCount: deterministic.unresolvedFieldCount,
+        fallbackRequired: deterministic.fallbackRequired,
+        fallbackEligible: deterministic.fallbackEligible,
+        unresolved: deterministic.unresolved,
+        normalizationDecisions: deterministic.normalizationDecisions,
+        timing: { deterministicResolutionMs: deterministicDurationMs },
+      };
+      rawFillOutput = deterministic.providerFills;
+
+      if (deterministic.fallbackRequired) {
+        if (!deterministic.fallbackEligible) {
+          const error = new Error('Deterministic fills contain non-fallback-eligible unresolved fields');
+          error.code = 'DETERMINISTIC_UNRESOLVED_NOT_FALLBACK_ELIGIBLE';
+          error.details = deterministic.unresolved;
+          throw error;
+        }
+        currentOutput = 7;
+        const fallbackStartedAt = monotonicNow();
+        let fallback;
+        try {
+          fallback = await resolveWeeklyPlanFillFallback({
+            provider: aiProvider,
+            geometryHash: skeleton.geometryHash,
+            unresolved: deterministic.unresolved,
+            model: config.models.call3,
+            timeoutMs: config.timeouts.call3,
+            maxOutputTokens: config.maxOutputTokens.call3,
+          });
+        } catch (error) {
+          fillResolutionObservability.fallbackDurationMs = normalizeDurationMs(
+            monotonicNow() - fallbackStartedAt
+          );
+          fillResolutionObservability.fallbackValidationOutcome = 'REQUEST_FAILED';
+          if (error.fillFallbackRequest) {
+            artifactSidecars.output6b = {
+              schemaVersion: 1,
+              geometryHash: skeleton.geometryHash,
+              systemMessage: error.fillFallbackRequest.systemMessage,
+              input: error.fillFallbackRequest.payload,
+              structuredOutput: {
+                formatName: error.fillFallbackRequest.formatName,
+                schema: error.fillFallbackRequest.schema,
+              },
+              model: config.models.call3,
+              maxOutputTokens: config.maxOutputTokens.call3,
+            };
+          }
+          throw error;
+        }
+        const fallbackDurationMs = normalizeDurationMs(
+          monotonicNow() - fallbackStartedAt
+        );
+        const fallbackModel = fallback.result.model || config.models.call3;
+        const fallbackUsage = buildAiUsageCall({
+          call: 3,
+          stage: 'CALL_3_FILL_FALLBACK',
+          model: fallbackModel,
+          usage: fallback.result.usage,
+          durationMs: fallbackDurationMs,
+        });
+        modelsUsed.push(fallbackModel);
+        aiUsageCalls.push(fallbackUsage);
+        fillResolutionObservability.fallbackDurationMs = fallbackDurationMs;
+        fillResolutionObservability.fallbackInputTokens = fallbackUsage.inputTokens;
+        fillResolutionObservability.fallbackOutputTokens = fallbackUsage.outputTokens;
+        fillResolutionObservability.fallbackCostUsd = fallbackUsage.estimatedCostUsd;
+        artifactSidecars.output6b = {
+          schemaVersion: 1,
+          geometryHash: skeleton.geometryHash,
+          systemMessage: fallback.request.systemMessage,
+          input: fallback.request.payload,
+          structuredOutput: {
+            formatName: fallback.request.formatName,
+            schema: fallback.request.schema,
+          },
+          model: config.models.call3,
+          maxOutputTokens: config.maxOutputTokens.call3,
+        };
+        artifactSidecars.output6c = fallback.result.value;
+        failureReceived = fallback.result.value;
+        try {
+          rawFillOutput = mergeWeeklyPlanFillFallback({
+            providerFills: deterministic.providerFills,
+            unresolved: deterministic.unresolved,
+            fallbackOutput: fallback.result.value,
+          });
+          fillResolutionObservability.fallbackValidationOutcome = 'PASSED';
+        } catch (error) {
+          fillResolutionObservability.fallbackValidationOutcome = 'FAILED';
+          throw error;
+        }
+      }
+    } else {
+      buildCompactExerciseLookup({
+        generatedPlanText: outputs.output2,
+        eligibleExerciseLookup,
+      });
+      const fillRequest = buildFillExtractionRequest({
+        generatedPlanText: outputs.output2,
+        skeleton,
+      });
+      outputs.output6 = {
+        mode: 'LEGACY_FULL_AI_CALL_3',
+        modelInput: renderFillModelInputArtifact({
+          fillRequest,
+          model: config.models.call3,
+          maxOutputTokens: config.maxOutputTokens.call3,
+        }),
+      };
+      currentOutput = 7;
+      const call3StartedAt = monotonicNow();
+      const call3 = await aiProvider.generate({
+        stage: 'CALL_3_FILLS',
+        model: config.models.call3,
+        systemMessage: fillRequest.systemMessage,
+        userMessage: fillRequest.userMessage,
+        schema: fillRequest.schema,
+        formatName: fillRequest.formatName,
+        timeoutMs: config.timeouts.call3,
+        maxOutputTokens: config.maxOutputTokens.call3,
+      });
+      modelsUsed.push(call3.model || config.models.call3);
+      aiUsageCalls.push(
+        buildAiUsageCall({
+          call: 3,
+          stage: 'CALL_3_FILLS',
+          model: call3.model || config.models.call3,
+          usage: call3.usage,
+          durationMs: monotonicNow() - call3StartedAt,
+        })
+      );
+      rawFillOutput = call3.value;
+    }
 
     currentOutput = 7;
-    startTimingStage('fillGenerationMs');
-    const call3StartedAt = monotonicNow();
-    const call3 = await aiProvider.generate({
-      stage: 'CALL_3_FILLS',
-      model: config.models.call3,
-      systemMessage: fillRequest.systemMessage,
-      userMessage: fillRequest.userMessage,
-      schema: fillRequest.schema,
-      formatName: fillRequest.formatName,
-      timeoutMs: config.timeouts.call3,
-      maxOutputTokens: config.maxOutputTokens.call3,
-    });
-    modelsUsed.push(call3.model || config.models.call3);
-    aiUsageCalls.push(
-      buildAiUsageCall({
-        call: 3,
-        stage: 'CALL_3_FILLS',
-        model: call3.model || config.models.call3,
-        usage: call3.usage,
-        durationMs: monotonicNow() - call3StartedAt,
-      })
-    );
-    rawFillOutput = call3.value;
     failureReceived = rawFillOutput;
     fillOutput = normalizeSimpleWeeklyPlanProviderFills(
       rawFillOutput,
@@ -721,6 +1204,10 @@ async function runSimpleWeeklyPlanAiPipeline({
   outputs.output8 = {
     ...outputs.output8,
     aiUsage: buildAiUsageReport(aiUsageCalls),
+    fillResolution: fillResolutionObservability,
+    // Only emitted in BOUND_PLAN mode so the GEOMETRY_ONLY rollback path keeps
+    // producing byte-identical Output 08.
+    ...(boundPlanMode ? { attempts: attemptLedger } : {}),
     timing: {
       totalDurationMs: null,
       stageDurations,
@@ -741,6 +1228,8 @@ async function runSimpleWeeklyPlanAiPipeline({
 
   const artifacts = await writeArtifacts({
     outputs,
+    sidecars: artifactSidecars,
+    attemptSidecars,
     runId,
     baseDirectory: outputDirectory,
   });

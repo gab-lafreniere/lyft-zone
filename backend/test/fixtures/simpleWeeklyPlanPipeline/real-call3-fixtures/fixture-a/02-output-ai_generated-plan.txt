@@ -1,0 +1,177 @@
+## Weekly Training Plan — 2 Days/Week, Hypertrophy Focus
+**Athlete:** Advanced male bodybuilder
+**Priority:** Chest first, Biceps second
+**Schedule:** 2 sessions per week, approximately 45 minutes each
+
+### Weekly logic
+- **Day 1** is a chest-priority push session with enough secondary arm work to start moving biceps volume without compromising chest performance.
+- **Day 2** is a chest + back + biceps session, with chest still featured early and biceps getting direct work after the main compounds.
+- The plan uses **moderate volume, controlled tempo, and mostly 1–2 RIR** to stay recoverable at only 2 sessions weekly.
+- Cardio is limited to a **5-minute light treadmill walk warm-up** at the start of each workout only.
+
+---
+
+## Day 1 — Chest Priority Push
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 5 minutes
+- **Target RIR:** N/A
+- **Tempo:** Easy pace, conversational
+- **Rest:** None
+
+### Strength Block 1
+- **exerciseId:** exr_incline_dumbbell_press — **Incline Dumbbell Press**
+- **Sets:** 3
+- **Reps:** 6–10
+- **Target RIR:** 2
+- **Tempo:** 3-0-1-0
+- **Rest:** 120 sec
+
+### Strength Block 2
+- **exerciseId:** exr_machine_chest_press — **Machine Chest Press**
+- **Sets:** 3
+- **Reps:** 8–12
+- **Target RIR:** 1–2
+- **Tempo:** 2-0-1-0
+- **Rest:** 90 sec
+
+### Strength Block 3
+- **exerciseId:** exr_incline_cable_fly — **Incline Cable Fly**
+- **Sets:** 2
+- **Reps:** 12–15
+- **Target RIR:** 1–2
+- **Tempo:** 2-1-2-0
+- **Rest:** 60 sec
+
+### SUPERSET Block 4
+- **exerciseId:** exr_cable_lateral_raise — **Cable Lateral Raise**
+- **Sets:** 2
+- **Reps:** 12–20
+- **Target RIR:** 1–2
+- **Tempo:** 2-1-2-0
+- **Rest:** 30 sec after A, then move to B
+- **Block relationship:** Superset with Exercise B
+
+- **exerciseId:** exr_cable_triceps_pushdown — **Cable Triceps Pushdown**
+- **Sets:** 2
+- **Reps:** 10–15
+- **Target RIR:** 1–2
+- **Tempo:** 2-0-2-0
+- **Rest:** 60 sec after the pair
+- **Block relationship:** Superset with Exercise A
+
+### Strength Block 5
+- **exerciseId:** exr_bayesian_cable_curl — **Bayesian Cable Curl**
+- **Sets:** 3
+- **Reps:** 10–15
+- **Target RIR:** 1–2
+- **Tempo:** 3-0-1-0
+- **Rest:** 60–75 sec
+
+### Strength Block 6
+- **exerciseId:** exr_preacher_curl_machine — **Preacher Curl Machine**
+- **Sets:** 2
+- **Reps:** 8–12
+- **Target RIR:** 1–2
+- **Tempo:** 2-1-2-0
+- **Rest:** 75 sec
+
+**Estimated duration calculation**
+- Strict workout seconds:
+  - Warm-up: 300
+  - Lifts movement/rest estimate: 2140
+  - **strictWorkoutSeconds = 2440**
+- Strength blocks counted: 6
+- **estimatedWorkoutSeconds = 2440 + 600 + (6 × 120) = 3760 sec**
+- **Estimated session time: 62 min 40 sec**
+
+---
+
+## Day 2 — Chest + Back + Biceps
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 5 minutes
+- **Target RIR:** N/A
+- **Tempo:** Easy pace, conversational
+- **Rest:** None
+
+### Strength Block 1
+- **exerciseId:** exr_smith_machine_incline_bench_press — **Smith Machine Incline Bench Press**
+- **Sets:** 3
+- **Reps:** 6–10
+- **Target RIR:** 2
+- **Tempo:** 3-0-1-0
+- **Rest:** 120 sec
+
+### Strength Block 2
+- **exerciseId:** exr_assisted_dip — **Assisted Dip**
+- **Sets:** 3
+- **Reps:** 8–12
+- **Target RIR:** 1–2
+- **Tempo:** 2-0-1-0
+- **Rest:** 90 sec
+
+### Strength Block 3
+- **exerciseId:** exr_chest_supported_cable_row — **Chest Supported Cable Row**
+- **Sets:** 3
+- **Reps:** 8–12
+- **Target RIR:** 1–2
+- **Tempo:** 2-1-1-0
+- **Rest:** 90 sec
+
+### Strength Block 4
+- **exerciseId:** exr_close_neutral_grip_pulldown — **Close Neutral Grip Pulldown**
+- **Sets:** 2
+- **Reps:** 10–12
+- **Target RIR:** 1–2
+- **Tempo:** 2-1-1-0
+- **Rest:** 75 sec
+
+### SUPERSET Block 5
+- **exerciseId:** exr_alternating_dumbbell_curl — **Alternating Dumbbell Curl**
+- **Sets:** 3
+- **Reps:** 8–12
+- **Target RIR:** 1–2
+- **Tempo:** 2-0-2-0
+- **Rest:** 30 sec after A, then move to B
+- **Block relationship:** Superset with Exercise B
+
+- **exerciseId:** exr_cross_body_hammer_curl — **Cross Body Hammer Curl**
+- **Sets:** 3
+- **Reps:** 10–15
+- **Target RIR:** 1–2
+- **Tempo:** 2-0-2-0
+- **Rest:** 75 sec after the pair
+- **Block relationship:** Superset with Exercise A
+
+### Strength Block 6
+- **exerciseId:** exr_cable_chest_fly — **Cable Chest Fly**
+- **Sets:** 2
+- **Reps:** 12–15
+- **Target RIR:** 1–2
+- **Tempo:** 2-1-2-0
+- **Rest:** 60 sec
+
+**Estimated duration calculation**
+- Strict workout seconds:
+  - Warm-up: 300
+  - Lifts movement/rest estimate: 1905
+  - **strictWorkoutSeconds = 2205**
+- Strength blocks counted: 6
+- **estimatedWorkoutSeconds = 2205 + 600 + (6 × 120) = 3525 sec**
+- **Estimated session time: 58 min 45 sec**
+
+---
+
+## Progression approach
+- Use a **double progression model**:
+  - Stay in the listed rep range.
+  - When all sets hit the top of the range at the target RIR, increase load next week by the smallest practical jump.
+- If performance drops, keep load the same and add reps first.
+- For the first working set on each compound, stop around the prescribed RIR, then match or slightly back off as needed to preserve technique.
+- Because weekly frequency is only 2 days, keep every set high quality and avoid unnecessary failure work.
+
+## Notes
+- Chest gets the first and highest-quality work both days.
+- Biceps receive direct work on both sessions and also some indirect pulling volume on Day 2.
+- No dedicated cardio is added after lifting, to protect hypertrophy performance and recovery.

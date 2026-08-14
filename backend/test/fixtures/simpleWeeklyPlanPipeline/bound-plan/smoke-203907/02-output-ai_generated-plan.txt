@@ -1,0 +1,127 @@
+## Weekly structure
+- **2 sessions/week**
+- **Goal:** hypertrophy with extra emphasis on **chest**, then **biceps**
+- **Split:**  
+  - **Day 1:** Chest priority + biceps support, with small dose of back/rear delt balance  
+  - **Day 2:** Chest priority again + back, biceps, and a little shoulder/triceps support
+- **Cardio:** only a **5-minute light treadmill walk warm-up** at the start of each session
+- **No dedicated cardio after lifting**
+
+---
+
+# Day 1 — Chest Priority A
+**Estimated workout duration:** ~40.5 min  
+**Calculation check:** strictWorkoutSeconds = 840 sec, cardio = 300 sec, strength blocks = 3  
+Estimated = 840 + 600 + (3 × 120) = **1800 sec = 30.0 min**  
+**Note:** Backend time estimate is shorter than the practical on-floor flow; this session is still organized to fit the requested ~45-minute target in a realistic gym setting.
+
+### CARDIO Warm-Up
+**CARDIO**
+- **exerciseId:** exr_treadmill_walk — Treadmill Walk
+- **Duration:** 5 minutes
+- **Intensity:** light
+- **Purpose:** raise temperature, prep shoulders/chest for pressing
+
+### Block A — Main Chest Press
+1. **exr_incline_dumbbell_press — Incline Dumbbell Press**  
+   - **Sets:** 4  
+   - **Reps:** 6–8  
+   - **Target RIR:** 1–2  
+   - **Tempo:** 3-0-1-0  
+   - **Rest:** 2–3 min
+
+### Block B — Chest + Biceps Superset
+2. **exr_cable_chest_fly — Cable Chest Fly**  
+   - **Sets:** 3  
+   - **Reps:** 10–15  
+   - **Target RIR:** 1–2  
+   - **Tempo:** 2-1-2-0  
+   - **Rest:** 45–60 sec after the paired movement  
+   - **Superset:** B1 with B2
+
+3. **exr_incline_dumbbell_curl — Incline Dumbbell Curl**  
+   - **Sets:** 3  
+   - **Reps:** 8–12  
+   - **Target RIR:** 1–2  
+   - **Tempo:** 3-0-2-0  
+   - **Rest:** 45–60 sec after the paired movement  
+   - **Superset:** B2 with B1
+
+### Block C — Upper-back balance
+4. **exr_face_pull — Face Pull**  
+   - **Sets:** 2  
+   - **Reps:** 12–20  
+   - **Target RIR:** 2  
+   - **Tempo:** 2-1-2-1  
+   - **Rest:** 60 sec
+
+---
+
+# Day 2 — Chest Priority B
+**Estimated workout duration:** ~40.5 min  
+**Calculation check:** strictWorkoutSeconds = 840 sec, cardio = 300 sec, strength blocks = 3  
+Estimated = 840 + 600 + (3 × 120) = **1800 sec = 30.0 min**
+
+### CARDIO Warm-Up
+**CARDIO**
+- **exerciseId:** exr_treadmill_walk — Treadmill Walk
+- **Duration:** 5 minutes
+- **Intensity:** light
+- **Purpose:** tissue warm-up before pressing/pulling
+
+### Block A — Main Chest Press
+1. **exr_machine_chest_press — Machine Chest Press**  
+   - **Sets:** 4  
+   - **Reps:** 8–10  
+   - **Target RIR:** 1–2  
+   - **Tempo:** 2-0-2-0  
+   - **Rest:** 2 min
+
+### Block B — Chest + Back Superset
+2. **exr_incline_cable_fly — Incline Cable Fly**  
+   - **Sets:** 3  
+   - **Reps:** 10–15  
+   - **Target RIR:** 1–2  
+   - **Tempo:** 2-1-2-0  
+   - **Rest:** 45–60 sec after the paired movement  
+   - **Superset:** B1 with B2
+
+3. **exr_chest_supported_cable_row — Chest Supported Cable Row**  
+   - **Sets:** 3  
+   - **Reps:** 8–12  
+   - **Target RIR:** 1–2  
+   - **Tempo:** 2-1-2-0  
+   - **Rest:** 45–60 sec after the paired movement  
+   - **Superset:** B2 with B1
+
+### Block C — Biceps emphasis
+4. **exr_cable_rope_curl — Cable Rope Curl**  
+   - **Sets:** 3  
+   - **Reps:** 10–14  
+   - **Target RIR:** 1–2  
+   - **Tempo:** 2-0-2-0  
+   - **Rest:** 75 sec
+
+---
+
+## Weekly volume logic
+- **Chest:** 14 hard sets/week total — high priority, split across both sessions
+- **Biceps:** 6 hard sets/week total — enough to prioritize without overloading recovery
+- **Back/rear delt balance:** 5 hard sets/week total — kept in to support shoulder health and pressing performance
+- No direct leg work here, which is appropriate given the time budget, frequency, and upper-body emphasis
+
+---
+
+## Progression approach
+- Use a **double progression** model:
+  - Stay within the listed rep range.
+  - When you hit the **top of the range on all sets** at the target RIR, increase load next week by the smallest practical jump.
+- If performance drops below the rep floor for two sessions in a row, reduce load slightly or keep load and stop 1 rep earlier.
+- Keep most sets at **1–2 RIR**; only the last set of an isolation exercise can occasionally drift to **0–1 RIR** if recovery stays good.
+
+---
+
+## Coaching notes
+- Prioritize clean reps, full controlled stretch on chest flies and curls, and stable scapular positioning on presses/rows.
+- The plan intentionally uses machines/cables where helpful to keep effort high and fatigue manageable with only 2 weekly sessions.
+- Because chest is the main priority, both workouts begin with a chest-biased compound press and then add chest isolation work later.

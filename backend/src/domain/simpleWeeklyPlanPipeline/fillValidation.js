@@ -93,13 +93,18 @@ function validateExerciseDefaults(value, slot, skeleton) {
       ));
     }
   });
-  if (typeof value.tempo !== 'string' || !/^\d{4}$/.test(value.tempo)) {
+  // null means the source prescribed no usable tempo. The domain already represents and
+  // defaults that case; inventing digits here would fabricate a coaching value.
+  if (
+    value.tempo !== null &&
+    (typeof value.tempo !== 'string' || !/^\d{4}$/.test(value.tempo))
+  ) {
     errors.push(issue(
       `${path}/tempo`,
       'INVALID_TEMPO',
-      'tempo must contain exactly four digits',
+      'tempo must be null or contain exactly four digits',
       value.tempo,
-      { pattern: '^\\d{4}$' }
+      { nullable: true, pattern: '^\\d{4}$' }
     ));
   }
 

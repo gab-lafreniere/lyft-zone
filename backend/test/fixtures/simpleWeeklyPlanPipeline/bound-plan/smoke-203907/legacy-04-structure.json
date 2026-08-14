@@ -1,0 +1,53 @@
+{
+  "planName": "Weekly structure",
+  "workout_1": {
+    "name": "Day 1 — Chest Priority A",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 2
+      }
+    ]
+  },
+  "workout_2": {
+    "name": "Day 2 — Chest Priority B",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      }
+    ]
+  }
+}

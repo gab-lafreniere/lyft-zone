@@ -1,0 +1,69 @@
+{
+  "planName": "Weekly Training Plan — 2 Days/Week, Hypertrophy Focus",
+  "workout_1": {
+    "name": "Day 1 — Chest Priority Push",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 2
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 2
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 2
+      }
+    ]
+  },
+  "workout_2": {
+    "name": "Day 2 — Chest + Back + Biceps",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 2
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 2
+      }
+    ]
+  }
+}

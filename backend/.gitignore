@@ -6,3 +6,6 @@ database.sqlite
 .DS_Store
 
 /src/generated/prisma
+
+# Local research/study outputs — not part of the app or the test suite
+study/

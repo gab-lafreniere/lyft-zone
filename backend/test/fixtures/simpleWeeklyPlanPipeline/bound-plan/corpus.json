@@ -1,0 +1,148 @@
+{
+  "corpusVersion": 1,
+  "description": "Frozen Bound Plan corpus. Every sourcePlan is real Call #1 output, or a minimally edited copy of real Call #1 output. Ground truth was established by manual reading of the source text and is the reference for binder correctness.",
+  "cases": [
+    {
+      "id": "fixture-a",
+      "sourcePlan": "../real-call3-fixtures/fixture-a/02-output-ai_generated-plan.txt",
+      "origin": "real",
+      "sessionsPerWeek": 2,
+      "dialect": "## Day N / ### Strength Block N / ### SUPERSET Block N / - **Sets:**",
+      "truth": {
+        "workoutCount": 2,
+        "blockCount": 14,
+        "exerciseCount": 16,
+        "supersetCount": 2,
+        "cardioCount": 2,
+        "setTemplateCount": 36
+      },
+      "legacyOutcome": "SUCCESS",
+      "expectedBoundPlanOutcome": "SUCCESS",
+      "acceptance": "byte-identical geometryHash, Output 06 and Output 07 versus the legacy path"
+    },
+    {
+      "id": "fixture-b",
+      "sourcePlan": "../real-call3-fixtures/fixture-b/02-output-ai_generated-plan.txt",
+      "origin": "real",
+      "sessionsPerWeek": 6,
+      "dialect": "# Day N / ### Strength / **SINGLE — X** / **SUPERSET A** / N. **exr_id — Name**",
+      "truthSource": "Recomputed from this exact file via the legacy Call #2 structure plus the adapter, and cross-checked against the 46 exr_ occurrences in the source. The figures in AI_CALL_3_DETERMINISTIC_REPLACEMENT_STUDY.md section 8 (47/59/12/152) describe a DIFFERENT, since-deleted Fixture B generation and must not be used for this file.",
+      "truth": {
+        "workoutCount": 6,
+        "blockCount": 38,
+        "exerciseCount": 46,
+        "supersetCount": 8,
+        "cardioCount": 12,
+        "setTemplateCount": 119
+      },
+      "legacyOutcome": "SUCCESS_WITH_FALLBACK",
+      "expectedBoundPlanOutcome": "SUCCESS_WITH_FALLBACK",
+      "acceptance": "byte-identical Output 06 and Output 07, including the eight ambiguous SUPERSET block rests"
+    },
+    {
+      "id": "smoke-202258",
+      "sourcePlan": "smoke-202258/02-output-ai_generated-plan.txt",
+      "origin": "real-production-failure",
+      "sessionsPerWeek": 2,
+      "dialect": "# Workout N / ### Block N — Strength / **SINGLE | exr_id — Name** / **SUPERSET A**",
+      "truth": {
+        "workoutCount": 2,
+        "blockCount": 9,
+        "exerciseCount": 12,
+        "supersetCount": 3,
+        "cardioCount": 2,
+        "workouts": [
+          { "blocks": ["CARDIO", "SINGLE", "SINGLE", "SUPERSET", "SUPERSET"], "exerciseCount": 7 },
+          { "blocks": ["CARDIO", "SINGLE", "SINGLE", "SUPERSET"], "exerciseCount": 5 }
+        ]
+      },
+      "legacyOutcome": "FAILED",
+      "legacyFailureCode": "EXERCISE_ID_OUTSIDE_ELIGIBLE_POOL",
+      "legacyCall2WasCorrect": true,
+      "notes": "Call #2 correctly declined to bind the rhetorical '**SUPERSET B** / exr_tricep-less? / Not included intentionally' block. The run was killed by the open-regex global ID scan in buildCompactExerciseLookup, not by Call #2.",
+      "expectedBoundPlanOutcome": "SUCCESS",
+      "acceptance": "exr_tricep-less is never a closed-dictionary coverage candidate; workout_2 binds exactly 4 blocks"
+    },
+    {
+      "id": "smoke-203739",
+      "sourcePlan": "smoke-203739/02-output-ai_generated-plan.txt",
+      "origin": "real-production-failure",
+      "sessionsPerWeek": 2,
+      "dialect": "## Session N / ### Block N — TYPE / indented **sets:** without a leading dash",
+      "truth": {
+        "workoutCount": 2,
+        "blockCount": 11,
+        "exerciseCount": 15,
+        "supersetCount": 4,
+        "cardioCount": 2,
+        "workouts": [
+          { "blocks": ["CARDIO", "SINGLE", "SUPERSET", "SINGLE", "SUPERSET"], "exerciseCount": 7 },
+          { "blocks": ["CARDIO", "SINGLE", "SUPERSET", "SINGLE", "SINGLE", "SUPERSET"], "exerciseCount": 8 }
+        ]
+      },
+      "legacyOutcome": "FAILED",
+      "legacyFailureCode": "DETERMINISTIC_WORKOUT_GEOMETRY_MISMATCH",
+      "legacyCall2WasCorrect": true,
+      "notes": "Legacy Output 04 matches ground truth exactly. The resolver's workout regex accepts only 'Day N' and 'Workout N', so it parsed zero workouts from '## Session N'. Purely a second-parser failure.",
+      "expectedBoundPlanOutcome": "SUCCESS",
+      "acceptance": "11 blocks and 15 exercises bound; no dependence on heading vocabulary"
+    },
+    {
+      "id": "smoke-203907",
+      "sourcePlan": "smoke-203907/02-output-ai_generated-plan.txt",
+      "origin": "real-production-failure",
+      "sessionsPerWeek": 2,
+      "dialect": "# Day N / ### Block A — freeform title / superset declared in prose as '- **Superset:** B1 with B2'",
+      "truth": {
+        "workoutCount": 2,
+        "blockCount": 8,
+        "exerciseCount": 10,
+        "supersetCount": 2,
+        "cardioCount": 2,
+        "workouts": [
+          { "blocks": ["CARDIO", "SINGLE", "SUPERSET", "SINGLE"], "exerciseCount": 5 },
+          { "blocks": ["CARDIO", "SINGLE", "SUPERSET", "SINGLE"], "exerciseCount": 5 }
+        ]
+      },
+      "legacyOutcome": "FAILED",
+      "legacyFailureCode": "DETERMINISTIC_BLOCK_GEOMETRY_MISMATCH",
+      "legacyCall2WasCorrect": false,
+      "notes": "Legacy Output 04 reported 5 blocks per workout with TWO SUPERSET entries, splitting the single two-lane superset into one block per exercise. The geometry-only schema cannot express arity, so the adapter would have fabricated 2 lanes for each, yielding 7 exercises where the coach wrote 5. Under BoundPlan this is a BINDER failure caught by V4 (SUPERSET with one exercise) and is retryable.",
+      "expectedBoundPlanOutcome": "SUCCESS_POSSIBLY_AFTER_BINDER_RETRY",
+      "acceptance": "the prose-declared superset binds as ONE SUPERSET block with two lanes; 8 blocks and 10 exercises total"
+    },
+    {
+      "id": "creator-fewer-workouts",
+      "sourcePlan": "creator-fewer-workouts/02-output-ai_generated-plan.txt",
+      "origin": "synthetic-from-smoke-203907",
+      "edit": "Deleted the entire '# Day 2' section and its preceding separator.",
+      "sessionsPerWeek": 2,
+      "truth": { "workoutCount": 1, "blockCount": 4, "exerciseCount": 5 },
+      "expectedBoundPlanOutcome": "CREATOR_REPAIR_ELIGIBLE",
+      "expectedFailureCode": "BOUND_PLAN_WORKOUT_COUNT_MISMATCH",
+      "acceptance": "two independent count-free binds both report 1 workout; violation concerns a constraint stated at programGenerationProfileNarrative.js:163, so creator repair becomes eligible; with repair unavailable the run fails closed as CREATOR_WORKOUT_COUNT_UNSATISFIED"
+    },
+    {
+      "id": "creator-superset-unequal",
+      "sourcePlan": "creator-superset-unequal/02-output-ai_generated-plan.txt",
+      "origin": "synthetic-from-smoke-203739",
+      "edit": "Session 1 Block 3 lane B (exr_seated_cable_row) sets changed from 3 to 2.",
+      "sessionsPerWeek": 2,
+      "truth": { "workoutCount": 2, "blockCount": 11, "exerciseCount": 15, "unequalSupersetAt": "workout 1, block 3, lanes 3 vs 2" },
+      "expectedBoundPlanOutcome": "CREATOR_REPAIR_ELIGIBLE",
+      "expectedFailureCode": "BOUND_PLAN_SUPERSET_SET_COUNT_UNEQUAL",
+      "acceptance": "D4 fail closed. Never pad 2 to 3. Violation concerns a constraint stated at programGenerationPrompt.js:166, so creator repair becomes eligible"
+    },
+    {
+      "id": "creator-out-of-pool",
+      "sourcePlan": "creator-out-of-pool/02-output-ai_generated-plan.txt",
+      "origin": "synthetic-from-smoke-203739",
+      "edit": "Session 1 Block 2 exerciseId changed to exr_fabricated_press_variant, which is absent from the 373-entry exercise library.",
+      "sessionsPerWeek": 2,
+      "truth": { "workoutCount": 2, "blockCount": 11, "exerciseCount": 15 },
+      "expectedBoundPlanOutcome": "CREATOR_REPAIR_ELIGIBLE",
+      "expectedFailureCode": "BOUND_PLAN_EXERCISE_OUTSIDE_POOL",
+      "acceptance": "span verification passes because the id IS present in the source; pool membership fails; violation concerns a constraint stated at programGenerationPrompt.js:154, so creator repair becomes eligible"
+    }
+  ]
+}

@@ -474,3 +474,104 @@ test('2x45 bench, cable fly, and defaults regression stays entity-local', () => 
     }
   );
 });
+
+// ------------------------------------------- H-4: no per-generation schema accumulation
+
+const {
+  buildSimpleWeeklyPlanSkeleton: buildSkeletonForSchemaIdentity,
+} = require('../../../src/domain/simpleWeeklyPlanPipeline/skeletonBuilder');
+
+function skeletonWithName(name) {
+  return buildSkeletonForSchemaIdentity({
+    schemaVersion: 1,
+    planName: 'p',
+    workouts: [{
+      name,
+      blocks: [{ blockType: 'SINGLE', roundCount: null, setCounts: [3] }],
+    }],
+  });
+}
+
+// Memory retention itself is not deterministically observable in a unit test, so the
+// invariant is asserted at its cause: the schema compiled for internal validation must
+// not vary with the run's geometryHash. Measured separately, a hash-unique schema
+// retained ~166 KB per compile on a shared Ajv instance; a hash-free one retained ~1.3 KB.
+test('internal validation compiles a geometryHash-independent schema', () => {
+  const first = skeletonWithName('Day A');
+  const second = skeletonWithName('Day B');
+  assert.notEqual(
+    first.geometryHash,
+    second.geometryHash,
+    'the two skeletons must differ, otherwise this test proves nothing'
+  );
+
+  const firstSchema = buildSimpleWeeklyPlanFillProviderSchema(first, {
+    pinGeometryHash: false,
+  });
+  const secondSchema = buildSimpleWeeklyPlanFillProviderSchema(second, {
+    pinGeometryHash: false,
+  });
+
+  assert.equal(
+    JSON.stringify(firstSchema),
+    JSON.stringify(secondSchema),
+    'two runs with identical geometry must reuse one compiled validator'
+  );
+  assert.equal(
+    JSON.stringify(firstSchema).includes(first.geometryHash),
+    false,
+    'the run hash must not appear in the internally compiled schema'
+  );
+});
+
+test('the provider-facing contract still pins the exact geometryHash', () => {
+  const skeleton = skeletonWithName('Day A');
+  const providerSchema = buildSimpleWeeklyPlanFillProviderSchema(skeleton);
+
+  assert.deepEqual(providerSchema.properties.geometryHash, {
+    type: 'string',
+    const: skeleton.geometryHash,
+  });
+});
+
+test('dropping the hash const does not weaken provider fill validation', () => {
+  const skeleton = skeletonWithName('Day A');
+  const valid = {
+    schemaVersion: 4,
+    geometryHash: skeleton.geometryHash,
+    fills: {
+      strengthExercises: [{
+        exerciseId: 'exr_x',
+        defaults: { tempo: '3010', restSeconds: 60, targetRir: 2, targetRpe: null },
+        sets: [
+          { mode: 'reps', targetReps: 8, targetRir: 2, notes: null },
+          { mode: 'reps', targetReps: 8, targetRir: 2, notes: null },
+          { mode: 'reps', targetReps: 8, targetRir: 2, notes: null },
+        ],
+        notes: null,
+      }],
+      cardioExercises: [],
+      blockRests: [],
+    },
+  };
+  assert.ok(normalizeSimpleWeeklyPlanProviderFills(
+    structuredClone(valid),
+    skeleton
+  ));
+
+  // A wrong hash is still rejected, by the explicit identity check.
+  const wrongHash = structuredClone(valid);
+  wrongHash.geometryHash = `sha256:${'b'.repeat(64)}`;
+  assert.throws(
+    () => normalizeSimpleWeeklyPlanProviderFills(wrongHash, skeleton),
+    (error) => error.code === 'PROVIDER_FILL_GEOMETRY_HASH_MISMATCH'
+  );
+
+  // A structurally invalid payload is still rejected by AJV.
+  const badTempo = structuredClone(valid);
+  badTempo.fills.strengthExercises[0].defaults.tempo = 'controlled';
+  assert.throws(
+    () => normalizeSimpleWeeklyPlanProviderFills(badTempo, skeleton),
+    (error) => error.code === 'INVALID_ENTITY_LOCAL_PROVIDER_FILL'
+  );
+});

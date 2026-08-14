@@ -1,0 +1,185 @@
+{
+  "planName": "Recoverable 6-Day Hypertrophy Plan",
+  "workout_1": {
+    "name": "Day 1 — Chest + Biceps",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      }
+    ]
+  },
+  "workout_2": {
+    "name": "Day 2 — Back + Rear Delts",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      }
+    ]
+  },
+  "workout_3": {
+    "name": "Day 3 — Legs A + Calves + Abs",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 4
+      },
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      }
+    ]
+  },
+  "workout_4": {
+    "name": "Day 4 — Chest + Shoulders + Triceps",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      }
+    ]
+  },
+  "workout_5": {
+    "name": "Day 5 — Back + Biceps",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 4
+      },
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      }
+    ]
+  },
+  "workout_6": {
+    "name": "Day 6 — Legs B + Chest Pump + Arms",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      }
+    ]
+  }
+}

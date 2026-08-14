@@ -1,0 +1,425 @@
+Here is a recoverable 6-day hypertrophy plan built around a chest-first / biceps-second emphasis, with enough weekly volume for an advanced lifter while keeping lower body, back, and shoulders productive rather than excessive.
+
+## Weekly split
+- **Day 1:** Chest + Biceps
+- **Day 2:** Back + Rear Delts
+- **Day 3:** Legs A + Calves + Abs
+- **Day 4:** Chest + Shoulders + Triceps
+- **Day 5:** Back + Biceps
+- **Day 6:** Legs B + Chest Pump + Arms
+- **Day 7:** Off
+
+Cardio is placed **after** lifting only, using **Treadmill Walk** as preferred. Every session begins with a **5-minute light treadmill walk warm-up** and ends with **30 minutes easy treadmill walk**.
+
+---
+
+# Day 1 — Chest + Biceps
+**Estimated duration logic**
+- strictWorkoutSeconds = 77 min movement/rest/cardio = 4620 sec
+- strengthBlockCount = 6
+- estimatedWorkoutSeconds = 4620 + 600 + 6×120 = **5940 sec**
+- **Estimated duration: 99 min**
+
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 5 minutes
+- **Intensity:** very light warm-up pace
+
+### Strength
+**SINGLE — Chest**
+1. **exr_incline_barbell_bench_press — Incline Barbell Bench Press**
+   - Sets: 4
+   - Reps: 6–8
+   - RIR: 2
+   - Tempo: 3-0-1-0
+   - Rest: 2.5–3 min
+
+2. **exr_machine_chest_press — Machine Chest Press**
+   - Sets: 4
+   - Reps: 8–10
+   - RIR: 1–2
+   - Tempo: 2-0-1-0
+   - Rest: 2 min
+
+**SUPERSET A**
+3. **exr_cable_chest_fly — Cable Chest Fly**
+   - Sets: 3
+   - Reps: 12–15
+   - RIR: 1–2
+   - Tempo: 2-1-2-0
+   - Rest: 45–60 sec
+   - Superset with exercise 4
+
+4. **exr_push_up — Push Up**
+   - Sets: 3
+   - Reps: 12–20
+   - RIR: 1–2
+   - Tempo: 2-0-1-0
+   - Rest: 45–60 sec
+   - Superset with exercise 3
+
+**SINGLE — Biceps**
+5. **exr_incline_dumbbell_curl — Incline Dumbbell Curl**
+   - Sets: 4
+   - Reps: 8–12
+   - RIR: 1–2
+   - Tempo: 3-0-1-0
+   - Rest: 75–90 sec
+
+6. **exr_hammer_curl — Hammer Curl**
+   - Sets: 3
+   - Reps: 10–12
+   - RIR: 1–2
+   - Tempo: 2-0-2-0
+   - Rest: 75 sec
+
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 30 minutes
+- **Intensity:** easy conversational pace
+
+---
+
+# Day 2 — Back + Rear Delts
+**Estimated duration logic**
+- strictWorkoutSeconds = 78 min = 4680 sec
+- strengthBlockCount = 5
+- estimatedWorkoutSeconds = 4680 + 600 + 5×120 = **5880 sec**
+- **Estimated duration: 98 min**
+
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 5 minutes
+- **Intensity:** very light warm-up pace
+
+### Strength
+**SINGLE — Back**
+1. **exr_weighted_pull_up — Weighted Pull Up**
+   - Sets: 4
+   - Reps: 5–8
+   - RIR: 2
+   - Tempo: 2-1-1-0
+   - Rest: 2.5–3 min
+
+2. **exr_chest_supported_row_machine — Chest Supported Row Machine**
+   - Sets: 4
+   - Reps: 8–10
+   - RIR: 1–2
+   - Tempo: 2-1-1-0
+   - Rest: 2 min
+
+3. **exr_close_grip_lat_pulldown — Close Grip Lat Pulldown**
+   - Sets: 3
+   - Reps: 10–12
+   - RIR: 1–2
+   - Tempo: 2-1-1-0
+   - Rest: 90 sec
+
+**SUPERSET A**
+4. **exr_face_pull — Face Pull**
+   - Sets: 3
+   - Reps: 15–20
+   - RIR: 1–2
+   - Tempo: 2-1-2-1
+   - Rest: 45–60 sec
+   - Superset with exercise 5
+
+5. **exr_cable_rear_delt_fly — Cable Rear Delt Fly**
+   - Sets: 3
+   - Reps: 15–20
+   - RIR: 1–2
+   - Tempo: 2-1-2-0
+   - Rest: 45–60 sec
+   - Superset with exercise 4
+
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 30 minutes
+- **Intensity:** easy conversational pace
+
+---
+
+# Day 3 — Legs A + Calves + Abs
+**Estimated duration logic**
+- strictWorkoutSeconds = 79 min = 4740 sec
+- strengthBlockCount = 5
+- estimatedWorkoutSeconds = 4740 + 600 + 5×120 = **5940 sec**
+- **Estimated duration: 99 min**
+
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 5 minutes
+- **Intensity:** very light warm-up pace
+
+### Strength
+**SINGLE — Quads/Glutes**
+1. **exr_leg_press — Leg Press**
+   - Sets: 4
+   - Reps: 8–12
+   - RIR: 2
+   - Tempo: 3-0-1-0
+   - Rest: 2.5 min
+
+2. **exr_bulgarian_split_squat — Bulgarian Split Squat**
+   - Sets: 3
+   - Reps: 8–10 each leg
+   - RIR: 2
+   - Tempo: 3-0-1-0
+   - Rest: 90–120 sec
+
+3. **exr_leg_extension — Leg Extension**
+   - Sets: 4
+   - Reps: 12–15
+   - RIR: 1–2
+   - Tempo: 2-1-2-0
+   - Rest: 75 sec
+
+**SINGLE — Hamstrings**
+4. **exr_lying_leg_curl — Lying Leg Curl**
+   - Sets: 4
+   - Reps: 10–15
+   - RIR: 1–2
+   - Tempo: 2-1-2-0
+   - Rest: 75–90 sec
+
+**SUPERSET A**
+5. **exr_machine_seated_calf_raise — Machine Seated Calf Raise**
+   - Sets: 4
+   - Reps: 10–15
+   - RIR: 1–2
+   - Tempo: 2-1-2-1
+   - Rest: 45–60 sec
+   - Superset with exercise 6
+
+6. **exr_machine_standing_calf_raise — Machine Standing Calf Raise**
+   - Sets: 4
+   - Reps: 12–15
+   - RIR: 1–2
+   - Tempo: 2-1-2-1
+   - Rest: 45–60 sec
+   - Superset with exercise 5
+
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 30 minutes
+- **Intensity:** easy conversational pace
+
+---
+
+# Day 4 — Chest + Shoulders + Triceps
+**Estimated duration logic**
+- strictWorkoutSeconds = 80 min = 4800 sec
+- strengthBlockCount = 5
+- estimatedWorkoutSeconds = 4800 + 600 + 5×120 = **6000 sec**
+- **Estimated duration: 100 min**
+
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 5 minutes
+- **Intensity:** very light warm-up pace
+
+### Strength
+**SINGLE — Chest**
+1. **exr_dumbbell_bench_press — Dumbbell Bench Press**
+   - Sets: 4
+   - Reps: 6–8
+   - RIR: 2
+   - Tempo: 3-0-1-0
+   - Rest: 2.5–3 min
+
+2. **exr_incline_machine_chest_press — Incline Machine Chest Press**
+   - Sets: 4
+   - Reps: 8–10
+   - RIR: 1–2
+   - Tempo: 2-0-1-0
+   - Rest: 2 min
+
+**SUPERSET A**
+3. **exr_low_to_high_cable_fly — Low to High Cable Fly**
+   - Sets: 3
+   - Reps: 12–15
+   - RIR: 1–2
+   - Tempo: 2-1-2-0
+   - Rest: 45–60 sec
+   - Superset with exercise 4
+
+4. **exr_cable_lateral_raise — Cable Lateral Raise**
+   - Sets: 3
+   - Reps: 12–20
+   - RIR: 1–2
+   - Tempo: 2-1-2-0
+   - Rest: 45–60 sec
+   - Superset with exercise 3
+
+**SUPERSET B**
+5. **exr_cable_overhead_triceps_extension — Cable Overhead Triceps Extension**
+   - Sets: 3
+   - Reps: 10–15
+   - RIR: 1–2
+   - Tempo: 2-1-2-0
+   - Rest: 60 sec
+   - Superset with exercise 6
+
+6. **exr_rope_triceps_pushdown — Rope Triceps Pushdown**
+   - Sets: 3
+   - Reps: 10–15
+   - RIR: 1–2
+   - Tempo: 2-0-2-0
+   - Rest: 60 sec
+   - Superset with exercise 5
+
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 30 minutes
+- **Intensity:** easy conversational pace
+
+---
+
+# Day 5 — Back + Biceps
+**Estimated duration logic**
+- strictWorkoutSeconds = 79 min = 4740 sec
+- strengthBlockCount = 5
+- estimatedWorkoutSeconds = 4740 + 600 + 5×120 = **5940 sec**
+- **Estimated duration: 99 min**
+
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 5 minutes
+- **Intensity:** very light warm-up pace
+
+### Strength
+**SINGLE — Back**
+1. **exr_lat_pulldown — Lat Pulldown**
+   - Sets: 4
+   - Reps: 8–10
+   - RIR: 2
+   - Tempo: 2-1-1-0
+   - Rest: 2 min
+
+2. **exr_seal_row — Seal Row**
+   - Sets: 4
+   - Reps: 8–10
+   - RIR: 1–2
+   - Tempo: 2-1-1-0
+   - Rest: 2 min
+
+3. **exr_straight_arm_cable_pulldown — Straight Arm Cable Pulldown**
+   - Sets: 3
+   - Reps: 12–15
+   - RIR: 1–2
+   - Tempo: 2-1-2-0
+   - Rest: 75 sec
+
+**SUPERSET A**
+4. **exr_bayesian_cable_curl — Bayesian Cable Curl**
+   - Sets: 4
+   - Reps: 10–12
+   - RIR: 1–2
+   - Tempo: 3-0-1-0
+   - Rest: 60–75 sec
+   - Superset with exercise 5
+
+5. **exr_preacher_curl_machine — Preacher Curl Machine**
+   - Sets: 4
+   - Reps: 8–12
+   - RIR: 1–2
+   - Tempo: 2-1-2-0
+   - Rest: 60–75 sec
+   - Superset with exercise 4
+
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 30 minutes
+- **Intensity:** easy conversational pace
+
+---
+
+# Day 6 — Legs B + Chest Pump + Arms
+**Estimated duration logic**
+- strictWorkoutSeconds = 78 min = 4680 sec
+- strengthBlockCount = 5
+- estimatedWorkoutSeconds = 4680 + 600 + 5×120 = **5880 sec**
+- **Estimated duration: 98 min**
+
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 5 minutes
+- **Intensity:** very light warm-up pace
+
+### Strength
+**SINGLE — Legs**
+1. **exr_hack_squat_narrow_stance — Hack Squat Narrow Stance**
+   - Sets: 4
+   - Reps: 6–10
+   - RIR: 2
+   - Tempo: 3-0-1-0
+   - Rest: 2.5 min
+
+2. **exr_romanian_deadlift — Romanian Deadlift**
+   - Sets: 3
+   - Reps: 6–8
+   - RIR: 2
+   - Tempo: 3-0-1-0
+   - Rest: 2.5–3 min
+
+**SUPERSET A**
+3. **exr_machine_chest_fly — Machine Chest Fly**
+   - Sets: 3
+   - Reps: 12–15
+   - RIR: 1–2
+   - Tempo: 2-1-2-0
+   - Rest: 45–60 sec
+   - Superset with exercise 4
+
+4. **exr_single_arm_cable_curl — Single Arm Cable Curl**
+   - Sets: 3
+   - Reps: 10–12 each arm
+   - RIR: 1–2
+   - Tempo: 2-0-2-0
+   - Rest: 45–60 sec
+   - Superset with exercise 3
+
+**SUPERSET B**
+5. **exr_single_arm_cable_pushdown — Single Arm Cable Pushdown**
+   - Sets: 3
+   - Reps: 10–12 each arm
+   - RIR: 1–2
+   - Tempo: 2-0-2-0
+   - Rest: 45–60 sec
+   - Superset with exercise 6
+
+6. **exr_machine_lateral_raise — Machine Lateral Raise**
+   - Sets: 3
+   - Reps: 12–20
+   - RIR: 1–2
+   - Tempo: 2-1-2-0
+   - Rest: 45–60 sec
+   - Superset with exercise 5
+
+### CARDIO
+- **exerciseId:** exr_treadmill_walk — **Treadmill Walk**
+- **Duration:** 30 minutes
+- **Intensity:** easy conversational pace
+
+---
+
+## Weekly volume logic
+- **Chest:** high priority, trained 3 times/week with a mix of heavy presses, stable machine work, and fly variations.
+- **Biceps:** second priority, trained 3 times/week with different curl angles and implement types.
+- **Back:** solid supporting volume to maintain balance, posture, and shoulder health.
+- **Legs:** split into two productive sessions without crowding recovery.
+- **Shoulders / triceps / rear delts:** enough direct work to support physique development without stealing recovery from chest.
+
+## Progression approach
+- Use a **double progression** model:
+  - Keep the listed rep range and target RIR.
+  - When you hit the **top of the rep range for all sets** at the target RIR, increase load next week by the smallest practical jump.
+- On isolations, add reps first before load.
+- On compounds, keep form strict and stop sets at the prescribed RIR; do not grind.
+- If fatigue rises or performance drops for more than 1 week, reduce one set from the last isolation exercise in that muscle group for that week.
+
+## Execution notes
+- Keep the warm-up cardio easy enough that it does not affect the first working sets.
+- Use controlled eccentrics and full usable ROM.
+- The cardio after lifting should stay conversational and low interference.
+- If recovery becomes an issue, reduce arm and delt isolation before reducing the priority chest work.

@@ -104,7 +104,7 @@ async function createScenario(t, options = {}) {
   t.after(async () => {
     await fs.rm(temporaryRoot, { recursive: true, force: true });
   });
-  const generatedPlanText =
+  const generatedPlanText = options.generatedPlanText ||
     await loadFixture('02-generated-plan-three-day.txt');
   const structure = await loadJsonFixture('03-extracted-structure.json');
   const eligibleLookup =
@@ -209,6 +209,8 @@ async function createScenario(t, options = {}) {
     outputDirectory: temporaryRoot,
     runId: options.runId || 'mock-run',
     provider,
+    deterministicFillsEnabled:
+      options.deterministicFillsEnabled ?? false,
     onProgress: options.onProgress,
     dependencies: {
       env: {},
@@ -521,7 +523,7 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
     scenario.output['05-output-backend_plan-skeleton.json'].geometryHash,
     call3.schema.properties.geometryHash.const
   );
-  const output6 = scenario.output['06-input-ai_prompt-3.txt'];
+  const output6 = scenario.output['06-output-backend_deterministic-fills.json'].modelInput;
   const output6Headings = [
     'SYSTEM MESSAGE',
     'USER MESSAGE',
@@ -570,7 +572,7 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
   assert.equal(scenario.result.valid, true);
   assert.deepEqual(
     scenario.result.completedDocument,
-    scenario.output['07-output-ai_completed-plan.json']
+    scenario.output['07-output-backend_completed-plan.json']
   );
   assert.deepEqual(
     scenario.result.metrics,
@@ -583,12 +585,12 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
   assert.deepEqual(scenario.result.output8.summary, scenario.result.counts);
   assert.deepEqual(
     Object.keys(
-      scenario.output['07-output-ai_completed-plan.json']
+      scenario.output['07-output-backend_completed-plan.json']
     ).sort(),
     ['name', 'sessionsPerWeek', 'workouts']
   );
   const firstExercise =
-    scenario.output['07-output-ai_completed-plan.json']
+    scenario.output['07-output-backend_completed-plan.json']
       .workouts[0].blocks[0].exercises[0];
   assert.equal(firstExercise.exerciseName, 'Incline Barbell Bench Press');
   assert.deepEqual(firstExercise.bodyParts, ['chest']);
@@ -600,7 +602,7 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
   assert.deepEqual(
     scenario.output['08-output-backend_validation-result.json'].metrics,
     buildWeeklyPlanMetrics(
-      scenario.output['07-output-ai_completed-plan.json']
+      scenario.output['07-output-backend_completed-plan.json']
     )
   );
   const measuredCallDurations = scenario.output[
@@ -709,6 +711,109 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
   );
 });
 
+test('deterministic no-fallback path skips Call 3 and records resolver observability', async (t) => {
+  const scenario = await createScenario(t, {
+    deterministicFillsEnabled: true,
+  });
+  assert.equal(scenario.result.valid, true);
+  assert.deepEqual(
+    scenario.calls.map((call) => call.stage),
+    ['CALL_1_PLAN_TEXT', 'CALL_2_STRUCTURE']
+  );
+  assert.equal(scenario.calls.length, 2);
+  assert.deepEqual(scenario.result.modelsUsed, [
+    'gpt-5.4-mini-2026-03-17',
+    'gpt-4.1-mini-2025-04-14',
+  ]);
+  const output6 = scenario.output['06-output-backend_deterministic-fills.json'];
+  assert.match(output6.resolverVersion, /fill-resolver-v1$/);
+  assert.equal(output6.fallbackRequired, false);
+  assert.equal(output6.unresolvedFieldCount, 0);
+  assert.equal(
+    output6.deterministicallyResolvedFieldCount,
+    output6.totalFieldCount
+  );
+  assert.equal(output6.providerFills.geometryHash, scenario.skeleton.geometryHash);
+  const output8 = scenario.output['08-output-backend_validation-result.json'];
+  assert.equal(output8.fillResolution.mode, 'DETERMINISTIC_WITH_FALLBACK');
+  assert.equal(output8.fillResolution.fallbackRequired, false);
+  assert.equal(output8.fillResolution.fallbackValidationOutcome, 'NOT_REQUIRED');
+  assert.equal(output8.aiUsage.calls.length, 2);
+  assert.equal(
+    output8.aiUsage.calls.some((call) => call.stage.includes('CALL_3')),
+    false
+  );
+});
+
+test('deterministic fills ignore ineligible ID-like tokens outside executable geometry', async (t) => {
+  const executablePlan = await loadFixture('02-generated-plan-three-day.txt');
+  const generatedPlanText = [
+    executablePlan,
+    '',
+    'Discarded non-executable SUPERSET B note:',
+    'Do not use exr_tricep-less?',
+  ].join('\n');
+  const scenario = await createScenario(t, {
+    deterministicFillsEnabled: true,
+    generatedPlanText,
+  });
+
+  assert.equal(scenario.result.valid, true, JSON.stringify(scenario.result.error));
+  assert.deepEqual(
+    scenario.calls.map((call) => call.stage),
+    ['CALL_1_PLAN_TEXT', 'CALL_2_STRUCTURE']
+  );
+  const completed = scenario.output['07-output-backend_completed-plan.json'];
+  const materializedIds = completed.workouts.flatMap((workout) =>
+    workout.blocks.flatMap((block) =>
+      block.exercises.map((exercise) => exercise.exerciseId)
+    )
+  );
+  assert.equal(materializedIds.includes('exr_tricep'), false);
+  assert.equal(JSON.stringify(completed).includes('exr_tricep-less?'), false);
+  assert.equal(
+    materializedIds.every((exerciseId) => scenario.eligibleLookup[exerciseId]),
+    true
+  );
+});
+
+test('deterministic fills still reject an executable exercise outside the eligible pool', async (t) => {
+  const executablePlan = await loadFixture('02-generated-plan-three-day.txt');
+  const generatedPlanText = executablePlan.replace(
+    'exr_incline_barbell_bench_press',
+    'exr_actually_ineligible'
+  );
+  const scenario = await createScenario(t, {
+    deterministicFillsEnabled: true,
+    generatedPlanText,
+  });
+
+  assert.equal(scenario.result.valid, false);
+  assert.equal(scenario.result.error.code, 'DETERMINISTIC_EXERCISE_ID_INELIGIBLE');
+  assert.equal(scenario.result.statuses.output6, 'ERROR');
+  assert.deepEqual(
+    scenario.calls.map((call) => call.stage),
+    ['CALL_1_PLAN_TEXT', 'CALL_2_STRUCTURE']
+  );
+});
+
+test('legacy full Call 3 still rejects ineligible ID-like tokens anywhere in source text', async (t) => {
+  const executablePlan = await loadFixture('02-generated-plan-three-day.txt');
+  const generatedPlanText = `${executablePlan}\n\nDiscarded note: exr_tricep-less?`;
+  const scenario = await createScenario(t, {
+    deterministicFillsEnabled: false,
+    generatedPlanText,
+  });
+
+  assert.equal(scenario.result.valid, false);
+  assert.equal(scenario.result.error.code, 'EXERCISE_ID_OUTSIDE_ELIGIBLE_POOL');
+  assert.equal(scenario.result.statuses.output6, 'ERROR');
+  assert.deepEqual(
+    scenario.calls.map((call) => call.stage),
+    ['CALL_1_PLAN_TEXT', 'CALL_2_STRUCTURE']
+  );
+});
+
 test('public progress stages follow real boundaries and callback failures are harmless', async (t) => {
   const stages = [];
   const scenario = await createScenario(t, {
@@ -745,7 +850,7 @@ test('the complete backend lookup remains independent from prompt serialization'
     runId: 'complete-lookup',
   });
   const exercise =
-    scenario.output['07-output-ai_completed-plan.json']
+    scenario.output['07-output-backend_completed-plan.json']
       .workouts[0].blocks[0].exercises[0];
 
   assert.equal(scenario.result.statuses.output7, 'PRODUCED');
@@ -773,7 +878,7 @@ test('an exercise ID outside the complete backend lookup is rejected', async (t)
     runId: 'outside-lookup',
   });
   const output7 =
-    scenario.output['07-output-ai_completed-plan.json'];
+    scenario.output['07-output-backend_completed-plan.json'];
 
   assert.equal(scenario.result.statuses.output7, 'ERROR');
   assert.equal(
@@ -811,7 +916,7 @@ test('Output 7 exposes only cleaned diagnostics for a call 3 provider error', as
     runId: 'provider-diagnostics',
   });
   const output7 =
-    scenario.output['07-output-ai_completed-plan.json'];
+    scenario.output['07-output-backend_completed-plan.json'];
   const serialized = JSON.stringify(output7);
 
   assert.equal(output7.status, 'ERROR');
@@ -863,7 +968,7 @@ test('Output 7 marks raw output unavailable when call 3 received no response', a
     runId: 'provider-timeout-diagnostics',
   });
   const diagnostics =
-    scenario.output['07-output-ai_completed-plan.json']
+    scenario.output['07-output-backend_completed-plan.json']
       .providerDiagnostics;
 
   assert.deepEqual(diagnostics, {

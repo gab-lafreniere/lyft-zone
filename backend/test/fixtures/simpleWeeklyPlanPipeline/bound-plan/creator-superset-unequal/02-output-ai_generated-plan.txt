@@ -1,0 +1,202 @@
+## Weekly structure
+2 sessions per week, both full-body biased but with chest and biceps emphasized.  
+To keep recovery high with only two training days, each session uses:
+- 5-minute light treadmill walk warm-up first
+- one primary chest press
+- one secondary chest isolation
+- one back movement for balance and shoulder health
+- one biceps movement, with extra biceps emphasis via exercise choice
+- limited lower-body work to maintain systemic balance without stealing recovery from the priorities
+
+I’m keeping the total workload productive but not excessive so the athlete can recover well and still push hard on each set.
+
+---
+
+# Weekly Training Plan
+
+## Session 1 — Chest emphasis + biceps support
+**Goal:** prioritize chest mechanical tension early, then add a second chest stimulus and direct biceps work.
+
+### Block 1 — CARDIO
+- **exerciseId:** exr_treadmill_walk  
+  **exercise:** Treadmill Walk  
+  **duration:** 5 minutes  
+  **target RIR:** N/A  
+  **tempo:** easy conversational pace  
+  **rest:** none  
+  **block:** CARDIO warm-up
+
+### Block 2 — SINGLE
+- **exerciseId:** exr_incline_dumbbell_press  
+  **exercise:** Incline Dumbbell Press  
+  **sets:** 4  
+  **repetitions:** 6–8  
+  **target RIR:** 2  
+  **tempo:** 3-0-1-0  
+  **rest:** 2–3 minutes  
+  **block:** SINGLE
+
+### Block 3 — SUPERSET
+- **exerciseId:** exr_cable_chest_fly  
+  **exercise:** Cable Chest Fly  
+  **sets:** 3  
+  **repetitions:** 10–15  
+  **target RIR:** 1–2  
+  **tempo:** 2-1-2-0  
+  **rest:** 60–75 seconds after the paired exercise  
+  **block:** SUPERSET A
+- **exerciseId:** exr_seated_cable_row  
+  **exercise:** Seated Cable Row  
+  **sets:** 2  
+  **repetitions:** 8–12  
+  **target RIR:** 2  
+  **tempo:** 2-1-2-0  
+  **rest:** 60–75 seconds after the paired exercise  
+  **block:** SUPERSET A
+
+### Block 4 — SINGLE
+- **exerciseId:** exr_bayesian_cable_curl  
+  **exercise:** Bayesian Cable Curl  
+  **sets:** 3  
+  **repetitions:** 10–12  
+  **target RIR:** 1–2  
+  **tempo:** 2-0-2-0  
+  **rest:** 75–90 seconds  
+  **block:** SINGLE
+
+### Block 5 — SUPERSET
+- **exerciseId:** exr_rear_delt_cable_row  
+  **exercise:** Rear Delt Cable Row  
+  **sets:** 2  
+  **repetitions:** 12–15  
+  **target RIR:** 2  
+  **tempo:** 2-1-2-0  
+  **rest:** 45–60 seconds after the paired exercise  
+  **block:** SUPERSET B
+- **exerciseId:** exr_standing_cable_leg_curl  
+  **exercise:** Standing Cable Leg Curl  
+  **sets:** 2  
+  **repetitions:** 12–15  
+  **target RIR:** 2  
+  **tempo:** 2-1-2-0  
+  **rest:** 45–60 seconds after the paired exercise  
+  **block:** SUPERSET B
+
+### Estimated duration
+- strictWorkoutSeconds:
+  - Warm-up cardio: 300
+  - Incline DB press: 4 sets × ~36 sec movement + 3 rests × 150 sec = 684
+  - Superset A: 3 rounds × [(fly 60 sec + row 48 sec) + 75 sec] = 549
+  - Bayesian curl: 3 sets × 48 sec + 2 rests × 85 sec = 351
+  - Superset B: 2 rounds × [(rear delt row 36 sec + leg curl 40 sec) + 55 sec] = 262
+  - **strictWorkoutSeconds = 2146**
+- strengthBlockCount = 4
+- **estimatedWorkoutSeconds = 2146 + 600 + 4×120 = 3226 sec**
+- **Estimated duration: 53.8 minutes**
+
+---
+
+## Session 2 — Chest second exposure + biceps priority
+**Goal:** slightly different pressing angle, more chest volume, and a second direct biceps slot with a different elbow-flexion emphasis.
+
+### Block 1 — CARDIO
+- **exerciseId:** exr_treadmill_walk  
+  **exercise:** Treadmill Walk  
+  **duration:** 5 minutes  
+  **target RIR:** N/A  
+  **tempo:** easy conversational pace  
+  **rest:** none  
+  **block:** CARDIO warm-up
+
+### Block 2 — SINGLE
+- **exerciseId:** exr_machine_chest_press  
+  **exercise:** Machine Chest Press  
+  **sets:** 4  
+  **repetitions:** 8–10  
+  **target RIR:** 1–2  
+  **tempo:** 2-0-2-0  
+  **rest:** 2 minutes  
+  **block:** SINGLE
+
+### Block 3 — SUPERSET
+- **exerciseId:** exr_low_to_high_cable_fly  
+  **exercise:** Low to High Cable Fly  
+  **sets:** 3  
+  **repetitions:** 12–15  
+  **target RIR:** 1–2  
+  **tempo:** 2-1-2-0  
+  **rest:** 60–75 seconds after the paired exercise  
+  **block:** SUPERSET C
+- **exerciseId:** exr_chest_supported_row_machine  
+  **exercise:** Chest Supported Row Machine  
+  **sets:** 3  
+  **repetitions:** 8–12  
+  **target RIR:** 2  
+  **tempo:** 2-1-2-0  
+  **rest:** 60–75 seconds after the paired exercise  
+  **block:** SUPERSET C
+
+### Block 4 — SINGLE
+- **exerciseId:** exr_preacher_curl_machine  
+  **exercise:** Preacher Curl Machine  
+  **sets:** 3  
+  **repetitions:** 8–12  
+  **target RIR:** 1–2  
+  **tempo:** 2-0-2-0  
+  **rest:** 75–90 seconds  
+  **block:** SINGLE
+
+### Block 5 — SINGLE
+- **exerciseId:** exr_dumbbell_split_squat  
+  **exercise:** Dumbbell Split Squat  
+  **sets:** 2  
+  **repetitions:** 8–10 each leg  
+  **target RIR:** 2  
+  **tempo:** 3-0-1-0  
+  **rest:** 90 seconds  
+  **block:** SINGLE
+
+### Block 6 — SUPERSET
+- **exerciseId:** exr_cable_lateral_raise  
+  **exercise:** Cable Lateral Raise  
+  **sets:** 2  
+  **repetitions:** 12–20  
+  **target RIR:** 2  
+  **tempo:** 2-1-2-0  
+  **rest:** 45–60 seconds after the paired exercise  
+  **block:** SUPERSET D
+- **exerciseId:** exr_bench_leg_raise  
+  **exercise:** Bench Leg Raise  
+  **sets:** 2  
+  **repetitions:** 12–15  
+  **target RIR:** 2  
+  **tempo:** 2-1-2-0  
+  **rest:** 45–60 seconds after the paired exercise  
+  **block:** SUPERSET D
+
+### Estimated duration
+- strictWorkoutSeconds:
+  - Warm-up cardio: 300
+  - Machine chest press: 4 sets × 40 sec + 3 rests × 120 sec = 640
+  - Superset C: 3 rounds × [(fly 60 sec + row 48 sec) + 75 sec] = 549
+  - Preacher curl machine: 3 sets × 40 sec + 2 rests × 85 sec = 335
+  - DB split squat: 2 sets × 50 sec + 1 rest × 90 sec = 190
+  - Superset D: 2 rounds × [(lat raise 48 sec + leg raise 36 sec) + 55 sec] = 278
+  - **strictWorkoutSeconds = 2292**
+- strengthBlockCount = 5
+- **estimatedWorkoutSeconds = 2292 + 600 + 5×120 = 3492 sec**
+- **Estimated duration: 58.2 minutes**
+
+---
+
+## Progression approach
+- Use a load that lands you at the prescribed RIR on every working set.
+- When you hit the top of the rep range for all sets with the target RIR, increase load next week by the smallest practical increment.
+- If performance drops, keep the load and add reps back first before loading up.
+- For unilateral lifts, progress both sides evenly and stop sets when the weaker side hits the target RIR.
+
+## Notes on execution
+- Keep presses controlled and consistent; chest is the priority, so avoid turning those sets into shoulder or triceps-dominant grinders.
+- Rows are included to keep the shoulders healthy and posture balanced without stealing focus.
+- Lower body volume is intentionally modest because weekly frequency is only 2x and chest/biceps need the best recovery budget.
+- If any machine is unavailable, swap to the closest matching allowed exercise with the same movement pattern and similar fatigue profile.

@@ -1,0 +1,57 @@
+{
+  "planName": "Weekly Training Plan",
+  "workout_1": {
+    "name": "Session 1 — Chest emphasis + biceps support",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 2
+      }
+    ]
+  },
+  "workout_2": {
+    "name": "Session 2 — Chest second exposure + biceps priority",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 2
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 2
+      }
+    ]
+  }
+}

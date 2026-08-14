@@ -317,7 +317,7 @@ test('artifact writer creates exactly eight canonical autonomous files with mode
     output3: 'prompt 2',
     output4: { schemaVersion: 1 },
     output5: { schemaVersion: 1, geometryHash: 'sha256:test' },
-    output6: 'prompt 3',
+    output6: { resolverVersion: 'test' },
     output7: { name: 'Plan', sessionsPerWeek: 1, workouts: [] },
     output8: { valid: true },
   };
@@ -339,8 +339,8 @@ test('artifact writer creates exactly eight canonical autonomous files with mode
     '03-input-ai_prompt-2.txt',
     '04-output-ai_extracted-structure.json',
     '05-output-backend_plan-skeleton.json',
-    '06-input-ai_prompt-3.txt',
-    '07-output-ai_completed-plan.json',
+    '06-output-backend_deterministic-fills.json',
+    '07-output-backend_completed-plan.json',
     '08-output-backend_validation-result.json',
   ]);
   for (const filename of names) {
@@ -405,4 +405,42 @@ test('artifact writer creates exactly eight canonical autonomous files with mode
     }),
     /Exactly outputs output1 through output8/
   );
+});
+
+test('artifact writer adds fallback sidecars only when supplied', async (t) => {
+  const temporaryRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'simple-weekly-plan-sidecars-')
+  );
+  t.after(async () => {
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  });
+  const outputs = {
+    output1: 'prompt',
+    output2: 'plan',
+    output3: 'prompt 2',
+    output4: { schemaVersion: 1 },
+    output5: { schemaVersion: 1 },
+    output6: { resolverVersion: 'v1' },
+    output7: { workouts: [] },
+    output8: { valid: true },
+  };
+  const written = await writeWeeklyPlanPipelineArtifacts({
+    outputs,
+    sidecars: {
+      output6b: { unresolved: [{ resolutionId: 'blockRests[0].value' }] },
+      output6c: { resolutions: [{ resolutionId: 'blockRests[0].value', value: 60 }] },
+    },
+    runId: 'sidecar-run',
+    baseDirectory: temporaryRoot,
+  });
+  const names = (await fs.readdir(written.runDirectory)).sort();
+  assert.equal(names.length, 10);
+  assert.ok(names.includes('06b-input-ai_fill-fallback.json'));
+  assert.ok(names.includes('06c-output-ai_fill-fallback.json'));
+  for (const filename of names) {
+    assert.equal(
+      (await fs.stat(path.join(written.runDirectory, filename))).mode & 0o777,
+      0o600
+    );
+  }
 });

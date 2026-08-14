@@ -1,0 +1,49 @@
+{
+  "planName": "Weekly Split",
+  "workout_1": {
+    "name": "Chest Emphasis + Biceps",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 2
+      }
+    ]
+  },
+  "workout_2": {
+    "name": "Chest Emphasis + Back Balance + Biceps",
+    "blocks": [
+      {
+        "type": "CARDIO",
+        "setCount": 1
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 4
+      },
+      {
+        "type": "SINGLE",
+        "setCount": 3
+      },
+      {
+        "type": "SUPERSET",
+        "setCount": 3
+      }
+    ]
+  }
+}

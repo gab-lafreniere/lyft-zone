@@ -2,6 +2,11 @@ const OpenAI = require('openai');
 const { getOpenAIClient } = require('../src/ai/openaiClient');
 
 const SIMPLE_WEEKLY_PLAN_AI_DEFAULTS = Object.freeze({
+  deterministicFillsEnabled: true,
+  // Migration flags. GEOMETRY_ONLY keeps the current production path byte for byte and
+  // remains the rollback target for the BoundPlan work.
+  extractionMode: 'GEOMETRY_ONLY',
+  recoveryLevel: 'OFF',
   models: {
     call1: 'gpt-5.4-mini',
     call2: 'gpt-4.1-mini',
@@ -9,12 +14,16 @@ const SIMPLE_WEEKLY_PLAN_AI_DEFAULTS = Object.freeze({
   },
   timeouts: {
     call1: 120000,
-    call2: 60000,
+    // A BoundPlan bind emits thousands of tokens where the geometry-only extractor
+    // emitted ~150, so a six-day plan can take well over half a minute.
+    call2: 90000,
     call3: 120000,
   },
   maxOutputTokens: {
     call1: 16000,
-    call2: 3000,
+    // A BoundPlan carries every bound value, so a six-day plan needs roughly 4,000
+    // output tokens where the geometry-only structure needed ~150 (product decision D8).
+    call2: 8000,
     call3: 24000,
   },
 });
@@ -163,10 +172,36 @@ function resolvePositiveInteger(value, fallback) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function resolveBoolean(value, fallback) {
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
 function resolveString(value, fallback) {
   return typeof value === 'string' && value.trim()
     ? value.trim()
     : fallback;
+}
+
+// A misconfigured pipeline mode must never resolve silently. Falling back to the
+// default on a typo such as BOUNDPLAN would route production through the legacy path
+// while operators believed the new one was live.
+function resolveEnum(value, allowed, fallback, variableName) {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return fallback;
+  }
+  const normalized = raw.toUpperCase();
+  if (!allowed.includes(normalized)) {
+    throw new SimpleWeeklyPlanProviderError(
+      'INVALID_PIPELINE_CONFIGURATION',
+      `${variableName} must be one of ${allowed.join(', ')}; received "${raw}"`
+    );
+  }
+  return normalized;
 }
 
 function normalizeUsageToken(value) {
@@ -189,6 +224,23 @@ function normalizeResponseUsage(usage) {
 
 function resolveSimpleWeeklyPlanAiConfig(env = process.env, overrides = {}) {
   return {
+    deterministicFillsEnabled: resolveBoolean(
+      overrides.deterministicFillsEnabled ??
+        env.SIMPLE_WEEKLY_PLAN_DETERMINISTIC_FILLS_ENABLED,
+      SIMPLE_WEEKLY_PLAN_AI_DEFAULTS.deterministicFillsEnabled
+    ),
+    extractionMode: resolveEnum(
+      overrides.extractionMode || env.SIMPLE_WEEKLY_PLAN_EXTRACTION_MODE,
+      ['GEOMETRY_ONLY', 'BOUND_PLAN'],
+      SIMPLE_WEEKLY_PLAN_AI_DEFAULTS.extractionMode,
+      'SIMPLE_WEEKLY_PLAN_EXTRACTION_MODE'
+    ),
+    recoveryLevel: resolveEnum(
+      overrides.recoveryLevel || env.SIMPLE_WEEKLY_PLAN_RECOVERY_LEVEL,
+      ['OFF', 'BINDER_ONLY', 'FULL'],
+      SIMPLE_WEEKLY_PLAN_AI_DEFAULTS.recoveryLevel,
+      'SIMPLE_WEEKLY_PLAN_RECOVERY_LEVEL'
+    ),
     models: {
       call1: resolveString(
         overrides.models?.call1 ||
