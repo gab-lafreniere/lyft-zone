@@ -2,6 +2,7 @@ const { Prisma } = require('@prisma/client');
 const { getPrisma } = require('../lib/prisma');
 const { ApiError } = require('./usersService');
 const {
+  regenerateScheduledSessionsForPublishedCycle,
   synchronizeScheduledSessionsForPublishedCycle,
 } = require('./scheduledSessionsService');
 const { validateAndNormalizeCardioBlocks } = require('./cardioPrescription');
@@ -3293,7 +3294,14 @@ async function openOrCreateCycleEditDraft(cycleId, payload = {}) {
             } else {
 
               try {
-                draftPlan = await tx.plan.create({
+                // The plan shell is created first and the weeks are appended by level.
+                // A single deeply-nested create emits roughly one INSERT per row, which
+                // for a six-day six-week cycle is ~1.7k round trips and overruns the
+                // transaction budget; the rollback then surfaces as a foreign-key error
+                // on whichever child insert was still in flight. appendPlanWeeks batches
+                // each level with createManyAndReturn instead, which is the same path
+                // createCycleFromWeeklyPlan already uses.
+                const draftShell = await tx.plan.create({
                   data: {
                     trainingCycleId: cycle.id,
                     parentPlanId: publishedPlan.id,
@@ -3302,12 +3310,13 @@ async function openOrCreateCycleEditDraft(cycleId, payload = {}) {
                     sourceType: publishedPlan.sourceType || 'USER',
                     status: 'DRAFT',
                     ...buildPlanTimelineWrite(canonicalTimeline),
-                    weeks: {
-                      create: buildPlanCreateWeeksInput(sourceDocument.weeks),
-                    },
                   },
-                  include: fullPlanInclude,
                 });
+                draftPlan = await appendPlanWeeks(
+                  tx,
+                  draftShell.id,
+                  sourceDocument.weeks
+                );
               } catch (error) {
                 if (error.code === 'P2002') {
                   // quelqu’un a créé le draft juste avant nous → on le récupère
@@ -3771,7 +3780,9 @@ async function publishCycleDraft(cycleId, payload = {}) {
 
         const nextVersion = Math.max(...cycle.plans.map((plan) => plan.versionNumber)) + 1;
         phase = 'create_published_plan';
-        const newPublishedPlan = await tx.plan.create({
+        // Same batched clone as the edit-draft path: a nested per-row create overruns
+        // the transaction budget on large cycles and fails as a foreign-key violation.
+        const publishedShell = await tx.plan.create({
           data: {
             trainingCycleId: cycle.id,
             parentPlanId: draftPlan.id,
@@ -3781,12 +3792,13 @@ async function publishCycleDraft(cycleId, payload = {}) {
             status: 'PUBLISHED',
             ...buildPlanTimelineWrite(draftTimeline),
             publishedAt: new Date(),
-            weeks: {
-              create: buildPlanCreateWeeksInput(sourceDocument.weeks),
-            },
           },
-          include: fullPlanInclude,
         });
+        const newPublishedPlan = await appendPlanWeeks(
+          tx,
+          publishedShell.id,
+          sourceDocument.weeks
+        );
 
         phase = 'update_cycle_canonical_state';
         const updatedCycle = await tx.trainingCycle.update({
