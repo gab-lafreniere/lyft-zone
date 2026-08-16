@@ -30,7 +30,17 @@ function getLocalTimezone() {
 }
 
 async function readJsonResponse(response) {
-  const json = await response.json();
+  // Not every failure carries a JSON body. body-parser rejections and proxy/gateway
+  // errors answer with HTML, and parsing those unconditionally threw a SyntaxError that
+  // discarded the status and code, leaving callers with an unclassifiable failure.
+  let json = null;
+  let parseFailed = false;
+
+  try {
+    json = await response.json();
+  } catch {
+    parseFailed = true;
+  }
 
   if (!response.ok) {
     const error = new Error(
@@ -40,6 +50,15 @@ async function readJsonResponse(response) {
     );
     error.code = json?.error?.code || json?.code || null;
     error.details = json?.error?.details || null;
+    error.status = response.status;
+    throw error;
+  }
+
+  if (parseFailed) {
+    // A successful status with an unreadable body is still a failure, but it must not
+    // masquerade as a payload.
+    const error = new Error(`Malformed response body (status ${response.status})`);
+    error.code = 'MALFORMED_RESPONSE';
     error.status = response.status;
     throw error;
   }

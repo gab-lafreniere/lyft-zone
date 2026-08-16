@@ -54,9 +54,43 @@ const corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
+// Builder saves send the whole plan document so the backend can diff it against the
+// stored draft. A six-week, six-day cycle serializes to ~380 KB, which silently exceeded
+// body-parser's 100 KB default and was rejected before routing. The limit is explicit so
+// it cannot drift back to the default, and generous enough for longer cycles without
+// being unbounded.
+const REQUEST_BODY_LIMIT = '2mb';
+
 app.use(cors(corsOptions));
-app.use(express.json()); // Parse JSON request bodies
-app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
+app.use(express.json({ limit: REQUEST_BODY_LIMIT })); // Parse JSON request bodies
+app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT })); // Parse URL-encoded bodies
+
+// body-parser rejects an oversized body before any route runs, so without this the
+// default Express handler answers with HTML. Clients parse every failure as JSON, so an
+// HTML body turned a precise 413 into an opaque SyntaxError with no status.
+// Registered directly after the parsers: it sees their errors and leaves everything else
+// to the existing per-controller handling.
+app.use((error, req, res, next) => {
+  if (!error) {
+    return next();
+  }
+
+  const isPayloadTooLarge =
+    error.type === 'entity.too.large' ||
+    error.status === 413 ||
+    error.statusCode === 413;
+
+  if (!isPayloadTooLarge) {
+    return next(error);
+  }
+
+  return res.status(413).json({
+    error: {
+      code: 'PAYLOAD_TOO_LARGE',
+      message: 'Request body is too large.',
+    },
+  });
+});
 
 app.use('/health', healthRoutes);
 app.use('/api/exercises', exercisesRouter);
@@ -86,6 +120,12 @@ const startServer = async () => {
   }
 };
 
-startServer();
+// Only boot when run directly, so tests can mount the real app without opening a port
+// or touching the database.
+if (require.main === module) {
+  startServer();
+}
 
 module.exports = app;
+module.exports.app = app;
+module.exports.REQUEST_BODY_LIMIT = REQUEST_BODY_LIMIT;

@@ -6,6 +6,7 @@ import {
   fetchUserExercisePoolResponse,
   getAIWeeklyPlanGenerationProgress,
   getOnboardingCycleConflicts,
+  updateCycleDraft,
   updateTrainingProfileAvailability,
   updateUserOnboarding,
   updateUserProfile,
@@ -425,5 +426,74 @@ describe("updateUserOnboarding", () => {
       body: JSON.stringify({ action: "ADVANCE", lastCompletedStep: 2 }),
     });
     expect(result).toBe(responseBody);
+  });
+});
+
+// readJsonResponse previously called response.json() unconditionally. A body-parser 413
+// (or any proxy error) answers with HTML, so parsing threw a SyntaxError that discarded
+// the HTTP status and error code and left callers unable to classify the failure.
+describe("readJsonResponse error handling", () => {
+  beforeEach(() => {
+    global.fetch = jest.fn();
+    window.localStorage.setItem("lyftZoneUserId", "user_test");
+  });
+
+  afterEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("preserves the HTTP status when an error response is not JSON", async () => {
+    global.fetch.mockResolvedValue({
+      ok: false,
+      status: 413,
+      json: async () => {
+        throw new SyntaxError("Unexpected token < in JSON at position 0");
+      },
+    });
+
+    await expect(
+      updateCycleDraft("cycle_1", "plan_1", { name: "x", weeks: [] })
+    ).rejects.toMatchObject({
+      status: 413,
+      message: "API error 413",
+    });
+  });
+
+  test("surfaces a structured JSON error body when the backend provides one", async () => {
+    global.fetch.mockResolvedValue({
+      ok: false,
+      status: 413,
+      json: async () => ({
+        error: {
+          code: "PAYLOAD_TOO_LARGE",
+          message: "Request body is too large.",
+        },
+      }),
+    });
+
+    await expect(
+      updateCycleDraft("cycle_1", "plan_1", { name: "x", weeks: [] })
+    ).rejects.toMatchObject({
+      status: 413,
+      code: "PAYLOAD_TOO_LARGE",
+      message: "Request body is too large.",
+    });
+  });
+
+  test("does not swallow an unreadable body behind a successful status", async () => {
+    global.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError("Unexpected end of JSON input");
+      },
+    });
+
+    await expect(
+      updateCycleDraft("cycle_1", "plan_1", { name: "x", weeks: [] })
+    ).rejects.toMatchObject({
+      status: 200,
+      code: "MALFORMED_RESPONSE",
+    });
   });
 });
