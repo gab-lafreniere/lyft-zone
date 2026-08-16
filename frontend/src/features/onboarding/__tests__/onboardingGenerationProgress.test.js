@@ -22,8 +22,8 @@ test("real stages use the recalibrated pipeline bounds", () => {
     expect.objectContaining({
       PROFILE_SETUP: expect.objectContaining({ floor: 2, ceiling: 8 }),
       DESIGNING_PROGRAM: expect.objectContaining({ floor: 8, ceiling: 25 }),
-      EXTRACTING_STRUCTURE: expect.objectContaining({ floor: 25, ceiling: 35 }),
-      BUILDING_PROGRAM: expect.objectContaining({ floor: 35, ceiling: 90 }),
+      EXTRACTING_STRUCTURE: expect.objectContaining({ floor: 25, ceiling: 75 }),
+      BUILDING_PROGRAM: expect.objectContaining({ floor: 75, ceiling: 90 }),
       VALIDATING_PROGRAM: expect.objectContaining({ floor: 90, ceiling: 93 }),
       SAVING_PROGRAM: expect.objectContaining({ floor: 93, ceiling: 94 }),
     })
@@ -73,9 +73,9 @@ test("small-program passive BUILDING interpolation is 2.5x the large base rate",
   }).pacingMultiplier;
 
   expect(getStageInterpolationMs("BUILDING_PROGRAM", smallMultiplier))
-    .toBe(26000);
+    .toBe(3200);
   expect(getStageInterpolationMs("BUILDING_PROGRAM", largeMultiplier))
-    .toBe(65000);
+    .toBe(8000);
 
   const commonInput = {
     phase: "generating",
@@ -83,11 +83,11 @@ test("small-program passive BUILDING interpolation is 2.5x the large base rate",
     displayStage: "BUILDING_PROGRAM",
     stageElapsedMs: 10000,
   };
-  const smallTarget = resolveProgressTarget(35, {
+  const smallTarget = resolveProgressTarget(75, {
     ...commonInput,
     pacingMultiplier: smallMultiplier,
   });
-  const largeTarget = resolveProgressTarget(35, {
+  const largeTarget = resolveProgressTarget(75, {
     ...commonInput,
     pacingMultiplier: largeMultiplier,
   });
@@ -281,8 +281,10 @@ test("BUILDING_PROGRAM messages scale with workout count and loop gracefully", (
   ).toEqual(fiveWorkoutMessages[0]);
 });
 
-test("fallback pacing remains in the long fill phase until real backend progress arrives", () => {
+test("fallback pacing holds the long structuring phase until real backend progress arrives", () => {
+  // Without backend stages the loader must keep moving inside a stage it can justify,
+  // rather than advancing blind into a later one.
   expect(
     getProgressBounds({ phase: "generating", elapsedMs: 240000 })
-  ).toEqual(expect.objectContaining({ floor: 35, ceiling: 90 }));
+  ).toEqual(expect.objectContaining({ floor: 25, ceiling: 75 }));
 });

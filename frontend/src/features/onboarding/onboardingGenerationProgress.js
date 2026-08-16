@@ -24,6 +24,9 @@ const DESIGN_MESSAGES = [
   },
 ];
 
+// This stage covers the whole structuring pass, which is the longest and most variable
+// part of a generation. Two messages rotating every 5s read as a stuck loop on a long
+// run, so the list is long enough to keep moving without describing internal mechanics.
 const STRUCTURE_MESSAGES = [
   {
     title: "Structuring Your Workouts",
@@ -32,6 +35,26 @@ const STRUCTURE_MESSAGES = [
   {
     title: "Building the Workout Framework",
     description: "Creating the validated structure for every session.",
+  },
+  {
+    title: "Organizing Training Blocks",
+    description: "Grouping exercises into singles and supersets.",
+  },
+  {
+    title: "Confirming Exercise Selections",
+    description: "Matching every movement to your available equipment.",
+  },
+  {
+    title: "Aligning Set Structure",
+    description: "Checking set counts across each block.",
+  },
+  {
+    title: "Reviewing Session Balance",
+    description: "Comparing volume across your training week.",
+  },
+  {
+    title: "Finalizing Workout Structure",
+    description: "Locking in the shape of every session.",
   },
 ];
 
@@ -61,11 +84,25 @@ const SAVING_MESSAGES = [
   },
 ];
 
+// Ranges and interpolation constants are sized from measured backend stage durations
+// rather than from equal visual weight.
+//
+// EXTRACTING_STRUCTURE absorbs the entire structuring pass, so it is by far the longest
+// and most variable stage: it runs ~25s on a clean generation and can exceed 90s when
+// the backend needs additional passes. It previously held only 10 points with a 9s
+// interpolation, so its curve flattened after ~30s and the bar sat effectively still for
+// the rest of the stage. It now holds the widest band with an interpolation matched to
+// the long case, so it keeps moving perceptibly throughout.
+//
+// BUILDING_PROGRAM is deterministic backend work and finishes in a few seconds. Its old
+// 55-point / 65s budget meant it never approached its ceiling, and the next stage's floor
+// then yanked the bar ~50 points in about a second. It now holds a band it can actually
+// traverse, which removes the jump.
 export const STAGE_PROGRESS = {
   PROFILE_SETUP: { floor: 2, ceiling: 8, interpolationMs: 1800 },
   DESIGNING_PROGRAM: { floor: 8, ceiling: 25, interpolationMs: 16000 },
-  EXTRACTING_STRUCTURE: { floor: 25, ceiling: 35, interpolationMs: 9000 },
-  BUILDING_PROGRAM: { floor: 35, ceiling: 90, interpolationMs: 65000 },
+  EXTRACTING_STRUCTURE: { floor: 25, ceiling: 75, interpolationMs: 55000 },
+  BUILDING_PROGRAM: { floor: 75, ceiling: 90, interpolationMs: 8000 },
   VALIDATING_PROGRAM: { floor: 90, ceiling: 93, interpolationMs: 4000 },
   SAVING_PROGRAM: { floor: 93, ceiling: 94, interpolationMs: 2500 },
 };
@@ -92,11 +129,15 @@ const EARLY_PROGRESS_MINIMUM_MULTIPLIER = 2.5;
 const FINAL_MILESTONE_SPEED_BOOST = 10;
 const MAX_ELAPSED_STEP_MS = 64;
 
+// Used only when backend progress never arrives. It stops at EXTRACTING_STRUCTURE
+// because that stage now owns the widest band and a 55s interpolation: it keeps the bar
+// moving for as long as the generation runs without ever claiming a later stage the
+// backend has not confirmed. Advancing blind to BUILDING_PROGRAM would jump the bar to
+// its 75% floor on a run whose real progress is unknown.
 const FALLBACK_STAGES = [
   [0, "PROFILE_SETUP"],
   [1500, "DESIGNING_PROGRAM"],
   [23000, "EXTRACTING_STRUCTURE"],
-  [35000, "BUILDING_PROGRAM"],
 ];
 
 const STATIC_MESSAGES_BY_STAGE = {

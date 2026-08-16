@@ -90,9 +90,20 @@ test("BUILDING_PROGRAM rotates workout-aware messages every five seconds", async
     expect(screen.getByTestId("display-stage")).not.toHaveTextContent(
       "BUILDING_PROGRAM"
     );
-    act(() => {
-      jest.advanceTimersByTime(3500);
-    });
+    // BUILDING_PROGRAM now begins at 75%, so the bar needs a longer catch-up before the
+    // display stage may advance to it. Step until it flips rather than hard-coding the
+    // duration, so the assertion tracks the stage change itself and not the pacing
+    // constants — a single long advance would also consume message-rotation time.
+    for (let step = 0; step < 60; step += 1) {
+      if (
+        screen.getByTestId("display-stage").textContent === "BUILDING_PROGRAM"
+      ) {
+        break;
+      }
+      act(() => {
+        jest.advanceTimersByTime(250);
+      });
+    }
     expect(screen.getByTestId("display-stage")).toHaveTextContent(
       "BUILDING_PROGRAM"
     );
@@ -137,7 +148,7 @@ test("a backend stage update changes only the target and catches up without visi
     expect(firstVisual).toBeGreaterThan(0);
     expect(firstVisual).toBeLessThanOrEqual(1);
     expect(Number(screen.getByTestId("target-percent").textContent))
-      .toBeGreaterThanOrEqual(35);
+      .toBeGreaterThanOrEqual(75);
     expect(screen.getByTestId("display-stage")).toHaveTextContent(
       "PROFILE_SETUP"
     );
@@ -155,7 +166,7 @@ test("a backend stage update changes only the target and catches up without visi
       previous = current;
     }
     act(() => {
-      jest.advanceTimersByTime(5000);
+      jest.advanceTimersByTime(9000);
     });
     expect(screen.getByTestId("display-stage")).toHaveTextContent(
       "BUILDING_PROGRAM"
