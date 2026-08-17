@@ -12,6 +12,13 @@ const {
   normalizeNullableString,
 } = require('../utils/normalizers');
 const {
+  compareByIndex,
+  normalizeWorkoutForPersistence,
+  buildIdentityConflictError,
+  diffWorkoutList,
+  applyWorkoutFinalState,
+} = require('./draftDocumentDiff');
+const {
   DEFAULT_TIMEZONE,
   addDays,
   compareDateKeys,
@@ -1359,114 +1366,6 @@ async function normalizeSingleDraft(tx, cycleId, include = fullPlanInclude) {
   return latestDraft;
 }
 
-function compareByIndex(primaryKey, secondaryKey = null) {
-  return (left, right) => {
-    const primaryDelta = Number(left?.[primaryKey] || 0) - Number(right?.[primaryKey] || 0);
-    if (primaryDelta !== 0) {
-      return primaryDelta;
-    }
-
-    if (!secondaryKey) {
-      return 0;
-    }
-
-    return Number(left?.[secondaryKey] || 0) - Number(right?.[secondaryKey] || 0);
-  };
-}
-
-function normalizeSetTemplateForPersistence(setTemplate = {}, setIndex, options = {}) {
-  const normalized = {
-    setIndex,
-    setType: setTemplate.setType || 'WORKING',
-    targetReps: normalizeNullableInteger(setTemplate.targetReps),
-    minReps: normalizeNullableInteger(setTemplate.minReps),
-    maxReps: normalizeNullableInteger(setTemplate.maxReps),
-    targetSeconds: normalizeNullableInteger(setTemplate.targetSeconds),
-    targetRir: normalizeNullableNumber(setTemplate.targetRir),
-    targetRpe: normalizeNullableNumber(setTemplate.targetRpe),
-    tempo: normalizeOptionalString(setTemplate.tempo),
-    restSeconds: normalizeNullableInteger(setTemplate.restSeconds),
-    notes: normalizeOptionalString(setTemplate.notes),
-  };
-
-  if (options.includeIds) {
-    normalized.id = normalizeOptionalString(setTemplate.id);
-  }
-
-  return normalized;
-}
-
-function normalizeExerciseForPersistence(exercise = {}, orderIndex, options = {}) {
-  const normalized = {
-    orderIndex,
-    exerciseId: normalizeOptionalString(exercise.exerciseId),
-    executionNotes: normalizeOptionalString(exercise.executionNotes),
-    defaultTempo: normalizeOptionalString(exercise.defaultTempo),
-    defaultRestSeconds: normalizeNullableInteger(exercise.defaultRestSeconds),
-    defaultTargetRir: normalizeNullableNumber(exercise.defaultTargetRir),
-    defaultTargetRpe: normalizeNullableNumber(exercise.defaultTargetRpe),
-    intensificationMethod: exercise.intensificationMethod || 'NONE',
-    cardioPrescription: exercise.cardioPrescription ?? null,
-    notes: normalizeOptionalString(exercise.notes),
-    setTemplates: (Array.isArray(exercise.setTemplates) ? exercise.setTemplates : [])
-      .slice()
-      .sort(compareByIndex('setIndex'))
-      .map((setTemplate, index) =>
-        normalizeSetTemplateForPersistence(setTemplate, index + 1, options)
-      ),
-  };
-
-  if (options.includeIds) {
-    normalized.id = normalizeOptionalString(exercise.id);
-  }
-
-  return normalized;
-}
-
-function normalizeBlockForPersistence(block = {}, orderIndex, options = {}) {
-  const normalized = {
-    orderIndex,
-    blockType: block.blockType,
-    label: normalizeOptionalString(block.label),
-    roundCount: normalizeNullableInteger(block.roundCount),
-    restStrategy: block.restStrategy || null,
-    restSeconds: normalizeNullableInteger(block.restSeconds),
-    notes: normalizeOptionalString(block.notes),
-    exercises: (Array.isArray(block.exercises) ? block.exercises : [])
-      .slice()
-      .sort(compareByIndex('orderIndex'))
-      .map((exercise, index) =>
-        normalizeExerciseForPersistence(exercise, index + 1, options)
-      ),
-  };
-
-  if (options.includeIds) {
-    normalized.id = normalizeOptionalString(block.id);
-  }
-
-  return normalized;
-}
-
-function normalizeWorkoutForPersistence(workout = {}, orderIndex, options = {}) {
-  const normalized = {
-    name: String(workout.name || '').trim(),
-    orderIndex,
-    scheduledDay: workout.scheduledDay || null,
-    estimatedDurationMinutes: normalizeNullableInteger(workout.estimatedDurationMinutes),
-    notes: normalizeOptionalString(workout.notes),
-    blocks: (Array.isArray(workout.blocks) ? workout.blocks : [])
-      .slice()
-      .sort(compareByIndex('orderIndex'))
-      .map((block, index) => normalizeBlockForPersistence(block, index + 1, options)),
-  };
-
-  if (options.includeIds) {
-    normalized.id = normalizeOptionalString(workout.id);
-  }
-
-  return normalized;
-}
-
 function normalizeWeekForPersistence(week = {}, weekNumber, orderIndex, options = {}) {
   const normalized = {
     weekNumber,
@@ -1579,55 +1478,6 @@ function normalizeWeekScalarFields(week) {
     label: week.label || null,
     notes: week.notes || null,
   });
-}
-
-function normalizeWorkoutScalarFields(workout) {
-  return JSON.stringify({
-    name: workout.name,
-    orderIndex: workout.orderIndex,
-    scheduledDay: workout.scheduledDay || null,
-    estimatedDurationMinutes: normalizeNullableInteger(workout.estimatedDurationMinutes),
-    notes: workout.notes || null,
-  });
-}
-
-function normalizeWorkoutBlockFields(workout) {
-  return JSON.stringify(
-    (Array.isArray(workout.blocks) ? workout.blocks : []).map((block) => ({
-      orderIndex: block.orderIndex,
-      blockType: block.blockType,
-      label: block.label || null,
-      roundCount: normalizeNullableInteger(block.roundCount),
-      restStrategy: block.restStrategy || null,
-      restSeconds: normalizeNullableInteger(block.restSeconds),
-      notes: block.notes || null,
-      exercises: (Array.isArray(block.exercises) ? block.exercises : []).map((exercise) => ({
-        orderIndex: exercise.orderIndex,
-        exerciseId: exercise.exerciseId || null,
-        executionNotes: exercise.executionNotes || null,
-        defaultTempo: exercise.defaultTempo || null,
-        defaultRestSeconds: normalizeNullableInteger(exercise.defaultRestSeconds),
-        defaultTargetRir: normalizeNullableNumber(exercise.defaultTargetRir),
-        defaultTargetRpe: normalizeNullableNumber(exercise.defaultTargetRpe),
-        intensificationMethod: exercise.intensificationMethod || 'NONE',
-        cardioPrescription: exercise.cardioPrescription || null,
-        notes: exercise.notes || null,
-        setTemplates: (Array.isArray(exercise.setTemplates) ? exercise.setTemplates : []).map((setTemplate) => ({
-          setIndex: setTemplate.setIndex,
-          setType: setTemplate.setType || 'WORKING',
-          targetReps: normalizeNullableInteger(setTemplate.targetReps),
-          minReps: normalizeNullableInteger(setTemplate.minReps),
-          maxReps: normalizeNullableInteger(setTemplate.maxReps),
-          targetSeconds: normalizeNullableInteger(setTemplate.targetSeconds),
-          targetRir: normalizeNullableNumber(setTemplate.targetRir),
-          targetRpe: normalizeNullableNumber(setTemplate.targetRpe),
-          tempo: setTemplate.tempo || null,
-          restSeconds: normalizeNullableInteger(setTemplate.restSeconds),
-          notes: setTemplate.notes || null,
-        })),
-      })),
-    }))
-  );
 }
 
 function buildCreatedGraphKey(parentId, orderIndex) {
@@ -1815,14 +1665,6 @@ function clonePlanDocument(plan) {
   };
 }
 
-function buildIdentityConflictError(level, descriptor) {
-  return new ApiError(
-    400,
-    'VALIDATION_ERROR',
-    `Ambiguous ${level} identity in cycle draft payload for ${descriptor}`
-  );
-}
-
 function matchIncomingWeeks(existingWeeks = [], incomingWeeks = []) {
   const existingById = new Map(existingWeeks.map((week) => [week.id, week]));
   const existingByWeekNumber = new Map(existingWeeks.map((week) => [week.weekNumber, week]));
@@ -1872,112 +1714,24 @@ function matchIncomingWeeks(existingWeeks = [], incomingWeeks = []) {
   return { pairs, creates, deletes };
 }
 
-function matchIncomingWorkouts(existingWorkouts = [], incomingWorkouts = [], weekNumber) {
-  const existingById = new Map(existingWorkouts.map((workout) => [workout.id, workout]));
-  const existingByOrderIndex = new Map(
-    existingWorkouts.map((workout) => [workout.orderIndex, workout])
-  );
-  const matchedExistingIds = new Set();
-  const pairs = [];
-  const creates = [];
-  const missingIdWorkouts = [];
-
-  incomingWorkouts.forEach((workout) => {
-    if (workout.id) {
-      const matched = existingById.get(workout.id) || null;
-      const fallbackMatch = existingByOrderIndex.get(workout.orderIndex) || null;
-
-      if (matched) {
-        matchedExistingIds.add(matched.id);
-        pairs.push({ existingWorkout: matched, incomingWorkout: workout });
-      } else if (fallbackMatch && !matchedExistingIds.has(fallbackMatch.id)) {
-        matchedExistingIds.add(fallbackMatch.id);
-        pairs.push({ existingWorkout: fallbackMatch, incomingWorkout: workout });
-      } else {
-        creates.push(workout);
-      }
-
-      return;
-    }
-
-    missingIdWorkouts.push(workout);
-  });
-
-  missingIdWorkouts.forEach((workout) => {
-    const fallbackMatch = existingByOrderIndex.get(workout.orderIndex) || null;
-
-    if (fallbackMatch && matchedExistingIds.has(fallbackMatch.id)) {
-      throw buildIdentityConflictError(
-        'workout',
-        `week ${weekNumber}, orderIndex ${workout.orderIndex}`
-      );
-    }
-
-    if (fallbackMatch) {
-      matchedExistingIds.add(fallbackMatch.id);
-      pairs.push({ existingWorkout: fallbackMatch, incomingWorkout: workout });
-      return;
-    }
-
-    creates.push(workout);
-  });
-
-  const deletes = existingWorkouts.filter((workout) => !matchedExistingIds.has(workout.id));
-  return { pairs, creates, deletes };
-}
-
 function diffCycleDraft(currentDraftDocument, incomingDocument) {
   const normalizedCurrent = normalizeCycleDocumentForPersistence(currentDraftDocument, { includeIds: true });
   const normalizedIncoming = normalizeCycleDocumentForPersistence(incomingDocument, { includeIds: true });
   const weekMatches = matchIncomingWeeks(normalizedCurrent.weeks, normalizedIncoming.weeks);
 
   const weekUpdates = weekMatches.pairs.map(({ existingWeek, incomingWeek }) => {
-    const workoutMatches = matchIncomingWorkouts(
+    const workoutDiff = diffWorkoutList(
       existingWeek.workouts,
       incomingWeek.workouts,
-      incomingWeek.weekNumber
+      `week ${incomingWeek.weekNumber}`
     );
-    const matchedWorkoutIds = new Set(
-      workoutMatches.pairs.map(({ existingWorkout }) => existingWorkout.id)
-    );
-    const finalWorkoutOrder = incomingWeek.workouts.map((workout) => {
-      const matchedPair = workoutMatches.pairs.find(
-        ({ incomingWorkout }) => incomingWorkout === workout
-      );
-      return {
-        incomingWorkout: workout,
-        existingWorkout: matchedPair?.existingWorkout || null,
-        isNew: !matchedPair,
-      };
-    });
-    const reorderedExistingWorkouts = finalWorkoutOrder
-      .filter((entry) => entry.existingWorkout)
-      .map((entry) => entry.existingWorkout.id);
-    const originalExistingWorkouts = existingWeek.workouts
-      .filter((workout) => matchedWorkoutIds.has(workout.id))
-      .map((workout) => workout.id);
 
     return {
       existingWeek,
       incomingWeek,
       scalarChanged:
         normalizeWeekScalarFields(existingWeek) !== normalizeWeekScalarFields(incomingWeek),
-      workoutCreates: workoutMatches.creates,
-      workoutDeletes: workoutMatches.deletes,
-      workoutUpdates: workoutMatches.pairs.map(({ existingWorkout, incomingWorkout }) => ({
-        existingWorkout,
-        incomingWorkout,
-        scalarChanged:
-          normalizeWorkoutScalarFields(existingWorkout) !==
-          normalizeWorkoutScalarFields(incomingWorkout),
-        blockChanged:
-          normalizeWorkoutBlockFields(existingWorkout) !==
-          normalizeWorkoutBlockFields(incomingWorkout),
-      })),
-      finalWorkoutOrder,
-      reorderChanged:
-        originalExistingWorkouts.length !== reorderedExistingWorkouts.length ||
-        originalExistingWorkouts.some((workoutId, index) => workoutId !== reorderedExistingWorkouts[index]),
+      ...workoutDiff,
     };
   });
 
@@ -2065,62 +1819,41 @@ async function moveExistingWorkoutsToSentinelOrder(tx, workouts = []) {
   }
 }
 
-async function applyWorkoutFinalState(
-  tx,
-  planWeekId,
-  finalWorkoutOrder = [],
-  workoutUpdates = [],
-  options = {}
-) {
-  const forceOrderReset = Boolean(options.forceOrderReset);
-  const workoutUpdatesById = new Map(
-    workoutUpdates.map((entry) => [entry.existingWorkout.id, entry])
-  );
-
-  for (let index = 0; index < finalWorkoutOrder.length; index += 1) {
-    const entry = finalWorkoutOrder[index];
-    const finalOrderIndex = index + 1;
-
-    if (entry.isNew) {
+// Concrete adapter for the shared applyWorkoutFinalState (draftDocumentDiff.js)
+// -- wraps this service's own Prisma model names (Workout/WorkoutBlock,
+// planWeekId as the parent key) so the shared engine never touches Prisma
+// directly.
+function buildCycleWorkoutAdapter(tx) {
+  return {
+    async createWorkout(planWeekId, workout) {
       await tx.workout.create({
         data: {
           planWeekId,
-          ...buildWorkoutCreateInput({
-            ...entry.incomingWorkout,
-            orderIndex: finalOrderIndex,
-          }),
+          ...buildWorkoutCreateInput(workout),
         },
       });
-      continue;
-    }
-
-    const updateEntry = workoutUpdatesById.get(entry.existingWorkout.id);
-    const incomingWorkout = {
-      ...updateEntry.incomingWorkout,
-      orderIndex: finalOrderIndex,
-    };
-    const shouldUpdateWorkoutScalars =
-      forceOrderReset ||
-      updateEntry.scalarChanged ||
-      updateEntry.existingWorkout.orderIndex !== finalOrderIndex;
-
-    if (shouldUpdateWorkoutScalars) {
+    },
+    async updateWorkout(workoutId, workout) {
       await tx.workout.update({
-        where: { id: entry.existingWorkout.id },
+        where: { id: workoutId },
         data: {
-          name: incomingWorkout.name,
-          orderIndex: incomingWorkout.orderIndex,
-          scheduledDay: incomingWorkout.scheduledDay ?? null,
-          estimatedDurationMinutes: incomingWorkout.estimatedDurationMinutes ?? null,
-          notes: incomingWorkout.notes ?? null,
+          name: workout.name,
+          orderIndex: workout.orderIndex,
+          scheduledDay: workout.scheduledDay ?? null,
+          estimatedDurationMinutes: workout.estimatedDurationMinutes ?? null,
+          notes: workout.notes ?? null,
         },
       });
-    }
-
-    if (updateEntry.blockChanged) {
-      await replaceWorkoutBlocks(tx, entry.existingWorkout.id, incomingWorkout.blocks);
-    }
-  }
+    },
+    async deleteWorkouts(workoutIds) {
+      await tx.workout.deleteMany({
+        where: { id: { in: workoutIds } },
+      });
+    },
+    async replaceBlocks(workoutId, blocks) {
+      await replaceWorkoutBlocks(tx, workoutId, blocks);
+    },
+  };
 }
 
 function buildDocumentFromWeeklyVersion(version, durationWeeks, workoutDayAssignments = new Map()) {
@@ -3556,6 +3289,7 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
         phase = 'return_current_draft';
       } else {
         phase = 'apply_draft_mutations';
+        const workoutAdapter = buildCycleWorkoutAdapter(tx);
 
         if (draftDiff.nameChanged) {
           await tx.plan.update({
@@ -3608,13 +3342,9 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
               weekUpdate.workoutDeletes.map((workout) => workout.id)
             );
 
-            await tx.workout.deleteMany({
-              where: {
-                id: {
-                  in: weekUpdate.workoutDeletes.map((workout) => workout.id),
-                },
-              },
-            });
+            await workoutAdapter.deleteWorkouts(
+              weekUpdate.workoutDeletes.map((workout) => workout.id)
+            );
           }
 
           const needsWorkoutRebuildPass =
@@ -3630,7 +3360,7 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
           }
 
           await applyWorkoutFinalState(
-            tx,
+            workoutAdapter,
             weekUpdate.existingWeek.id,
             weekUpdate.finalWorkoutOrder,
             weekUpdate.workoutUpdates,

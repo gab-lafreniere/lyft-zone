@@ -605,7 +605,7 @@ test('targetSeconds survives cloning a published version into an edit draft', as
 
 test('targetSeconds survives draft update persistence input', async () => {
   const updatedVersion = createStoredVersion();
-  let updatedVersionData;
+  let createdWorkoutData;
 
   prisma = {
     user: {
@@ -626,17 +626,24 @@ test('targetSeconds survives draft update persistence input', async () => {
     $transaction: async (callback) =>
       callback({
         weeklyPlanVersion: {
-          findFirst: async () => ({ id: 'version_123' }),
+          // No stored workouts -- the scoped diff engine treats the incoming
+          // workout as a fresh create, exercising weeklyPlanWorkout.create
+          // rather than the old blind deleteMany+nested-create update.
+          findFirst: async () => ({ id: 'version_123', workouts: [] }),
           // Phase 2's revision CAS runs before this update; the payload here
           // sends no `revision`, so it always takes the no-predicate
           // compatibility-opt-out path and just needs to exist.
           updateMany: async () => ({ count: 1 }),
-          update: async ({ data }) => {
-            updatedVersionData = data;
-            return {};
-          },
+          update: async () => ({}),
         },
         weeklyPlanWorkout: {
+          deleteMany: async () => ({}),
+          create: async ({ data }) => {
+            createdWorkoutData = data;
+            return { ...data };
+          },
+        },
+        weeklyPlanWorkoutBlock: {
           deleteMany: async () => ({}),
         },
         weeklyPlanParent: {
@@ -652,7 +659,7 @@ test('targetSeconds survives draft update persistence input', async () => {
     createTemporalDraftPayload()
   );
   const updatedSet =
-    updatedVersionData.workouts.create[0].blocks.create[0].exercises.create[0]
+    createdWorkoutData.blocks.create[0].exercises.create[0]
       .setTemplates.create[0];
 
   assert.equal(updatedSet.targetSeconds, 45);

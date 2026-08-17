@@ -6,6 +6,12 @@ const {
   aggregateWeeklyPlanMetrics,
   computeWeeklyPlanWorkoutMetrics,
 } = require('../src/domain/weeklyPlans/weeklyPlanMetrics');
+const {
+  compareByIndex,
+  normalizeWorkoutForPersistence,
+  diffWorkoutList,
+  applyWorkoutFinalState,
+} = require('./draftDocumentDiff');
 
 const WEEKLY_PLAN_SOURCE_TYPES = new Set(['MANUAL', 'AI']);
 const WEEKLY_PLAN_VERSION_STATUSES = new Set([
@@ -187,9 +193,20 @@ function formatRepsLabel(setTemplates = []) {
   return min === max ? `${min}` : `${min}-${max}`;
 }
 
-function normalizeSetTemplatesInput(setTemplates = []) {
+// `options.autoGenerateIds` (default true) fabricates a stable id for any
+// item missing one -- needed so create()-only paths (createWeeklyPlan,
+// publishWeeklyPlanDraft) always have a concrete id to write. updateWeeklyPlanDraft
+// passes `autoGenerateIds: false` for its diff-facing normalization: a
+// fabricated id on a genuinely-new item would let it land in the shared
+// matcher's id-bearing pass instead of its missing-id/orderIndex-fallback
+// pass, changing which items get silently fallback-matched vs flagged as an
+// identity conflict. Leaving the id null routes new items through the same
+// fallback path Cycle's already-proven matcher uses for its own new items.
+function normalizeSetTemplatesInput(setTemplates = [], options = {}) {
+  const shouldAutoGenerateIds = options.autoGenerateIds !== false;
+
   return normalizeArray(setTemplates).map((setTemplate, index) => ({
-    id: normalizeOptionalString(setTemplate.id) || createStableId('wpset'),
+    id: normalizeOptionalString(setTemplate.id) || (shouldAutoGenerateIds ? createStableId('wpset') : undefined),
     setIndex: normalizeInt(setTemplate.setIndex, index + 1),
     setType: String(setTemplate.setType || 'WORKING').toUpperCase(),
     targetReps: normalizeInt(setTemplate.targetReps, null),
@@ -204,9 +221,11 @@ function normalizeSetTemplatesInput(setTemplates = []) {
   }));
 }
 
-function normalizeExercisesInput(exercises = []) {
+function normalizeExercisesInput(exercises = [], options = {}) {
+  const shouldAutoGenerateIds = options.autoGenerateIds !== false;
+
   return normalizeArray(exercises).map((exercise, index) => ({
-    id: normalizeOptionalString(exercise.id) || createStableId('wpex'),
+    id: normalizeOptionalString(exercise.id) || (shouldAutoGenerateIds ? createStableId('wpex') : undefined),
     exerciseId: normalizeOptionalString(exercise.exerciseId),
     exerciseName: normalizeString(exercise.exerciseName || exercise.name || ''),
     bodyParts: normalizeStringArray(exercise.bodyParts),
@@ -222,13 +241,15 @@ function normalizeExercisesInput(exercises = []) {
       : null,
     notes: normalizeOptionalString(exercise.notes),
     cardioPrescription: exercise.cardioPrescription ?? null,
-    setTemplates: normalizeSetTemplatesInput(exercise.setTemplates),
+    setTemplates: normalizeSetTemplatesInput(exercise.setTemplates, options),
   }));
 }
 
-function normalizeBlocksInput(blocks = []) {
+function normalizeBlocksInput(blocks = [], options = {}) {
+  const shouldAutoGenerateIds = options.autoGenerateIds !== false;
+
   return normalizeArray(blocks).map((block, index) => ({
-    id: normalizeOptionalString(block.id) || createStableId('wpblock'),
+    id: normalizeOptionalString(block.id) || (shouldAutoGenerateIds ? createStableId('wpblock') : undefined),
     orderIndex: normalizeInt(block.orderIndex, index + 1),
     blockType: String(block.blockType || 'SINGLE').toUpperCase(),
     label: normalizeOptionalString(block.label),
@@ -236,22 +257,24 @@ function normalizeBlocksInput(blocks = []) {
     restStrategy: block.restStrategy ? String(block.restStrategy).toUpperCase() : null,
     restSeconds: normalizeInt(block.restSeconds, null),
     notes: normalizeOptionalString(block.notes),
-    exercises: normalizeExercisesInput(block.exercises),
+    exercises: normalizeExercisesInput(block.exercises, options),
   }));
 }
 
-function normalizeWorkoutsInput(workouts = []) {
+function normalizeWorkoutsInput(workouts = [], options = {}) {
+  const shouldAutoGenerateIds = options.autoGenerateIds !== false;
+
   return normalizeArray(workouts).map((workout, index) => ({
-    id: normalizeOptionalString(workout.id) || createStableId('wpworkout'),
+    id: normalizeOptionalString(workout.id) || (shouldAutoGenerateIds ? createStableId('wpworkout') : undefined),
     name: normalizeString(workout.name || ''),
     orderIndex: normalizeInt(workout.orderIndex, index + 1),
     estimatedDurationMinutes: normalizeInt(workout.estimatedDurationMinutes, null),
     notes: normalizeOptionalString(workout.notes),
-    blocks: normalizeBlocksInput(workout.blocks),
+    blocks: normalizeBlocksInput(workout.blocks, options),
   }));
 }
 
-function validateDraftDocument(payload, mode = 'draft') {
+function validateDraftDocument(payload, mode = 'draft', options = {}) {
   if (!String(payload.name || '').trim()) {
     throw new ApiError(400, 'VALIDATION_ERROR', 'name is required');
   }
@@ -261,7 +284,7 @@ function validateDraftDocument(payload, mode = 'draft') {
     throw new ApiError(400, 'VALIDATION_ERROR', 'sessionsPerWeek must be between 1 and 7');
   }
 
-  const workouts = normalizeWorkoutsInput(payload.workouts);
+  const workouts = normalizeWorkoutsInput(payload.workouts, options);
   assertUniqueIndexes(workouts, 'orderIndex', 'workout orderIndex', 'workouts');
 
   const workoutNames = new Map();
@@ -474,6 +497,61 @@ function hasGenerationContext(payload = {}) {
   return Object.prototype.hasOwnProperty.call(payload, 'generationContext');
 }
 
+function buildWeeklyPlanSetTemplateCreateInput(setTemplate) {
+  return {
+    id: setTemplate.id,
+    setIndex: setTemplate.setIndex,
+    setType: setTemplate.setType,
+    targetReps: setTemplate.targetReps ?? undefined,
+    minReps: setTemplate.minReps ?? undefined,
+    maxReps: setTemplate.maxReps ?? undefined,
+    targetSeconds: setTemplate.targetSeconds ?? undefined,
+    targetRir: setTemplate.targetRir ?? undefined,
+    targetRpe: setTemplate.targetRpe ?? undefined,
+    tempo: setTemplate.tempo ?? undefined,
+    restSeconds: setTemplate.restSeconds ?? undefined,
+    notes: setTemplate.notes ?? undefined,
+  };
+}
+
+// Extracted so both toWorkoutCreateInput (whole-document create, e.g.
+// createWeeklyPlan) and the scoped-diff apply adapter's replaceBlocks
+// (updateWeeklyPlanDraft, a single workout's blocks only) can share it --
+// mirrors cyclesService.js's buildWorkoutBlocksCreateInput/replaceWorkoutBlocks split.
+function buildWeeklyPlanBlocksCreateInput(blocks = []) {
+  return blocks.map((block) => ({
+    id: block.id,
+    orderIndex: block.orderIndex,
+    blockType: block.blockType,
+    label: block.label ?? undefined,
+    roundCount: block.roundCount ?? undefined,
+    restStrategy: block.restStrategy ?? undefined,
+    restSeconds: block.restSeconds ?? undefined,
+    notes: block.notes ?? undefined,
+    exercises: {
+      create: block.exercises.map((exercise) => ({
+        id: exercise.id,
+        exerciseId: exercise.exerciseId ?? undefined,
+        exerciseName: exercise.exerciseName,
+        bodyParts: exercise.bodyParts,
+        muscleFocus: exercise.muscleFocus,
+        orderIndex: exercise.orderIndex,
+        executionNotes: exercise.executionNotes ?? undefined,
+        defaultTempo: exercise.defaultTempo ?? undefined,
+        defaultRestSeconds: exercise.defaultRestSeconds ?? undefined,
+        defaultTargetRir: exercise.defaultTargetRir ?? undefined,
+        defaultTargetRpe: exercise.defaultTargetRpe ?? undefined,
+        intensificationMethod: exercise.intensificationMethod ?? undefined,
+        cardioPrescription: exercise.cardioPrescription ?? undefined,
+        notes: exercise.notes ?? undefined,
+        setTemplates: {
+          create: exercise.setTemplates.map(buildWeeklyPlanSetTemplateCreateInput),
+        },
+      })),
+    },
+  }));
+}
+
 function toWorkoutCreateInput(workouts) {
   return workouts.map((workout) => ({
     id: workout.id,
@@ -482,50 +560,7 @@ function toWorkoutCreateInput(workouts) {
     estimatedDurationMinutes: workout.estimatedDurationMinutes ?? undefined,
     notes: workout.notes ?? undefined,
     blocks: {
-      create: workout.blocks.map((block) => ({
-        id: block.id,
-        orderIndex: block.orderIndex,
-        blockType: block.blockType,
-        label: block.label ?? undefined,
-        roundCount: block.roundCount ?? undefined,
-        restStrategy: block.restStrategy ?? undefined,
-        restSeconds: block.restSeconds ?? undefined,
-        notes: block.notes ?? undefined,
-        exercises: {
-          create: block.exercises.map((exercise) => ({
-            id: exercise.id,
-            exerciseId: exercise.exerciseId ?? undefined,
-            exerciseName: exercise.exerciseName,
-            bodyParts: exercise.bodyParts,
-            muscleFocus: exercise.muscleFocus,
-            orderIndex: exercise.orderIndex,
-            executionNotes: exercise.executionNotes ?? undefined,
-            defaultTempo: exercise.defaultTempo ?? undefined,
-            defaultRestSeconds: exercise.defaultRestSeconds ?? undefined,
-            defaultTargetRir: exercise.defaultTargetRir ?? undefined,
-            defaultTargetRpe: exercise.defaultTargetRpe ?? undefined,
-            intensificationMethod: exercise.intensificationMethod ?? undefined,
-            cardioPrescription: exercise.cardioPrescription ?? undefined,
-            notes: exercise.notes ?? undefined,
-            setTemplates: {
-              create: exercise.setTemplates.map((setTemplate) => ({
-                id: setTemplate.id,
-                setIndex: setTemplate.setIndex,
-                setType: setTemplate.setType,
-                targetReps: setTemplate.targetReps ?? undefined,
-                minReps: setTemplate.minReps ?? undefined,
-                maxReps: setTemplate.maxReps ?? undefined,
-                targetSeconds: setTemplate.targetSeconds ?? undefined,
-                targetRir: setTemplate.targetRir ?? undefined,
-                targetRpe: setTemplate.targetRpe ?? undefined,
-                tempo: setTemplate.tempo ?? undefined,
-                restSeconds: setTemplate.restSeconds ?? undefined,
-                notes: setTemplate.notes ?? undefined,
-              })),
-            },
-          })),
-        },
-      })),
+      create: buildWeeklyPlanBlocksCreateInput(workout.blocks),
     },
   }));
 }
@@ -1071,6 +1106,163 @@ async function openOrCreateEditDraft(weeklyPlanParentId, userId) {
   return mapVersionToBuilderPayload(clonedParent, clonedParent.latestDraftVersion);
 }
 
+// exerciseName/bodyParts/muscleFocus live directly on WeeklyPlanBlockExercise
+// (unlike Cycle's BlockExercise, which has no such columns -- that data lives
+// on the related Exercise row instead). This is the injection point the
+// shared normalize/diff functions expect for that difference.
+function weeklyExtraExerciseFields(exercise) {
+  return {
+    exerciseName: normalizeString(exercise.exerciseName || exercise.name || ''),
+    bodyParts: normalizeStringArray(exercise.bodyParts),
+    muscleFocus: normalizeStringArray(exercise.muscleFocus),
+  };
+}
+
+// Weekly Plan's document has no week wrapper (flat workouts list), so this
+// is the direct analogue of cyclesService.js's normalizeCycleDocumentForPersistence.
+function normalizeWeeklyDraftDocumentForPersistence(document = {}, options = {}) {
+  return {
+    name: String(document.name || '').trim(),
+    sessionsPerWeek: normalizeInt(document.sessionsPerWeek, null),
+    workouts: (Array.isArray(document.workouts) ? document.workouts : [])
+      .slice()
+      .sort(compareByIndex('orderIndex'))
+      .map((workout, index) =>
+        normalizeWorkoutForPersistence(workout, index + 1, {
+          ...options,
+          extraExerciseFields: weeklyExtraExerciseFields,
+        })
+      ),
+  };
+}
+
+// Converts a loaded WeeklyPlanVersion (with workouts/blocks/exercises/setTemplates
+// included) into the raw document shape normalizeWeeklyDraftDocumentForPersistence
+// expects -- the weekly-plan analogue of cyclesService.js's buildDraftMutationDocument.
+function buildWeeklyDraftMutationDocument(version) {
+  if (!version) {
+    return null;
+  }
+
+  return {
+    id: version.id,
+    name: version.name,
+    sessionsPerWeek: version.sessionsPerWeek,
+    workouts: (Array.isArray(version.workouts) ? version.workouts : []).map((workout) => ({
+      id: workout.id,
+      name: workout.name,
+      orderIndex: workout.orderIndex,
+      estimatedDurationMinutes: workout.estimatedDurationMinutes,
+      notes: workout.notes,
+      blocks: (Array.isArray(workout.blocks) ? workout.blocks : []).map((block) => ({
+        id: block.id,
+        orderIndex: block.orderIndex,
+        blockType: block.blockType,
+        label: block.label,
+        roundCount: block.roundCount,
+        restStrategy: block.restStrategy,
+        restSeconds: block.restSeconds,
+        notes: block.notes,
+        exercises: (Array.isArray(block.exercises) ? block.exercises : []).map((exercise) => ({
+          id: exercise.id,
+          exerciseId: exercise.exerciseId,
+          exerciseName: exercise.exerciseName,
+          bodyParts: parseJsonArrayField(exercise.bodyParts),
+          muscleFocus: parseJsonArrayField(exercise.muscleFocus),
+          orderIndex: exercise.orderIndex,
+          executionNotes: exercise.executionNotes,
+          defaultTempo: exercise.defaultTempo,
+          defaultRestSeconds: exercise.defaultRestSeconds,
+          defaultTargetRir: exercise.defaultTargetRir,
+          defaultTargetRpe: exercise.defaultTargetRpe,
+          intensificationMethod: exercise.intensificationMethod,
+          cardioPrescription: exercise.cardioPrescription,
+          notes: exercise.notes,
+          setTemplates: (Array.isArray(exercise.setTemplates) ? exercise.setTemplates : []).map((setTemplate) => ({
+            id: setTemplate.id,
+            setIndex: setTemplate.setIndex,
+            setType: setTemplate.setType,
+            targetReps: setTemplate.targetReps,
+            minReps: setTemplate.minReps,
+            maxReps: setTemplate.maxReps,
+            targetSeconds: setTemplate.targetSeconds,
+            targetRir: setTemplate.targetRir,
+            targetRpe: setTemplate.targetRpe,
+            tempo: setTemplate.tempo,
+            restSeconds: setTemplate.restSeconds,
+            notes: setTemplate.notes,
+          })),
+        })),
+      })),
+    })),
+  };
+}
+
+// Mirrors cyclesService.js's moveExistingWorkoutsToSentinelOrder -- avoids a
+// unique constraint collision on (weeklyPlanVersionId, orderIndex) while
+// workouts are being reordered/replaced within the same transaction.
+async function moveExistingWeeklyPlanWorkoutsToSentinelOrder(tx, workouts = []) {
+  const sentinelBase = 1000000;
+
+  for (let index = 0; index < workouts.length; index += 1) {
+    await tx.weeklyPlanWorkout.update({
+      where: { id: workouts[index].id },
+      data: { orderIndex: sentinelBase + index },
+    });
+  }
+}
+
+// Concrete adapter for the shared applyWorkoutFinalState (draftDocumentDiff.js)
+// -- wraps this service's own Prisma model names (WeeklyPlanWorkout/
+// WeeklyPlanWorkoutBlock, weeklyPlanVersionId as the parent key). Mirrors
+// cyclesService.js's buildCycleWorkoutAdapter.
+function buildWeeklyPlanWorkoutAdapter(tx) {
+  return {
+    async createWorkout(weeklyPlanVersionId, workout) {
+      await tx.weeklyPlanWorkout.create({
+        data: {
+          weeklyPlanVersionId,
+          ...toWorkoutCreateInput([workout])[0],
+        },
+      });
+    },
+    async updateWorkout(workoutId, workout) {
+      await tx.weeklyPlanWorkout.update({
+        where: { id: workoutId },
+        data: {
+          name: workout.name,
+          orderIndex: workout.orderIndex,
+          estimatedDurationMinutes: workout.estimatedDurationMinutes ?? null,
+          notes: workout.notes ?? null,
+        },
+      });
+    },
+    async deleteWorkouts(workoutIds) {
+      await tx.weeklyPlanWorkout.deleteMany({
+        where: { id: { in: workoutIds } },
+      });
+    },
+    async replaceBlocks(workoutId, blocks) {
+      await tx.weeklyPlanWorkoutBlock.deleteMany({
+        where: { weeklyPlanWorkoutId: workoutId },
+      });
+
+      if (!blocks.length) {
+        return;
+      }
+
+      await tx.weeklyPlanWorkout.update({
+        where: { id: workoutId },
+        data: {
+          blocks: {
+            create: buildWeeklyPlanBlocksCreateInput(blocks),
+          },
+        },
+      });
+    },
+  };
+}
+
 async function updateWeeklyPlanDraft(weeklyPlanParentId, versionId, payload) {
   const prisma = getPrisma();
   const normalizedUserId = normalizeOptionalString(payload.userId);
@@ -1096,11 +1288,17 @@ async function updateWeeklyPlanDraft(weeklyPlanParentId, versionId, payload) {
     throw new ApiError(400, 'VALIDATION_ERROR', 'This draft is not the current editable version');
   }
 
-  const document = validateDraftDocument(payload, 'draft');
+  // autoGenerateIds:false here (see the comment on normalizeSetTemplatesInput)
+  // -- this document is diffed against the stored draft, not blindly written,
+  // so a genuinely-new item must stay id-less through the shared matcher.
+  const document = validateDraftDocument(payload, 'draft', { autoGenerateIds: false });
   const exerciseById = await assertKnownExerciseIds(collectExerciseIds(document.workouts));
   validateAndNormalizeCardioBlocks(document.workouts, exerciseById, {
     mode: 'draft',
     path: 'workouts',
+  });
+  const normalizedIncomingDocument = normalizeWeeklyDraftDocumentForPersistence(document, {
+    includeIds: true,
   });
 
   const updatedParent = await prisma.$transaction(async (tx) => {
@@ -1110,10 +1308,7 @@ async function updateWeeklyPlanDraft(weeklyPlanParentId, versionId, payload) {
         weeklyPlanParentId,
         status: 'DRAFT',
       },
-      select: {
-        id: true,
-        revision: true,
-      },
+      include: weeklyPlanVersionInclude,
     });
 
     if (!draft) {
@@ -1139,22 +1334,65 @@ async function updateWeeklyPlanDraft(weeklyPlanParentId, versionId, payload) {
       throw new ApiError(409, 'DRAFT_REVISION_CONFLICT', 'This draft was updated elsewhere.');
     }
 
-    await tx.weeklyPlanWorkout.deleteMany({
-      where: {
-        weeklyPlanVersionId: versionId,
-      },
-    });
+    const normalizedCurrentDocument = normalizeWeeklyDraftDocumentForPersistence(
+      buildWeeklyDraftMutationDocument(draft),
+      { includeIds: true }
+    );
 
-    await tx.weeklyPlanVersion.update({
-      where: { id: versionId },
-      data: {
-        name: document.name,
-        sessionsPerWeek: document.sessionsPerWeek,
-        workouts: {
-          create: toWorkoutCreateInput(document.workouts),
-        },
-      },
-    });
+    const isNoOp =
+      JSON.stringify(normalizedCurrentDocument) === JSON.stringify(normalizedIncomingDocument);
+
+    if (!isNoOp) {
+      const workoutDiff = diffWorkoutList(
+        normalizedCurrentDocument.workouts,
+        normalizedIncomingDocument.workouts,
+        'workouts',
+        { extraExerciseFields: weeklyExtraExerciseFields }
+      );
+
+      if (
+        normalizedCurrentDocument.name !== normalizedIncomingDocument.name ||
+        normalizedCurrentDocument.sessionsPerWeek !== normalizedIncomingDocument.sessionsPerWeek
+      ) {
+        await tx.weeklyPlanVersion.update({
+          where: { id: versionId },
+          data: {
+            name: normalizedIncomingDocument.name,
+            sessionsPerWeek: normalizedIncomingDocument.sessionsPerWeek,
+          },
+        });
+      }
+
+      const workoutAdapter = buildWeeklyPlanWorkoutAdapter(tx);
+
+      if (workoutDiff.workoutDeletes.length > 0) {
+        await workoutAdapter.deleteWorkouts(
+          workoutDiff.workoutDeletes.map((workout) => workout.id)
+        );
+      }
+
+      const needsWorkoutRebuildPass =
+        workoutDiff.reorderChanged ||
+        workoutDiff.workoutCreates.length > 0 ||
+        workoutDiff.workoutDeletes.length > 0;
+      const existingWorkoutsToReorder = workoutDiff.workoutUpdates.map(
+        ({ existingWorkout }) => existingWorkout
+      );
+
+      if (needsWorkoutRebuildPass && existingWorkoutsToReorder.length > 0) {
+        await moveExistingWeeklyPlanWorkoutsToSentinelOrder(tx, existingWorkoutsToReorder);
+      }
+
+      await applyWorkoutFinalState(
+        workoutAdapter,
+        versionId,
+        workoutDiff.finalWorkoutOrder,
+        workoutDiff.workoutUpdates,
+        {
+          forceOrderReset: needsWorkoutRebuildPass,
+        }
+      );
+    }
 
     return tx.weeklyPlanParent.findUnique({
       where: { id: weeklyPlanParentId },

@@ -130,6 +130,20 @@ function createHarness({ updateManyResult = { count: 1 } } = {}) {
         record('weeklyPlanWorkout', 'deleteMany', { where });
         return { count: 0 };
       },
+      create: async ({ data }) => {
+        record('weeklyPlanWorkout', 'create', { data });
+        return { ...data };
+      },
+      update: async ({ where, data }) => {
+        record('weeklyPlanWorkout', 'update', { where, data });
+        return { ...data };
+      },
+    },
+    weeklyPlanWorkoutBlock: {
+      deleteMany: async ({ where }) => {
+        record('weeklyPlanWorkoutBlock', 'deleteMany', { where });
+        return { count: 0 };
+      },
     },
     weeklyPlanParent: {
       findUnique: async () => {
