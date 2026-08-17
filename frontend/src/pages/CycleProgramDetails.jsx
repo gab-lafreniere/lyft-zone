@@ -26,7 +26,7 @@ function formatDate(value) {
 export default function CycleProgramDetails() {
   const navigate = useNavigate();
   const { cycleId } = useParams();
-  const { hydrateProgramDraft } = useMultiWeekProgram();
+  const { draftMetadata, hydrateProgramDraft } = useMultiWeekProgram();
   const [details, setDetails] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isOpeningDraft, setIsOpeningDraft] = useState(false);
@@ -95,11 +95,19 @@ export default function CycleProgramDetails() {
   }, [details?.cycle?.durationWeeks, publishedWeeks]);
 
   const handleEdit = async () => {
+    if (draftMetadata.loadedFromBackend && draftMetadata.cycleId === cycleId) {
+      // Already loaded (e.g. re-clicking Edit on the cycle currently open in
+      // the builder) -- reuse it instead of an unconditional re-fetch that
+      // could force-hydrate over in-flight/dirty local edits.
+      navigate(getCycleBuilderPath(cycleId));
+      return;
+    }
+
     setIsOpeningDraft(true);
     setError("");
 
-      try {
-        const response = await openOrCreateCycleEditDraft(cycleId);
+    try {
+      const response = await openOrCreateCycleEditDraft(cycleId);
       hydrateProgramDraft(response);
       navigate(getCycleBuilderPath(cycleId));
     } catch (openError) {

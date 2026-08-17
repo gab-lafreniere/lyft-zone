@@ -337,6 +337,10 @@ function getMultiWeekTodayDateKey(metadata, draft) {
   );
 }
 
+function sameIdentity(a, b) {
+  return Boolean(a && b && a.cycleId === b.cycleId && a.planId === b.planId);
+}
+
 function isLockedActiveCycleWorkoutOccurrence({
   draft,
   metadata,
@@ -370,6 +374,16 @@ export function MultiWeekProgramProvider({ children }) {
   const saveInFlightPromiseRef = useRef(null);
   const pendingSaveRequestedRef = useRef(false);
 
+  // Identity refs (plan §D): `loadedIdentityRef` is what's truly reflected in
+  // `multiWeekDraft`/`draftMetadata` right now; `targetIdentityRef` is what
+  // the user currently wants to be viewing/editing. A debounced save
+  // captures its target identity at the moment it's scheduled and
+  // revalidates it against `targetIdentityRef.current` immediately before
+  // sending, so a save for a document the user has since navigated away from
+  // is silently aborted instead of being sent to the wrong row.
+  const loadedIdentityRef = useRef(null);
+  const targetIdentityRef = useRef(null);
+
   useEffect(() => {
     multiWeekDraftRef.current = multiWeekDraft;
   }, [multiWeekDraft]);
@@ -392,8 +406,34 @@ export function MultiWeekProgramProvider({ children }) {
     [multiWeekDraft, selectedWeek]
   );
 
-  const hydrateProgramDraft = useCallback((response) => {
+  const hydrateProgramDraft = useCallback((response, options = {}) => {
     const nextState = mapCycleBuilderPayload(response);
+    const responseIdentity = {
+      cycleId: nextState.metadata.cycleId,
+      planId: nextState.metadata.cyclePlanId,
+    };
+
+    targetIdentityRef.current = responseIdentity;
+
+    if (!options.force) {
+      const isSameDocumentAlreadyLoaded = sameIdentity(
+        loadedIdentityRef.current,
+        responseIdentity
+      );
+
+      if (isSameDocumentAlreadyLoaded) {
+        const currentSaveState = draftMetadataRef.current.saveState;
+
+        if (currentSaveState === "dirty" || currentSaveState === "saving") {
+          // Local edits or an in-flight/queued save for this exact document
+          // take priority over a redundant "open draft" response -- applying
+          // it here would silently revert whatever the user is mid-editing.
+          // This is the fix for the reproduced navigation-revert bug.
+          return;
+        }
+      }
+    }
+
     setMultiWeekDraft((prev) => ({
       ...nextState.programDraft,
       weeks: attachUiKeysToWeeks(
@@ -406,6 +446,7 @@ export function MultiWeekProgramProvider({ children }) {
       ...createInitialDraftMetadata(),
       ...nextState.metadata,
     });
+    loadedIdentityRef.current = responseIdentity;
   }, []);
 
   const handleDraftExpired = useCallback(async (error, cycleIdOverride = null) => {
@@ -449,7 +490,10 @@ export function MultiWeekProgramProvider({ children }) {
           timezone: currentMetadata?.timezone,
           allowCrossDayDraft: currentMetadata?.allowCrossDayDraft,
         });
-        hydrateProgramDraft(response);
+        // The draft row that expired no longer exists server-side -- this
+        // recovery must force past the local-authority guard regardless of
+        // in-progress edits, unlike a normal hydrate.
+        hydrateProgramDraft(response, { force: true });
         return response;
       } catch (recoveryError) {
         setDraftMetadata((prev) => ({
@@ -471,7 +515,7 @@ export function MultiWeekProgramProvider({ children }) {
     return true;
   }, [hydrateProgramDraft]);
 
-  const persistDraftNow = useCallback(async (overrideDraft = null) => {
+  const persistDraftNow = useCallback(async (overrideDraft = null, overrideIdentity = null) => {
     const currentMetadata = draftMetadataRef.current;
     const currentPlanId = currentMetadata?.cyclePlanId || null;
     if (currentMetadata?.isRecoveringDraft) {
@@ -485,6 +529,11 @@ export function MultiWeekProgramProvider({ children }) {
     ) {
       return null;
     }
+
+    const identity = overrideIdentity || {
+      cycleId: currentMetadata.cycleId,
+      planId: currentPlanId,
+    };
 
     const nextDraft = overrideDraft || multiWeekDraftRef.current;
     const payload = mapMultiWeekDraftToApi(nextDraft);
@@ -511,11 +560,25 @@ export function MultiWeekProgramProvider({ children }) {
         }
     ));
 
+    const isStillCurrentTarget = () => sameIdentity(targetIdentityRef.current, identity);
+
     const runSave = async () => {
-      const response = await updateCycleDraft(currentMetadata.cycleId, currentPlanId, {
+      if (!isStillCurrentTarget()) {
+        // The user has navigated away from this document since this save was
+        // scheduled (or since it was sent). Sending stale content to a
+        // document that's no longer the active target would corrupt whatever
+        // the user is now looking at, so drop it instead.
+        return null;
+      }
+
+      const response = await updateCycleDraft(identity.cycleId, identity.planId, {
         ...payload,
         allowCrossDayDraft: currentMetadata.allowCrossDayDraft,
       });
+
+      if (!isStillCurrentTarget()) {
+        return response;
+      }
 
       const currentSignature = JSON.stringify(
         mapMultiWeekDraftToApi(multiWeekDraftRef.current)
@@ -571,54 +634,77 @@ export function MultiWeekProgramProvider({ children }) {
         lastSaveErrorMessage: null,
         lastSaveErrorCode: null,
       }));
+      loadedIdentityRef.current = {
+        cycleId: nextState.metadata.cycleId,
+        planId: activePlanId || nextState.metadata.cyclePlanId,
+      };
 
       return response;
     };
 
     const savePromise = (async () => {
+      let saveError = null;
+      let result = null;
+
       try {
-        return await runSave();
+        result = await runSave();
       } catch (error) {
         const didRecoverDraft = await handleDraftExpired(error, currentMetadata?.cycleId || null);
-        if (didRecoverDraft) {
-          return null;
-        }
 
-        setDraftMetadata((prev) => (
-          prev.saveState === "error"
-            ? prev
-            : {
-              ...prev,
-              saveState: "error",
-              lastSaveErrorMessage: error?.message || "Unable to autosave this draft.",
-              lastSaveErrorCode: error?.code || null,
-            }
-        ));
-        throw error;
+        if (!didRecoverDraft) {
+          saveError = error;
+          setDraftMetadata((prev) => (
+            prev.saveState === "error"
+              ? prev
+              : {
+                ...prev,
+                saveState: "error",
+                lastSaveErrorMessage: error?.message || "Unable to autosave this draft.",
+                lastSaveErrorCode: error?.code || null,
+              }
+          ));
+        }
       } finally {
         saveInFlightPromiseRef.current = null;
+      }
 
-        if (pendingSaveRequestedRef.current) {
-          pendingSaveRequestedRef.current = false;
-          const latestMetadata = draftMetadataRef.current;
+      let followUpPromise = null;
 
-          if (!latestMetadata?.isRecoveringDraft) {
-            const latestDraft = multiWeekDraftRef.current;
-            const latestSignature = JSON.stringify(mapMultiWeekDraftToApi(latestDraft));
+      if (pendingSaveRequestedRef.current) {
+        pendingSaveRequestedRef.current = false;
+        const latestMetadata = draftMetadataRef.current;
 
-            if (latestSignature !== latestMetadata.lastPersistedSignature) {
-              persistDraftNow(latestDraft).catch((queuedError) => {
-                console.error("[MultiWeekProgramContext] queued autosave failed", {
-                  cycleId: draftMetadataRef.current?.cycleId || null,
-                  cyclePlanId: draftMetadataRef.current?.cyclePlanId || null,
-                  errorCode: queuedError?.code || null,
-                  errorMessage: queuedError?.message || null,
-                });
+        if (!latestMetadata?.isRecoveringDraft) {
+          const latestDraft = multiWeekDraftRef.current;
+          const latestSignature = JSON.stringify(mapMultiWeekDraftToApi(latestDraft));
+
+          if (latestSignature !== latestMetadata.lastPersistedSignature) {
+            // Chain the coalesced follow-up onto this promise, built from the
+            // freshest snapshot, so a single `await persistDraftNow()` (e.g.
+            // a publish flush) resolves only once the follow-up also
+            // settles, not just this leg.
+            followUpPromise = persistDraftNow(latestDraft).catch((queuedError) => {
+              console.error("[MultiWeekProgramContext] queued autosave failed", {
+                cycleId: draftMetadataRef.current?.cycleId || null,
+                cyclePlanId: draftMetadataRef.current?.cyclePlanId || null,
+                errorCode: queuedError?.code || null,
+                errorMessage: queuedError?.message || null,
               });
-            }
+              throw queuedError;
+            });
           }
         }
       }
+
+      if (followUpPromise) {
+        return followUpPromise;
+      }
+
+      if (saveError) {
+        throw saveError;
+      }
+
+      return result;
     })();
 
     saveInFlightPromiseRef.current = savePromise;
@@ -651,8 +737,20 @@ export function MultiWeekProgramProvider({ children }) {
       };
     });
 
+    // Capture the draft content and the identity it belongs to together, at
+    // the moment this edit armed the timer -- not read fresh from a ref when
+    // the timer fires. `persistDraftNow` revalidates this identity against
+    // `targetIdentityRef.current` right before sending, which is what
+    // actually protects against a stale send after the user has navigated
+    // away within the debounce window.
+    const draftSnapshot = multiWeekDraft;
+    const identitySnapshot = {
+      cycleId: draftMetadata.cycleId,
+      planId: draftMetadata.cyclePlanId,
+    };
+
     const timeoutId = window.setTimeout(() => {
-      persistDraftNow(multiWeekDraft).catch((error) => {
+      persistDraftNow(draftSnapshot, identitySnapshot).catch((error) => {
         console.error("[MultiWeekProgramContext] autosave failed", {
           cycleId: draftMetadataRef.current?.cycleId || null,
           cyclePlanId: draftMetadataRef.current?.cyclePlanId || null,

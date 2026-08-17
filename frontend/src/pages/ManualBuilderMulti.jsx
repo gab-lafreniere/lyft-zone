@@ -238,6 +238,7 @@ export default function ManualBuilderMulti() {
     draftMetadata,
     hydrateProgramDraft,
     handleDraftExpired,
+    persistDraftNow,
     setSelectedWeek,
     updateDraftMetadata,
     moveSelectedWeekWorkoutToScheduledDay,
@@ -313,6 +314,16 @@ export default function ManualBuilderMulti() {
       return undefined;
     }
 
+    if (draftMetadata.loadedFromBackend && draftMetadata.cycleId === cycleId) {
+      // Already loaded for this cycle -- avoid an unconditional re-fetch on
+      // every navigation back into the builder, which used to force-hydrate
+      // a possibly-stale snapshot over in-flight/dirty local edits (the
+      // reproduced navigation-revert bug). No spinner either, since nothing
+      // needs to load.
+      setIsLoading(false);
+      return undefined;
+    }
+
     let cancelled = false;
 
     async function loadDraft() {
@@ -346,7 +357,13 @@ export default function ManualBuilderMulti() {
     return () => {
       cancelled = true;
     };
-  }, [cycleId, hydrateProgramDraft, updateDraftMetadata]);
+  }, [
+    cycleId,
+    draftMetadata.cycleId,
+    draftMetadata.loadedFromBackend,
+    hydrateProgramDraft,
+    updateDraftMetadata,
+  ]);
 
   useEffect(() => {
     if (
@@ -915,10 +932,14 @@ export default function ManualBuilderMulti() {
     setPublishError(null);
 
     try {
+      // All current local edits must be durably persisted before publish
+      // begins -- this is a no-op cheaply when nothing is dirty, and closes
+      // the asymmetry with the Weekly Plan builder's publish flow.
+      await persistDraftNow();
       const response = await publishCycleDraft(cycleId, {
         allowCrossDayDraft: draftMetadata.allowCrossDayDraft,
       });
-      hydrateProgramDraft(response);
+      hydrateProgramDraft(response, { force: true });
       navigate(getCycleDetailsPath(cycleId), { replace: true });
     } catch (publishError) {
       const didRecoverDraft = await handleDraftExpired(publishError, cycleId);

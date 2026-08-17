@@ -45,7 +45,7 @@ export default function ProgramDetails() {
   const location = useLocation();
   const { programId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { hydrateProgramDraft } = useManualProgram();
+  const { draftMetadata, hydrateProgramDraft } = useManualProgram();
   const [program, setProgram] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showMuscleDistribution, setShowMuscleDistribution] = useState(false);
@@ -131,6 +131,22 @@ export default function ProgramDetails() {
 
   const handleOpenDraft = async () => {
     if (!program) {
+      return;
+    }
+
+    if (
+      draftMetadata.loadedFromBackend &&
+      draftMetadata.weeklyPlanParentId === program.weeklyPlanParentId
+    ) {
+      // Already loaded (e.g. re-clicking Edit on the plan currently open in
+      // the builder) -- reuse it instead of an unconditional re-fetch that
+      // could force-hydrate over in-flight/dirty local edits.
+      navigate(getManualBuilderPath(), {
+        state: {
+          from: buildOrigin(location),
+          returnTo: resolveBackTarget(location, getWeeklyPlansPath()),
+        },
+      });
       return;
     }
 
