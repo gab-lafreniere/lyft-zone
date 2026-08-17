@@ -321,6 +321,20 @@ function sameIdentity(a, b) {
   );
 }
 
+// A hydration target is declared before its weeklyPlanVersionId is knowable
+// (the draft version is resolved server-side by openOrCreateWeeklyPlanEditDraft),
+// so the hydrate-response mismatch check can only compare the outer key --
+// unlike sameIdentity, which requires both fields and is for the
+// already-loaded same-document check and the send-side abort check, where
+// both sides always have a fully-resolved identity by the time they run.
+function sameRequestedWeeklyPlan(target, responseIdentity) {
+  return Boolean(
+    target &&
+      responseIdentity &&
+      target.weeklyPlanParentId === responseIdentity.weeklyPlanParentId
+  );
+}
+
 export function ManualProgramProvider({ children }) {
   const [programDraft, setProgramDraft] = useState(createInitialDraft);
   const [draftMetadata, setDraftMetadata] = useState(createInitialDraftMetadata);
@@ -1062,6 +1076,18 @@ export function ManualProgramProvider({ children }) {
     targetIdentityRef.current = null;
   }, []);
 
+  // The only way targetIdentityRef is ever set ahead of a fetch dispatching.
+  // Callers that are about to open a (possibly different) weekly plan must
+  // call this synchronously, before starting the fetch -- weeklyPlanVersionId
+  // is left null since it isn't resolved until openOrCreateWeeklyPlanEditDraft
+  // returns. hydrateProgramDraft compares an arriving response's
+  // weeklyPlanParentId against whatever was most recently declared here; a
+  // response for a parent id a newer call here has since superseded is
+  // dropped rather than applied.
+  const beginHydrationTarget = useCallback((identity) => {
+    targetIdentityRef.current = identity;
+  }, []);
+
   const hydrateProgramDraft = useCallback((response, options = {}) => {
     const nextState = mapBuilderPayloadToProgramDraft(response);
     const responseIdentity = {
@@ -1069,16 +1095,19 @@ export function ManualProgramProvider({ children }) {
       weeklyPlanVersionId: nextState.metadata.weeklyPlanVersionId,
     };
 
-    // Weekly plan has no caller yet that proactively declares a hydration
-    // target ahead of dispatching its fetch (that lands in Phase 1B, when the
-    // page components that call this are touched) -- so a hydrate response
-    // declares its own target here. This makes the cross-document
-    // identity-mismatch branch unreachable in this phase; the local-authority
-    // check below is what protects against clobbering an in-flight/dirty
-    // document today.
-    targetIdentityRef.current = responseIdentity;
-
     if (!options.force) {
+      const declaredTarget = targetIdentityRef.current;
+      const isStaleAgainstDeclaredTarget =
+        declaredTarget != null && !sameRequestedWeeklyPlan(declaredTarget, responseIdentity);
+
+      if (isStaleAgainstDeclaredTarget) {
+        // A newer beginHydrationTarget() call has already superseded this
+        // fetch's target since it was dispatched -- this response is for a
+        // weekly plan the user is no longer requesting. Drop it entirely (no
+        // partial apply), regardless of what loadedIdentityRef says.
+        return;
+      }
+
       const isSameDocumentAlreadyLoaded = sameIdentity(
         loadedIdentityRef.current,
         responseIdentity
@@ -1115,6 +1144,12 @@ export function ManualProgramProvider({ children }) {
       originRoute: options.originRoute ?? null,
     });
     loadedIdentityRef.current = responseIdentity;
+    // A response that was just applied (whether it passed the checks above
+    // or arrived via force:true) is, by definition, now what the user is
+    // looking at -- keep the target in sync so later callers (the send-side
+    // check in persistDraftNow, and the next hydrateProgramDraft call) see a
+    // fully-resolved identity rather than the pre-dispatch partial one.
+    targetIdentityRef.current = responseIdentity;
   }, []);
 
   // The only path back from `saveState === "conflict"`. Explicitly
@@ -1287,6 +1322,7 @@ export function ManualProgramProvider({ children }) {
       hasIncompleteSupersets,
       draftMetadata,
       hydrateProgramDraft,
+      beginHydrationTarget,
       persistDraftNow,
       reloadLatestAfterConflict,
       setDraftOriginRoute,
@@ -1320,6 +1356,7 @@ export function ManualProgramProvider({ children }) {
       hasIncompleteSupersets,
       draftMetadata,
       hydrateProgramDraft,
+      beginHydrationTarget,
       persistDraftNow,
       reloadLatestAfterConflict,
       setDraftOriginRoute,

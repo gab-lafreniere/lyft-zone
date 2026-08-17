@@ -255,6 +255,14 @@ describe("ManualProgramProvider autosave race (Phase 1A)", () => {
     expect(screen.getByTestId("parent-id")).toHaveTextContent("weekly_parent_1");
     expect(screen.getByTestId("reps")).toHaveTextContent("8");
 
+    // A real caller declares its target before dispatching the fetch that
+    // eventually resolves into this hydrate call (plan §D hardening).
+    act(() =>
+      currentContext.beginHydrationTarget({
+        weeklyPlanParentId: "weekly_parent_2",
+        weeklyPlanVersionId: null,
+      })
+    );
     act(() =>
       currentContext.hydrateProgramDraft(
         buildResponse({
@@ -426,5 +434,101 @@ describe("ManualProgramProvider revision conflict (Phase 2)", () => {
     });
 
     expect(screen.getByTestId("save-state")).toHaveTextContent("error");
+  });
+});
+
+// Hardening: the audit against the accepted blueprint found that no caller
+// ever declared a hydration target ahead of dispatching its fetch --
+// hydrateProgramDraft self-declared its own target from whatever response
+// arrived, which made the cross-document mismatch-drop branch structurally
+// unreachable. beginHydrationTarget() closes that gap: callers (ProgramDetails.jsx's
+// open-draft click) now declare the weekly plan they're requesting
+// synchronously, before the fetch starts, so a late response for a
+// superseded target is dropped instead of silently applying.
+describe("ManualProgramProvider proactive target-identity declaration (hardening)", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    currentContext = null;
+    updateWeeklyPlanDraft.mockReset();
+    openOrCreateWeeklyPlanEditDraft.mockReset();
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  test("loaded A, request B, request C before B resolves: late response B is dropped, response C is applied", async () => {
+    renderProvider();
+
+    // loaded A
+    act(() =>
+      currentContext.beginHydrationTarget({
+        weeklyPlanParentId: "weekly_parent_a",
+        weeklyPlanVersionId: null,
+      })
+    );
+    act(() =>
+      currentContext.hydrateProgramDraft(
+        buildResponse({
+          weeklyPlanParentId: "weekly_parent_a",
+          weeklyPlanVersionId: "weekly_version_a",
+          reps: 8,
+        })
+      )
+    );
+    expect(screen.getByTestId("parent-id")).toHaveTextContent("weekly_parent_a");
+    expect(screen.getByTestId("reps")).toHaveTextContent("8");
+
+    const programDraftBeforeRace = currentContext.programDraft;
+    const draftMetadataBeforeRace = currentContext.draftMetadata;
+
+    // request B
+    act(() =>
+      currentContext.beginHydrationTarget({
+        weeklyPlanParentId: "weekly_parent_b",
+        weeklyPlanVersionId: null,
+      })
+    );
+    // request C, dispatched before B has resolved
+    act(() =>
+      currentContext.beginHydrationTarget({
+        weeklyPlanParentId: "weekly_parent_c",
+        weeklyPlanVersionId: null,
+      })
+    );
+
+    // B's response arrives late (after C was already requested).
+    act(() =>
+      currentContext.hydrateProgramDraft(
+        buildResponse({
+          weeklyPlanParentId: "weekly_parent_b",
+          weeklyPlanVersionId: "weekly_version_b",
+          reps: 99,
+        })
+      )
+    );
+
+    // B must be dropped: on-screen identity/content and metadata are
+    // byte-for-byte what they were before the race -- not partially applied,
+    // not silently mutated.
+    expect(screen.getByTestId("parent-id")).toHaveTextContent("weekly_parent_a");
+    expect(screen.getByTestId("reps")).toHaveTextContent("8");
+    expect(currentContext.programDraft).toEqual(programDraftBeforeRace);
+    expect(currentContext.draftMetadata).toEqual(draftMetadataBeforeRace);
+
+    // C's response arrives and is applied -- it is still the declared target.
+    act(() =>
+      currentContext.hydrateProgramDraft(
+        buildResponse({
+          weeklyPlanParentId: "weekly_parent_c",
+          weeklyPlanVersionId: "weekly_version_c",
+          reps: 42,
+        })
+      )
+    );
+
+    expect(screen.getByTestId("parent-id")).toHaveTextContent("weekly_parent_c");
+    expect(screen.getByTestId("reps")).toHaveTextContent("42");
   });
 });

@@ -342,6 +342,16 @@ function sameIdentity(a, b) {
   return Boolean(a && b && a.cycleId === b.cycleId && a.planId === b.planId);
 }
 
+// A hydration target is declared before its planId is knowable (the draft
+// plan is resolved server-side by openOrCreateCycleEditDraft), so the
+// hydrate-response mismatch check can only compare the outer key -- unlike
+// sameIdentity, which requires both fields and is for the already-loaded
+// same-document check and the send-side abort check, where both sides
+// always have a fully-resolved identity by the time they run.
+function sameRequestedCycle(target, responseIdentity) {
+  return Boolean(target && responseIdentity && target.cycleId === responseIdentity.cycleId);
+}
+
 function isLockedActiveCycleWorkoutOccurrence({
   draft,
   metadata,
@@ -407,6 +417,17 @@ export function MultiWeekProgramProvider({ children }) {
     [multiWeekDraft, selectedWeek]
   );
 
+  // The only way targetIdentityRef is ever set ahead of a fetch dispatching.
+  // Callers that are about to open a (possibly different) cycle must call
+  // this synchronously, before starting the fetch -- planId is left null
+  // since it isn't resolved until openOrCreateCycleEditDraft returns.
+  // hydrateProgramDraft compares an arriving response's cycleId against
+  // whatever was most recently declared here; a response for a cycleId a
+  // newer call here has since superseded is dropped rather than applied.
+  const beginHydrationTarget = useCallback((identity) => {
+    targetIdentityRef.current = identity;
+  }, []);
+
   const hydrateProgramDraft = useCallback((response, options = {}) => {
     const nextState = mapCycleBuilderPayload(response);
     const responseIdentity = {
@@ -414,9 +435,19 @@ export function MultiWeekProgramProvider({ children }) {
       planId: nextState.metadata.cyclePlanId,
     };
 
-    targetIdentityRef.current = responseIdentity;
-
     if (!options.force) {
+      const declaredTarget = targetIdentityRef.current;
+      const isStaleAgainstDeclaredTarget =
+        declaredTarget != null && !sameRequestedCycle(declaredTarget, responseIdentity);
+
+      if (isStaleAgainstDeclaredTarget) {
+        // A newer beginHydrationTarget() call has already superseded this
+        // fetch's target since it was dispatched -- this response is for a
+        // cycle the user is no longer requesting. Drop it entirely (no
+        // partial apply), regardless of what loadedIdentityRef says.
+        return;
+      }
+
       const isSameDocumentAlreadyLoaded = sameIdentity(
         loadedIdentityRef.current,
         responseIdentity
@@ -454,6 +485,12 @@ export function MultiWeekProgramProvider({ children }) {
       ...nextState.metadata,
     });
     loadedIdentityRef.current = responseIdentity;
+    // A response that was just applied (whether it passed the checks above
+    // or arrived via force:true) is, by definition, now what the user is
+    // looking at -- keep the target in sync so later callers (the send-side
+    // check in persistDraftNow, and the next hydrateProgramDraft call) see a
+    // fully-resolved identity rather than the pre-dispatch partial one.
+    targetIdentityRef.current = responseIdentity;
   }, []);
 
   const handleDraftExpired = useCallback(async (error, cycleIdOverride = null) => {
@@ -1742,6 +1779,7 @@ export function MultiWeekProgramProvider({ children }) {
       programDraft,
       draftMetadata,
       hydrateProgramDraft,
+      beginHydrationTarget,
       handleDraftExpired,
       persistDraftNow,
       reloadLatestAfterConflict,
@@ -1776,6 +1814,7 @@ export function MultiWeekProgramProvider({ children }) {
       programDraft,
       draftMetadata,
       hydrateProgramDraft,
+      beginHydrationTarget,
       handleDraftExpired,
       persistDraftNow,
       reloadLatestAfterConflict,

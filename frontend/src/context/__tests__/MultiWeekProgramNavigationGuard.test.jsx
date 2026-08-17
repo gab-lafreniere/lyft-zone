@@ -173,6 +173,9 @@ describe("MultiWeekProgramProvider navigation/hydration guard (Phase 1B)", () =>
 
     expect(screen.getByTestId("save-state")).toHaveTextContent("dirty");
 
+    // A real caller declares its target before dispatching the fetch that
+    // eventually resolves into this hydrate call (plan §D hardening).
+    act(() => currentContext.beginHydrationTarget({ cycleId: "cycle_2", planId: null }));
     act(() =>
       currentContext.hydrateProgramDraft(
         buildResponse({ cycleId: "cycle_2", planId: "plan_2", reps: 20 })
@@ -237,5 +240,74 @@ describe("MultiWeekProgramProvider navigation/hydration guard (Phase 1B)", () =>
     expect(awaitedResolved).toBe(true);
     expect(screen.getByTestId("reps")).toHaveTextContent("11");
     expect(screen.getByTestId("save-state")).toHaveTextContent("saved");
+  });
+});
+
+// Hardening: the audit against the accepted blueprint found that no caller
+// ever declared a hydration target ahead of dispatching its fetch --
+// hydrateProgramDraft self-declared its own target from whatever response
+// arrived, which made the cross-document mismatch-drop branch structurally
+// unreachable. beginHydrationTarget() closes that gap: callers (mount
+// effects, click handlers) now declare the cycle they're requesting
+// synchronously, before the fetch starts, so a late response for a
+// superseded target is dropped instead of silently applying.
+describe("MultiWeekProgramProvider proactive target-identity declaration (hardening)", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    currentContext = null;
+    updateCycleDraft.mockReset();
+    openOrCreateCycleEditDraft.mockReset();
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  test("loaded A, request B, request C before B resolves: late response B is dropped, response C is applied", async () => {
+    renderProvider();
+
+    // loaded A
+    act(() => currentContext.beginHydrationTarget({ cycleId: "cycle_a", planId: null }));
+    act(() =>
+      currentContext.hydrateProgramDraft(
+        buildResponse({ cycleId: "cycle_a", planId: "plan_a", reps: 8 })
+      )
+    );
+    expect(screen.getByTestId("cycle-id")).toHaveTextContent("cycle_a");
+    expect(screen.getByTestId("reps")).toHaveTextContent("8");
+
+    const programDraftBeforeRace = currentContext.programDraft;
+    const draftMetadataBeforeRace = currentContext.draftMetadata;
+
+    // request B
+    act(() => currentContext.beginHydrationTarget({ cycleId: "cycle_b", planId: null }));
+    // request C, dispatched before B has resolved
+    act(() => currentContext.beginHydrationTarget({ cycleId: "cycle_c", planId: null }));
+
+    // B's response arrives late (after C was already requested).
+    act(() =>
+      currentContext.hydrateProgramDraft(
+        buildResponse({ cycleId: "cycle_b", planId: "plan_b", reps: 99 })
+      )
+    );
+
+    // B must be dropped: on-screen identity/content and metadata are
+    // byte-for-byte what they were before the race -- not partially applied,
+    // not silently mutated.
+    expect(screen.getByTestId("cycle-id")).toHaveTextContent("cycle_a");
+    expect(screen.getByTestId("reps")).toHaveTextContent("8");
+    expect(currentContext.programDraft).toEqual(programDraftBeforeRace);
+    expect(currentContext.draftMetadata).toEqual(draftMetadataBeforeRace);
+
+    // C's response arrives and is applied -- it is still the declared target.
+    act(() =>
+      currentContext.hydrateProgramDraft(
+        buildResponse({ cycleId: "cycle_c", planId: "plan_c", reps: 42 })
+      )
+    );
+
+    expect(screen.getByTestId("cycle-id")).toHaveTextContent("cycle_c");
+    expect(screen.getByTestId("reps")).toHaveTextContent("42");
   });
 });

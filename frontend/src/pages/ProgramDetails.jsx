@@ -45,7 +45,7 @@ export default function ProgramDetails() {
   const location = useLocation();
   const { programId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { draftMetadata, hydrateProgramDraft } = useManualProgram();
+  const { draftMetadata, hydrateProgramDraft, beginHydrationTarget } = useManualProgram();
   const [program, setProgram] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showMuscleDistribution, setShowMuscleDistribution] = useState(false);
@@ -151,6 +151,16 @@ export default function ProgramDetails() {
     }
 
     setIsOpeningDraft(true);
+
+    // Declared synchronously, before the fetch dispatches (plan §D): if the
+    // user leaves this page for a different weekly plan before this
+    // resolves, that navigation declares its own target, and this response
+    // is dropped by hydrateProgramDraft instead of silently applying over
+    // whatever the user is now looking at.
+    beginHydrationTarget({
+      weeklyPlanParentId: program.weeklyPlanParentId,
+      weeklyPlanVersionId: null,
+    });
 
     try {
       const response = await openOrCreateWeeklyPlanEditDraft(program.weeklyPlanParentId);

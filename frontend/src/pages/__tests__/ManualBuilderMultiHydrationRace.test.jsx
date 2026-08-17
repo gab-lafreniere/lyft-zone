@@ -65,6 +65,7 @@ function createContextValue(overrides = {}) {
     programDraft: createProgramDraft(),
     draftMetadata: createDraftMetadata(),
     hydrateProgramDraft: jest.fn(),
+    beginHydrationTarget: jest.fn(),
     handleDraftExpired: jest.fn(),
     persistDraftNow: jest.fn().mockResolvedValue(null),
     setSelectedWeek: jest.fn(),

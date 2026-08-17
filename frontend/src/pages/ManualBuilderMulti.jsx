@@ -237,6 +237,7 @@ export default function ManualBuilderMulti() {
     programDraft,
     draftMetadata,
     hydrateProgramDraft,
+    beginHydrationTarget,
     handleDraftExpired,
     persistDraftNow,
     setSelectedWeek,
@@ -328,6 +329,13 @@ export default function ManualBuilderMulti() {
 
     let cancelled = false;
 
+    // Declared synchronously, before the fetch dispatches (plan §D): if the
+    // user navigates to a different cycle before this resolves, that
+    // navigation's own mount-effect run declares a new target here, and this
+    // fetch's eventual response is dropped by hydrateProgramDraft instead of
+    // silently applying over whatever the user is now looking at.
+    beginHydrationTarget({ cycleId, planId: null });
+
     async function loadDraft() {
       setIsLoading(true);
       setLoadError(null);
@@ -363,6 +371,7 @@ export default function ManualBuilderMulti() {
     cycleId,
     draftMetadata.cycleId,
     draftMetadata.loadedFromBackend,
+    beginHydrationTarget,
     hydrateProgramDraft,
     updateDraftMetadata,
   ]);
