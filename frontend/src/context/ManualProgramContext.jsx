@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { mapProgramDraftToWeeklyPlanUpdate, mapBuilderPayloadToProgramDraft } from "../features/weeklyPlans/mappers";
@@ -308,38 +309,139 @@ function createInitialDraftMetadata() {
   };
 }
 
+function sameIdentity(a, b) {
+  return Boolean(
+    a &&
+      b &&
+      a.weeklyPlanParentId === b.weeklyPlanParentId &&
+      a.weeklyPlanVersionId === b.weeklyPlanVersionId
+  );
+}
+
 export function ManualProgramProvider({ children }) {
   const [programDraft, setProgramDraft] = useState(createInitialDraft);
   const [draftMetadata, setDraftMetadata] = useState(createInitialDraftMetadata);
 
-  const persistDraftNow = useCallback(async (overrideDraft = null) => {
+  // Kept in sync via effects below so async code (debounce timers, in-flight
+  // fetch continuations) always reads the latest value instead of a stale
+  // render's closure.
+  const programDraftRef = useRef(programDraft);
+  const draftMetadataRef = useRef(draftMetadata);
+
+  // Save-sequencing refs (ported from MultiWeekProgramContext.jsx): guarantee
+  // at most one PATCH is ever in flight at a time, and that a save triggered
+  // while another is already in flight coalesces into a single queued
+  // follow-up built from the freshest local snapshot, rather than firing a
+  // second overlapping request.
+  const saveRequestIdRef = useRef(0);
+  const latestAppliedSaveRequestIdRef = useRef(0);
+  const saveInFlightPromiseRef = useRef(null);
+  const pendingSaveRequestedRef = useRef(false);
+
+  // Identity refs (plan §D): `loadedIdentityRef` is what's truly reflected in
+  // `programDraft`/`draftMetadata` right now; `targetIdentityRef` is what the
+  // user currently wants to be viewing/editing. A debounced save captures its
+  // target identity at the moment it's scheduled and revalidates it against
+  // `targetIdentityRef.current` immediately before sending, so a save for a
+  // document the user has since navigated away from is silently aborted
+  // instead of being sent to the wrong row.
+  const loadedIdentityRef = useRef(null);
+  const targetIdentityRef = useRef(null);
+
+  useEffect(() => {
+    programDraftRef.current = programDraft;
+  }, [programDraft]);
+
+  useEffect(() => {
+    draftMetadataRef.current = draftMetadata;
+  }, [draftMetadata]);
+
+  const persistDraftNow = useCallback(async (overrideDraft = null, overrideIdentity = null) => {
+    const currentMetadata = draftMetadataRef.current;
+
     if (
-      !draftMetadata.loadedFromBackend ||
-      !draftMetadata.weeklyPlanParentId ||
-      !draftMetadata.weeklyPlanVersionId
+      !currentMetadata.loadedFromBackend ||
+      !currentMetadata.weeklyPlanParentId ||
+      !currentMetadata.weeklyPlanVersionId
     ) {
       return null;
     }
 
-    const nextDraft = overrideDraft || programDraft;
+    const identity = overrideIdentity || {
+      weeklyPlanParentId: currentMetadata.weeklyPlanParentId,
+      weeklyPlanVersionId: currentMetadata.weeklyPlanVersionId,
+    };
+
+    const nextDraft = overrideDraft || programDraftRef.current;
     const payload = mapProgramDraftToWeeklyPlanUpdate(nextDraft);
     const signature = JSON.stringify(payload);
 
-    if (signature === draftMetadata.lastPersistedSignature) {
+    if (signature === currentMetadata.lastPersistedSignature) {
       return null;
     }
 
-    setDraftMetadata((prev) => ({
-      ...prev,
-      saveState: "saving",
-    }));
+    if (saveInFlightPromiseRef.current) {
+      pendingSaveRequestedRef.current = true;
+      return saveInFlightPromiseRef.current;
+    }
 
-    try {
+    const requestId = saveRequestIdRef.current + 1;
+    saveRequestIdRef.current = requestId;
+
+    setDraftMetadata((prev) => (
+      prev.saveState === "saving" ? prev : { ...prev, saveState: "saving" }
+    ));
+
+    const isStillCurrentTarget = () => sameIdentity(targetIdentityRef.current, identity);
+
+    const runSave = async () => {
+      if (!isStillCurrentTarget()) {
+        // The user has navigated away from this document since this save was
+        // scheduled (or since it was sent). Sending stale content to a
+        // document that's no longer the active target would corrupt whatever
+        // the user is now looking at, so drop it instead.
+        return null;
+      }
+
       const response = await updateWeeklyPlanDraft(
-        draftMetadata.weeklyPlanParentId,
-        draftMetadata.weeklyPlanVersionId,
+        identity.weeklyPlanParentId,
+        identity.weeklyPlanVersionId,
         payload
       );
+
+      if (!isStillCurrentTarget()) {
+        return response;
+      }
+
+      const currentSignature = JSON.stringify(
+        mapProgramDraftToWeeklyPlanUpdate(programDraftRef.current)
+      );
+      const hasNewerLocalEdits = currentSignature !== signature;
+      const isOlderThanAppliedResponse = requestId < latestAppliedSaveRequestIdRef.current;
+
+      if (hasNewerLocalEdits || isOlderThanAppliedResponse) {
+        setDraftMetadata((prev) => {
+          const latestLocalSignature = JSON.stringify(
+            mapProgramDraftToWeeklyPlanUpdate(programDraftRef.current)
+          );
+          const hasUnsavedLocalEdits = latestLocalSignature !== prev.lastPersistedSignature;
+
+          if (!hasUnsavedLocalEdits) {
+            return prev;
+          }
+
+          const hasNewerSaveRequestInFlight = requestId < saveRequestIdRef.current;
+          const nextSaveState = hasNewerSaveRequestInFlight ? "saving" : "dirty";
+
+          return prev.saveState === nextSaveState
+            ? prev
+            : { ...prev, saveState: nextSaveState };
+        });
+
+        return response;
+      }
+
+      latestAppliedSaveRequestIdRef.current = requestId;
 
       const updatedSignature = JSON.stringify(
         mapProgramDraftToWeeklyPlanUpdate(response.builderPayload)
@@ -353,20 +455,56 @@ export function ManualProgramProvider({ children }) {
       }));
 
       return response;
-    } catch (error) {
-      setDraftMetadata((prev) => ({
-        ...prev,
-        saveState: "error",
-      }));
-      throw error;
-    }
-  }, [
-    draftMetadata.lastPersistedSignature,
-    draftMetadata.loadedFromBackend,
-    draftMetadata.weeklyPlanParentId,
-    draftMetadata.weeklyPlanVersionId,
-    programDraft,
-  ]);
+    };
+
+    const savePromise = (async () => {
+      let saveError = null;
+      let result = null;
+
+      try {
+        result = await runSave();
+      } catch (error) {
+        saveError = error;
+        setDraftMetadata((prev) => (
+          prev.saveState === "error" ? prev : { ...prev, saveState: "error" }
+        ));
+      } finally {
+        saveInFlightPromiseRef.current = null;
+      }
+
+      let followUpPromise = null;
+
+      if (pendingSaveRequestedRef.current) {
+        pendingSaveRequestedRef.current = false;
+        const latestDraft = programDraftRef.current;
+        const latestMetadata = draftMetadataRef.current;
+        const latestSignature = JSON.stringify(
+          mapProgramDraftToWeeklyPlanUpdate(latestDraft)
+        );
+
+        if (latestSignature !== latestMetadata.lastPersistedSignature) {
+          // Award the coalesced follow-up the freshest snapshot, and chain it
+          // onto this promise so a single `await persistDraftNow()` (e.g. a
+          // future publish flush) resolves only once the follow-up also
+          // settles, not just this leg.
+          followUpPromise = persistDraftNow(latestDraft);
+        }
+      }
+
+      if (followUpPromise) {
+        return followUpPromise;
+      }
+
+      if (saveError) {
+        throw saveError;
+      }
+
+      return result;
+    })();
+
+    saveInFlightPromiseRef.current = savePromise;
+    return savePromise;
+  }, []);
 
   useEffect(() => {
     if (
@@ -388,8 +526,20 @@ export function ManualProgramProvider({ children }) {
       saveState: prev.saveState === "saving" ? "saving" : "dirty",
     }));
 
+    // Capture the draft content and the identity it belongs to together, at
+    // the moment this edit armed the timer -- not read fresh from a ref when
+    // the timer fires. `persistDraftNow` revalidates this identity against
+    // `targetIdentityRef.current` right before sending, which is what
+    // actually protects against a stale send after the user has navigated
+    // away within the debounce window.
+    const draftSnapshot = programDraft;
+    const identitySnapshot = {
+      weeklyPlanParentId: draftMetadata.weeklyPlanParentId,
+      weeklyPlanVersionId: draftMetadata.weeklyPlanVersionId,
+    };
+
     const timeoutId = window.setTimeout(() => {
-      persistDraftNow(programDraft).catch(() => {});
+      persistDraftNow(draftSnapshot, identitySnapshot).catch(() => {});
     }, 700);
 
     return () => window.clearTimeout(timeoutId);
@@ -449,6 +599,8 @@ export function ManualProgramProvider({ children }) {
       workouts: [],
     });
     setDraftMetadata(createInitialDraftMetadata());
+    loadedIdentityRef.current = null;
+    targetIdentityRef.current = null;
   }, []);
 
   const updateProgramMeta = useCallback((updates = {}) => {
@@ -866,10 +1018,42 @@ export function ManualProgramProvider({ children }) {
   const resetProgramDraft = useCallback(() => {
     setProgramDraft(createInitialDraft());
     setDraftMetadata(createInitialDraftMetadata());
+    loadedIdentityRef.current = null;
+    targetIdentityRef.current = null;
   }, []);
 
   const hydrateProgramDraft = useCallback((response, options = {}) => {
     const nextState = mapBuilderPayloadToProgramDraft(response);
+    const responseIdentity = {
+      weeklyPlanParentId: nextState.metadata.weeklyPlanParentId,
+      weeklyPlanVersionId: nextState.metadata.weeklyPlanVersionId,
+    };
+
+    // Weekly plan has no caller yet that proactively declares a hydration
+    // target ahead of dispatching its fetch (that lands in Phase 1B, when the
+    // page components that call this are touched) -- so a hydrate response
+    // declares its own target here. This makes the cross-document
+    // identity-mismatch branch unreachable in this phase; the local-authority
+    // check below is what protects against clobbering an in-flight/dirty
+    // document today.
+    targetIdentityRef.current = responseIdentity;
+
+    const isSameDocumentAlreadyLoaded = sameIdentity(
+      loadedIdentityRef.current,
+      responseIdentity
+    );
+
+    if (isSameDocumentAlreadyLoaded) {
+      const currentSaveState = draftMetadataRef.current.saveState;
+
+      if (currentSaveState === "dirty" || currentSaveState === "saving") {
+        // Local edits or an in-flight/queued save for this exact document
+        // take priority over a redundant "open draft" response -- applying
+        // it here would silently revert whatever the user is mid-editing.
+        return;
+      }
+    }
+
     setProgramDraft((prev) => ({
       ...nextState.programDraft,
       workouts: attachUiKeysToWorkouts(
@@ -882,6 +1066,7 @@ export function ManualProgramProvider({ children }) {
       ...nextState.metadata,
       originRoute: options.originRoute ?? null,
     });
+    loadedIdentityRef.current = responseIdentity;
   }, []);
 
   const setDraftOriginRoute = useCallback((originRoute) => {
