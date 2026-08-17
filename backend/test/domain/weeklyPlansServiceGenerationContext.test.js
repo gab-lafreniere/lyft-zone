@@ -627,6 +627,10 @@ test('targetSeconds survives draft update persistence input', async () => {
       callback({
         weeklyPlanVersion: {
           findFirst: async () => ({ id: 'version_123' }),
+          // Phase 2's revision CAS runs before this update; the payload here
+          // sends no `revision`, so it always takes the no-predicate
+          // compatibility-opt-out path and just needs to exist.
+          updateMany: async () => ({ count: 1 }),
           update: async ({ data }) => {
             updatedVersionData = data;
             return {};

@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import { mapProgramDraftToWeeklyPlanUpdate, mapBuilderPayloadToProgramDraft } from "../features/weeklyPlans/mappers";
-import { updateWeeklyPlanDraft } from "../services/api";
+import { openOrCreateWeeklyPlanEditDraft, updateWeeklyPlanDraft } from "../services/api";
 import { attachBlockUiKeys, createBlockUiKey } from "../utils/blockUiKeys";
 import { getDuplicateWorkoutName } from "../utils/duplicateWorkoutName";
 
@@ -306,6 +306,9 @@ function createInitialDraftMetadata() {
     saveState: "idle",
     lastPersistedSignature: "",
     originRoute: null,
+    revision: null,
+    lastSaveErrorMessage: null,
+    lastSaveErrorCode: null,
   };
 }
 
@@ -355,6 +358,24 @@ export function ManualProgramProvider({ children }) {
   useEffect(() => {
     draftMetadataRef.current = draftMetadata;
   }, [draftMetadata]);
+
+  // `DRAFT_REVISION_CONFLICT` is deliberately NOT the same recovery path as
+  // `DRAFT_EXPIRED` (cycle-only, unrelated to this context): it must never
+  // silently discard local content. This handler only sets state -- it does
+  // not touch programDraft and does not auto-retry. The only way out of
+  // "conflict" is the user explicitly confirming reloadLatestAfterConflict().
+  const handleRevisionConflict = useCallback((error) => {
+    setDraftMetadata((prev) => (
+      prev.saveState === "conflict"
+        ? prev
+        : {
+          ...prev,
+          saveState: "conflict",
+          lastSaveErrorMessage: error?.message || "This draft was updated elsewhere.",
+          lastSaveErrorCode: error?.code || "DRAFT_REVISION_CONFLICT",
+        }
+    ));
+  }, []);
 
   const persistDraftNow = useCallback(async (overrideDraft = null, overrideIdentity = null) => {
     const currentMetadata = draftMetadataRef.current;
@@ -406,7 +427,7 @@ export function ManualProgramProvider({ children }) {
       const response = await updateWeeklyPlanDraft(
         identity.weeklyPlanParentId,
         identity.weeklyPlanVersionId,
-        payload
+        { ...payload, revision: currentMetadata.revision }
       );
 
       if (!isStillCurrentTarget()) {
@@ -452,6 +473,7 @@ export function ManualProgramProvider({ children }) {
         lastSavedAt: response.updatedAt || new Date().toISOString(),
         saveState: "saved",
         lastPersistedSignature: updatedSignature,
+        revision: response.revision ?? prev.revision,
       }));
 
       return response;
@@ -465,9 +487,14 @@ export function ManualProgramProvider({ children }) {
         result = await runSave();
       } catch (error) {
         saveError = error;
-        setDraftMetadata((prev) => (
-          prev.saveState === "error" ? prev : { ...prev, saveState: "error" }
-        ));
+
+        if (error?.code === "DRAFT_REVISION_CONFLICT") {
+          handleRevisionConflict(error);
+        } else {
+          setDraftMetadata((prev) => (
+            prev.saveState === "error" ? prev : { ...prev, saveState: "error" }
+          ));
+        }
       } finally {
         saveInFlightPromiseRef.current = null;
       }
@@ -482,7 +509,10 @@ export function ManualProgramProvider({ children }) {
           mapProgramDraftToWeeklyPlanUpdate(latestDraft)
         );
 
-        if (latestSignature !== latestMetadata.lastPersistedSignature) {
+        if (
+          latestMetadata.saveState !== "conflict" &&
+          latestSignature !== latestMetadata.lastPersistedSignature
+        ) {
           // Award the coalesced follow-up the freshest snapshot, and chain it
           // onto this promise so a single `await persistDraftNow()` (e.g. a
           // future publish flush) resolves only once the follow-up also
@@ -504,14 +534,24 @@ export function ManualProgramProvider({ children }) {
 
     saveInFlightPromiseRef.current = savePromise;
     return savePromise;
-  }, []);
+  }, [handleRevisionConflict]);
 
   useEffect(() => {
     if (
       !draftMetadata.loadedFromBackend ||
       !draftMetadata.weeklyPlanParentId ||
-      !draftMetadata.weeklyPlanVersionId
+      !draftMetadata.weeklyPlanVersionId ||
+      draftMetadataRef.current.saveState === "conflict"
     ) {
+      // While conflicted, autosave is suspended entirely -- retrying with
+      // the same known-stale revision would just conflict again. The user
+      // keeps editing normally (programDraft still updates); this effect
+      // just never re-arms until reloadLatestAfterConflict() resolves it.
+      // Reads the ref (not a `saveState` dependency) deliberately: adding
+      // `saveState` to this effect's own deps would make it re-run on every
+      // saveState transition it's responsible for causing -- including
+      // "saving" -> "error" -- and its own dirty-fallback below would then
+      // immediately stomp that error state back to "dirty".
       return undefined;
     }
 
@@ -1038,19 +1078,27 @@ export function ManualProgramProvider({ children }) {
     // document today.
     targetIdentityRef.current = responseIdentity;
 
-    const isSameDocumentAlreadyLoaded = sameIdentity(
-      loadedIdentityRef.current,
-      responseIdentity
-    );
+    if (!options.force) {
+      const isSameDocumentAlreadyLoaded = sameIdentity(
+        loadedIdentityRef.current,
+        responseIdentity
+      );
 
-    if (isSameDocumentAlreadyLoaded) {
-      const currentSaveState = draftMetadataRef.current.saveState;
+      if (isSameDocumentAlreadyLoaded) {
+        const currentSaveState = draftMetadataRef.current.saveState;
 
-      if (currentSaveState === "dirty" || currentSaveState === "saving") {
-        // Local edits or an in-flight/queued save for this exact document
-        // take priority over a redundant "open draft" response -- applying
-        // it here would silently revert whatever the user is mid-editing.
-        return;
+        if (
+          currentSaveState === "dirty" ||
+          currentSaveState === "saving" ||
+          currentSaveState === "conflict"
+        ) {
+          // Local edits, an in-flight/queued save, or an unresolved conflict
+          // for this exact document all take priority over a redundant
+          // "open draft" response -- applying it here would silently revert
+          // whatever the user is mid-editing, or silently resolve a
+          // conflict without the user's explicit confirmation.
+          return;
+        }
       }
     }
 
@@ -1068,6 +1116,36 @@ export function ManualProgramProvider({ children }) {
     });
     loadedIdentityRef.current = responseIdentity;
   }, []);
+
+  // The only path back from `saveState === "conflict"`. Explicitly
+  // destructive -- discards every unsaved local edit made since the
+  // conflict was detected -- so the calling UI must show an explicit
+  // confirmation step before invoking this, not call it as a direct,
+  // unconfirmed side effect of a single click.
+  const reloadLatestAfterConflict = useCallback(async () => {
+    const currentMetadata = draftMetadataRef.current;
+
+    if (currentMetadata.saveState !== "conflict" || !currentMetadata.weeklyPlanParentId) {
+      return null;
+    }
+
+    try {
+      const response = await openOrCreateWeeklyPlanEditDraft(currentMetadata.weeklyPlanParentId);
+      // Explicit, user-confirmed discard-and-reload -- force past the
+      // local-authority guard the same way DRAFT_EXPIRED recovery does for
+      // the cycle builder.
+      hydrateProgramDraft(response, { force: true });
+      return response;
+    } catch (reloadError) {
+      setDraftMetadata((prev) => ({
+        ...prev,
+        saveState: "error",
+        lastSaveErrorMessage: reloadError?.message || "Unable to reload draft. Please refresh the page.",
+        lastSaveErrorCode: reloadError?.code || null,
+      }));
+      return null;
+    }
+  }, [hydrateProgramDraft]);
 
   const setDraftOriginRoute = useCallback((originRoute) => {
     setDraftMetadata((prev) => ({
@@ -1210,6 +1288,7 @@ export function ManualProgramProvider({ children }) {
       draftMetadata,
       hydrateProgramDraft,
       persistDraftNow,
+      reloadLatestAfterConflict,
       setDraftOriginRoute,
       updateDraftMetadata,
     }),
@@ -1242,6 +1321,7 @@ export function ManualProgramProvider({ children }) {
       draftMetadata,
       hydrateProgramDraft,
       persistDraftNow,
+      reloadLatestAfterConflict,
       setDraftOriginRoute,
       updateDraftMetadata,
     ]

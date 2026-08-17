@@ -305,6 +305,7 @@ export function mapCycleBuilderPayload(response) {
       loadedFromBackend: true,
       lastSavedAt: response.updatedAt || null,
       saveState: "saved",
+      revision: response.revision ?? null,
       lastPersistedSignature: JSON.stringify(
         mapMultiWeekDraftToApi({
           programName: builderPayload.programName || "",

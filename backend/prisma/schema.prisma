@@ -250,6 +250,7 @@ model WeeklyPlanVersion {
   publishedAt       DateTime?
   supersededAt      DateTime?
   archivedAt        DateTime?
+  revision          Int                      @default(1)
   createdAt         DateTime                 @default(now())
   updatedAt         DateTime                 @updatedAt
   weeklyPlanParent  WeeklyPlanParent         @relation(fields: [weeklyPlanParentId], references: [id], onDelete: Cascade)
@@ -376,6 +377,7 @@ model Plan {
   durationWeeks     Int?
   publishedAt       DateTime?
   supersededAt      DateTime?
+  revision          Int            @default(1)
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
   trainingCycle     TrainingCycle  @relation(fields: [trainingCycleId], references: [id], onDelete: Cascade)

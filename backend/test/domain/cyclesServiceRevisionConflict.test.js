@@ -1,12 +1,11 @@
-// The Manual Builder posts the whole plan document on every autosave so the backend can
-// diff it against the stored draft. Raising the request-body limit makes those payloads
-// arrive; these tests pin the two properties that make sending a whole document safe:
+// Phase 2: proves the atomic compare-and-swap in updateCycleDraft.
 //
-//   1. a one-set edit writes only the touched workout, not the plan;
-//   2. a week omitted from the payload is still deleted.
-//
-// (2) is why "just send the edited week" is not a valid optimization: omission means
-// deletion, and any future change to that contract has to break this test first.
+// The CAS is a single conditional `tx.plan.updateMany({ where: { id, revision },
+// data: { revision: { increment: 1 } } })`, not a read-then-compare-in-JS-then-write.
+// These tests pin: a matching revision claims successfully and bumps the counter; a
+// stale revision is rejected with a typed 409 before any content-mutation statement
+// runs; a missing revision (compatibility opt-out) always succeeds; and a retry against
+// the latest revision succeeds after a prior conflict.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -25,13 +24,14 @@ require.cache[prismaPath] = {
 
 const { updateCycleDraft } = require('../../services/cyclesService');
 
-const USER_ID = 'user_diff_scope';
-const CYCLE_ID = 'cycle_diff_scope';
-const PLAN_ID = 'plan_diff_scope';
+const USER_ID = 'user_revision';
+const CYCLE_ID = 'cycle_revision';
+const PLAN_ID = 'plan_revision';
 const TIMEZONE = 'America/Toronto';
 const START_DATE = new Date('2026-09-07T00:00:00.000Z');
 const END_DATE = new Date('2026-09-20T00:00:00.000Z');
 const DURATION_WEEKS = 2;
+const STORED_REVISION = 5;
 
 function buildSetTemplate(exerciseKey, setIndex) {
   return {
@@ -54,7 +54,7 @@ function buildStoredPlan() {
   return {
     id: PLAN_ID,
     trainingCycleId: CYCLE_ID,
-    name: 'Diff scope plan',
+    name: 'Revision plan',
     versionNumber: 2,
     sourceType: 'USER',
     status: 'DRAFT',
@@ -62,6 +62,7 @@ function buildStoredPlan() {
     endDate: END_DATE,
     durationWeeks: DURATION_WEEKS,
     publishedAt: null,
+    revision: STORED_REVISION,
     createdAt: new Date('2026-08-14T00:00:00.000Z'),
     updatedAt: new Date('2026-08-14T00:00:00.000Z'),
     weeks: Array.from({ length: DURATION_WEEKS }, (_, weekIndex) => {
@@ -74,7 +75,7 @@ function buildStoredPlan() {
         orderIndex: weekNumber,
         label: `Week ${weekNumber}`,
         notes: null,
-        workouts: Array.from({ length: 2 }, (_, workoutIndex) => {
+        workouts: Array.from({ length: 1 }, (_, workoutIndex) => {
           const workoutId = `${weekId}_workout_${workoutIndex + 1}`;
           return {
             id: workoutId,
@@ -173,14 +174,14 @@ function toApiDocument(plan) {
   };
 }
 
-function createHarness(storedPlan) {
+function createHarness(storedPlan, { updateManyResult = { count: 1 } } = {}) {
   const calls = [];
   const record = (model, op, extra = {}) => calls.push({ model, op, ...extra });
 
   const cycle = {
     id: CYCLE_ID,
     userId: USER_ID,
-    name: 'Diff scope cycle',
+    name: 'Revision cycle',
     startDate: START_DATE,
     endDate: END_DATE,
     durationWeeks: DURATION_WEEKS,
@@ -195,12 +196,10 @@ function createHarness(storedPlan) {
       findUnique: async () => { record('plan', 'findUnique'); return storedPlan; },
       findFirst: async () => { record('plan', 'findFirst'); return storedPlan; },
       update: async ({ data }) => { record('plan', 'update', { data }); return storedPlan; },
-      // Phase 2's revision CAS runs before the diff/apply logic these tests
-      // exercise. None of these payloads send `revision`, so the CAS always
-      // takes the no-predicate compatibility-opt-out path regardless of what
-      // this returns -- it only needs to exist so the CAS statement itself
-      // doesn't throw.
-      updateMany: async ({ where, data }) => { record('plan', 'updateMany', { where, data }); return { count: 1 }; },
+      updateMany: async ({ where, data }) => {
+        record('plan', 'updateMany', { where, data });
+        return typeof updateManyResult === 'function' ? updateManyResult({ where, data }) : updateManyResult;
+      },
       deleteMany: async () => { record('plan', 'deleteMany'); return { count: 0 }; },
     },
     planWeek: {
@@ -262,141 +261,115 @@ function createHarness(storedPlan) {
 function mutationWrites(calls) {
   const mutating = new Set(['create', 'update', 'delete', 'deleteMany', 'createMany', 'createManyAndReturn']);
   return calls.filter(
-    (call) => mutating.has(call.op) && !(call.model === 'plan' && call.op === 'deleteMany')
+    (call) => mutating.has(call.op) && !(call.model === 'plan' && (call.op === 'deleteMany' || call.op === 'updateMany'))
   );
 }
 
-test('adding one set writes only the touched workout, not the whole plan', async () => {
+test('a matching revision claims successfully via a single conditional updateMany and increments', async () => {
   const stored = buildStoredPlan();
-  const harness = createHarness(stored);
+  const harness = createHarness(stored, { updateManyResult: { count: 1 } });
 
-  const incoming = toApiDocument(stored);
-  const targetWorkout = incoming.weeks[0].workouts[0];
-  const targetExercise = targetWorkout.blocks[0].exercises[0];
-  targetExercise.setTemplates.push({
-    setIndex: 3,
-    setType: 'WORKING',
-    targetReps: 10,
-    minReps: 8,
-    maxReps: 12,
-    targetSeconds: null,
-    targetRir: 2,
-    targetRpe: null,
-    tempo: '3010',
-    restSeconds: 90,
-    notes: null,
-  });
-
-  await updateCycleDraft(CYCLE_ID, PLAN_ID, {
-    ...incoming,
-    userId: USER_ID,
-    timezone: TIMEZONE,
-  });
-
-  const writes = mutationWrites(harness.calls);
-
-  // Nothing may touch the plan-wide collections.
-  assert.equal(
-    writes.some((call) => call.model === 'planWeek' && call.op === 'delete'),
-    false,
-    'a set edit must not delete weeks'
-  );
-  assert.equal(
-    writes.some((call) => call.model === 'planWeek' && call.op === 'deleteMany'),
-    false,
-    'a set edit must not wipe the plan weeks'
-  );
-
-  // Only the edited workout's blocks may be replaced.
-  const blockDeletes = writes.filter(
-    (call) => call.model === 'workoutBlock' && call.op === 'deleteMany'
-  );
-  assert.equal(blockDeletes.length, 1, 'exactly one workout may be rebuilt');
-  assert.equal(
-    blockDeletes[0].where?.workoutId,
-    targetWorkout.id,
-    'the rebuilt workout must be the edited one'
-  );
-
-  const touchedWorkoutIds = new Set(
-    writes
-      .filter((call) => call.model === 'workout' && call.op === 'update')
-      .map((call) => call.where?.id)
-  );
-  assert.deepEqual(
-    [...touchedWorkoutIds],
-    [targetWorkout.id],
-    'no untouched workout may be written'
-  );
-});
-
-test('an unchanged document performs no mutation at all', async () => {
-  const stored = buildStoredPlan();
-  const harness = createHarness(stored);
-
-  await updateCycleDraft(CYCLE_ID, PLAN_ID, {
+  const response = await updateCycleDraft(CYCLE_ID, PLAN_ID, {
     ...toApiDocument(stored),
     userId: USER_ID,
     timezone: TIMEZONE,
+    revision: STORED_REVISION,
   });
 
-  assert.deepEqual(
-    mutationWrites(harness.calls).map((call) => `${call.model}.${call.op}`),
-    [],
-    'a no-op save must not write'
-  );
+  assert.ok(response, 'a successful claim must not throw');
+
+  const claimCalls = harness.calls.filter((call) => call.model === 'plan' && call.op === 'updateMany');
+  assert.equal(claimCalls.length, 1, 'exactly one CAS attempt');
+  assert.deepEqual(claimCalls[0].where, { id: PLAN_ID, revision: STORED_REVISION });
+  assert.deepEqual(claimCalls[0].data, { revision: { increment: 1 } });
 });
 
-test('omitting a week is rejected rather than silently deleting it', async () => {
+test('a stale revision returns 409 DRAFT_REVISION_CONFLICT and writes no content', async () => {
   const stored = buildStoredPlan();
-  const harness = createHarness(stored);
+  const harness = createHarness(stored, { updateManyResult: { count: 0 } });
 
-  const incoming = toApiDocument(stored);
-  incoming.weeks.splice(1, 1);
-
-  // Week count belongs to the timeline endpoint, so the draft save refuses a document
-  // whose week count drifted instead of treating the omission as a deletion.
   await assert.rejects(
     () => updateCycleDraft(CYCLE_ID, PLAN_ID, {
-      ...incoming,
+      ...toApiDocument(stored),
       userId: USER_ID,
       timezone: TIMEZONE,
+      revision: STORED_REVISION - 1, // stale on purpose
     }),
-    /week count must match durationWeeks/i
+    (error) => {
+      assert.equal(error.status, 409);
+      assert.equal(error.code, 'DRAFT_REVISION_CONFLICT');
+      return true;
+    }
   );
 
+  // The CAS itself was attempted, but nothing downstream of it ran.
+  const claimCalls = harness.calls.filter((call) => call.model === 'plan' && call.op === 'updateMany');
+  assert.equal(claimCalls.length, 1);
+
+  const writes = mutationWrites(harness.calls);
   assert.deepEqual(
-    mutationWrites(harness.calls).map((call) => `${call.model}.${call.op}`),
+    writes.map((call) => `${call.model}.${call.op}`),
     [],
-    'a rejected document must not write anything'
+    'a rejected CAS must not reach any content-mutation statement'
   );
 });
 
-test('omitting a workout inside a week deletes it (subtractive semantics)', async () => {
+test('a missing revision omits the predicate and always succeeds (compatibility opt-out)', async () => {
   const stored = buildStoredPlan();
-  const harness = createHarness(stored);
+  const harness = createHarness(stored, { updateManyResult: { count: 1 } });
 
-  const incoming = toApiDocument(stored);
-  const removedWorkout = incoming.weeks[0].workouts.pop();
+  const document = toApiDocument(stored);
+  delete document.revision;
 
-  await updateCycleDraft(CYCLE_ID, PLAN_ID, {
-    ...incoming,
+  const response = await updateCycleDraft(CYCLE_ID, PLAN_ID, {
+    ...document,
     userId: USER_ID,
     timezone: TIMEZONE,
+    // no `revision` field at all -- old client mid-rollout
   });
 
-  const workoutDeletes = harness.calls.filter(
-    (call) => call.model === 'workout' && call.op === 'deleteMany'
-  );
-  assert.equal(
-    workoutDeletes.length,
-    1,
-    'omitting a workout must delete it — this is why partial payloads are unsafe'
-  );
-  const deletedIds = workoutDeletes[0].where?.id?.in || [];
+  assert.ok(response);
+
+  const claimCalls = harness.calls.filter((call) => call.model === 'plan' && call.op === 'updateMany');
+  assert.equal(claimCalls.length, 1);
   assert.deepEqual(
-    deletedIds,
-    [removedWorkout.id],
-    'only the omitted workout may be deleted'
+    claimCalls[0].where,
+    { id: PLAN_ID },
+    'no revision predicate when the client does not send one'
   );
+});
+
+test('retry against the latest revision succeeds after a prior conflict', async () => {
+  const stored = buildStoredPlan();
+
+  // First attempt: stale revision, rejected.
+  const firstHarness = createHarness(stored, { updateManyResult: { count: 0 } });
+  await assert.rejects(
+    () => updateCycleDraft(CYCLE_ID, PLAN_ID, {
+      ...toApiDocument(stored),
+      userId: USER_ID,
+      timezone: TIMEZONE,
+      revision: STORED_REVISION - 1,
+    }),
+    (error) => {
+      assert.equal(error.code, 'DRAFT_REVISION_CONFLICT');
+      return true;
+    }
+  );
+  assert.equal(mutationWrites(firstHarness.calls).length, 0);
+
+  // Second attempt: same document, but now sent with the current stored revision
+  // (as if the client reloaded via reloadLatestAfterConflict() first) -- succeeds.
+  const secondHarness = createHarness(stored, { updateManyResult: { count: 1 } });
+  const response = await updateCycleDraft(CYCLE_ID, PLAN_ID, {
+    ...toApiDocument(stored),
+    userId: USER_ID,
+    timezone: TIMEZONE,
+    revision: STORED_REVISION,
+  });
+
+  assert.ok(response);
+  const claimCalls = secondHarness.calls.filter((call) => call.model === 'plan' && call.op === 'updateMany');
+  assert.equal(claimCalls.length, 1);
+  assert.deepEqual(claimCalls[0].where, { id: PLAN_ID, revision: STORED_REVISION });
 });

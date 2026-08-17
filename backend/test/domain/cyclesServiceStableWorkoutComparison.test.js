@@ -332,6 +332,10 @@ function createPrismaMock(draft) {
       update: recordWrite('plan.update'),
       delete: recordWrite('plan.delete'),
       deleteMany: recordWrite('plan.deleteMany'),
+      // Phase 2's revision CAS runs before these tests' validation checks;
+      // none of their payloads send `revision`, so it always takes the
+      // no-predicate compatibility-opt-out path.
+      updateMany: async () => ({ count: 1 }),
     },
     planWeek: {
       create: recordWrite('planWeek.create'),

@@ -281,6 +281,7 @@ function createInitialDraftMetadata() {
     lastSavedAt: null,
     saveState: "idle",
     lastPersistedSignature: "",
+    revision: null,
     draftState: null,
     draftTimeline: null,
     allowCrossDayDraft: false,
@@ -424,11 +425,17 @@ export function MultiWeekProgramProvider({ children }) {
       if (isSameDocumentAlreadyLoaded) {
         const currentSaveState = draftMetadataRef.current.saveState;
 
-        if (currentSaveState === "dirty" || currentSaveState === "saving") {
-          // Local edits or an in-flight/queued save for this exact document
-          // take priority over a redundant "open draft" response -- applying
-          // it here would silently revert whatever the user is mid-editing.
-          // This is the fix for the reproduced navigation-revert bug.
+        if (
+          currentSaveState === "dirty" ||
+          currentSaveState === "saving" ||
+          currentSaveState === "conflict"
+        ) {
+          // Local edits, an in-flight/queued save, or an unresolved conflict
+          // for this exact document all take priority over a redundant
+          // "open draft" response -- applying it here would silently revert
+          // whatever the user is mid-editing (this is the fix for the
+          // reproduced navigation-revert bug), or silently resolve a
+          // conflict without the user's explicit confirmation.
           return;
         }
       }
@@ -515,6 +522,56 @@ export function MultiWeekProgramProvider({ children }) {
     return true;
   }, [hydrateProgramDraft]);
 
+  // `DRAFT_REVISION_CONFLICT` is deliberately NOT the same recovery path as
+  // `DRAFT_EXPIRED` above: it must never silently discard local content.
+  // This handler only sets state -- it does not touch multiWeekDraft and
+  // does not auto-retry. The only way out of "conflict" is the user
+  // explicitly confirming reloadLatestAfterConflict().
+  const handleRevisionConflict = useCallback((error) => {
+    setDraftMetadata((prev) => (
+      prev.saveState === "conflict"
+        ? prev
+        : {
+          ...prev,
+          saveState: "conflict",
+          lastSaveErrorMessage: error?.message || "This draft was updated elsewhere.",
+          lastSaveErrorCode: error?.code || "DRAFT_REVISION_CONFLICT",
+        }
+    ));
+  }, []);
+
+  // The only path back from `saveState === "conflict"`. Explicitly
+  // destructive -- discards every unsaved local edit made since the
+  // conflict was detected -- so the calling UI must show an explicit
+  // confirmation step before invoking this, not call it as a direct,
+  // unconfirmed side effect of a single click.
+  const reloadLatestAfterConflict = useCallback(async () => {
+    const currentMetadata = draftMetadataRef.current;
+
+    if (currentMetadata.saveState !== "conflict" || !currentMetadata.cycleId) {
+      return null;
+    }
+
+    try {
+      const response = await openOrCreateCycleEditDraft(currentMetadata.cycleId, {
+        timezone: currentMetadata?.timezone,
+        allowCrossDayDraft: currentMetadata?.allowCrossDayDraft,
+      });
+      // Explicit, user-confirmed discard-and-reload -- force past the
+      // local-authority guard the same way DRAFT_EXPIRED recovery does.
+      hydrateProgramDraft(response, { force: true });
+      return response;
+    } catch (reloadError) {
+      setDraftMetadata((prev) => ({
+        ...prev,
+        saveState: "error",
+        lastSaveErrorMessage: reloadError?.message || "Unable to reload draft. Please refresh the page.",
+        lastSaveErrorCode: reloadError?.code || null,
+      }));
+      return null;
+    }
+  }, [hydrateProgramDraft]);
+
   const persistDraftNow = useCallback(async (overrideDraft = null, overrideIdentity = null) => {
     const currentMetadata = draftMetadataRef.current;
     const currentPlanId = currentMetadata?.cyclePlanId || null;
@@ -574,6 +631,7 @@ export function MultiWeekProgramProvider({ children }) {
       const response = await updateCycleDraft(identity.cycleId, identity.planId, {
         ...payload,
         allowCrossDayDraft: currentMetadata.allowCrossDayDraft,
+        revision: currentMetadata.revision,
       });
 
       if (!isStillCurrentTarget()) {
@@ -649,20 +707,25 @@ export function MultiWeekProgramProvider({ children }) {
       try {
         result = await runSave();
       } catch (error) {
-        const didRecoverDraft = await handleDraftExpired(error, currentMetadata?.cycleId || null);
-
-        if (!didRecoverDraft) {
+        if (error?.code === "DRAFT_REVISION_CONFLICT") {
           saveError = error;
-          setDraftMetadata((prev) => (
-            prev.saveState === "error"
-              ? prev
-              : {
-                ...prev,
-                saveState: "error",
-                lastSaveErrorMessage: error?.message || "Unable to autosave this draft.",
-                lastSaveErrorCode: error?.code || null,
-              }
-          ));
+          handleRevisionConflict(error);
+        } else {
+          const didRecoverDraft = await handleDraftExpired(error, currentMetadata?.cycleId || null);
+
+          if (!didRecoverDraft) {
+            saveError = error;
+            setDraftMetadata((prev) => (
+              prev.saveState === "error"
+                ? prev
+                : {
+                  ...prev,
+                  saveState: "error",
+                  lastSaveErrorMessage: error?.message || "Unable to autosave this draft.",
+                  lastSaveErrorCode: error?.code || null,
+                }
+            ));
+          }
         }
       } finally {
         saveInFlightPromiseRef.current = null;
@@ -674,7 +737,7 @@ export function MultiWeekProgramProvider({ children }) {
         pendingSaveRequestedRef.current = false;
         const latestMetadata = draftMetadataRef.current;
 
-        if (!latestMetadata?.isRecoveringDraft) {
+        if (!latestMetadata?.isRecoveringDraft && latestMetadata?.saveState !== "conflict") {
           const latestDraft = multiWeekDraftRef.current;
           const latestSignature = JSON.stringify(mapMultiWeekDraftToApi(latestDraft));
 
@@ -709,15 +772,32 @@ export function MultiWeekProgramProvider({ children }) {
 
     saveInFlightPromiseRef.current = savePromise;
     return savePromise;
-  }, [handleDraftExpired]);
+  }, [handleDraftExpired, handleRevisionConflict]);
 
   useEffect(() => {
     if (
-      draftMetadata.isRecoveringDraft ||
+      draftMetadataRef.current.isRecoveringDraft ||
       !draftMetadata.loadedFromBackend ||
       !draftMetadata.cycleId ||
-      !draftMetadata.cyclePlanId
+      !draftMetadata.cyclePlanId ||
+      draftMetadataRef.current.saveState === "conflict"
     ) {
+      // While conflicted, autosave is suspended entirely -- retrying with
+      // the same known-stale revision would just conflict again. The user
+      // keeps editing normally (multiWeekDraft still updates); this effect
+      // just never re-arms until reloadLatestAfterConflict() resolves it.
+      // Same reasoning for isRecoveringDraft: a *failed* DRAFT_EXPIRED
+      // recovery sets isRecoveringDraft:false and saveState:"error" in the
+      // same setDraftMetadata call, from inside this effect's own dispatched
+      // save. If isRecoveringDraft were a dependency, that transition would
+      // re-run this effect, and its own dirty-fallback below (which treats
+      // any non-saving/non-dirty state as "must be dirty") would stomp the
+      // freshly-set "error" state right back to "dirty" and silently
+      // re-arm a save of a pre-recovery-failure snapshot. Reading both
+      // flags from the ref (not as dependencies) avoids that loop; any
+      // genuine new edit still re-runs this effect via the multiWeekDraft
+      // dependency below, so recovery completing (success or failure) is
+      // still correctly picked up on the next real edit.
       return undefined;
     }
 
@@ -764,7 +844,6 @@ export function MultiWeekProgramProvider({ children }) {
   }, [
     draftMetadata.cycleId,
     draftMetadata.cyclePlanId,
-    draftMetadata.isRecoveringDraft,
     draftMetadata.lastPersistedSignature,
     draftMetadata.loadedFromBackend,
     multiWeekDraft,
@@ -1665,6 +1744,7 @@ export function MultiWeekProgramProvider({ children }) {
       hydrateProgramDraft,
       handleDraftExpired,
       persistDraftNow,
+      reloadLatestAfterConflict,
       getMultiWeekTodayDateKey: () =>
         getMultiWeekTodayDateKey(draftMetadataRef.current, multiWeekDraftRef.current),
       updateProgramMeta,
@@ -1698,6 +1778,7 @@ export function MultiWeekProgramProvider({ children }) {
       hydrateProgramDraft,
       handleDraftExpired,
       persistDraftNow,
+      reloadLatestAfterConflict,
       updateProgramMeta,
       setSelectedWeek,
       updateWorkoutName,

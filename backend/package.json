@@ -12,6 +12,7 @@
     "replay:bound-plan-bind": "node scripts/replayBoundPlanBind.js",
     "test:prisma-api-flow": "node scripts/test-prisma-api-flow.js",
     "test:domain": "node --test test/domain/*.test.js",
+    "test:integration": "node --test test/integration/*.integration.test.js",
     "validate:exercises": "node src/exercise-library/validate-exercises.js",
     "seed:exercises": "node prisma/seed-exercises.js",
     "seed:exercises:dry": "node prisma/seed-exercises.js --dry-run",

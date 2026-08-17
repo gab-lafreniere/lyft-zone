@@ -4,9 +4,10 @@ import {
   ManualProgramProvider,
   useManualProgram,
 } from "../ManualProgramContext";
-import { updateWeeklyPlanDraft } from "../../services/api";
+import { openOrCreateWeeklyPlanEditDraft, updateWeeklyPlanDraft } from "../../services/api";
 
 jest.mock("../../services/api", () => ({
+  openOrCreateWeeklyPlanEditDraft: jest.fn(),
   updateWeeklyPlanDraft: jest.fn(),
 }));
 
@@ -136,6 +137,7 @@ describe("ManualProgramProvider autosave race (Phase 1A)", () => {
     jest.useFakeTimers();
     currentContext = null;
     updateWeeklyPlanDraft.mockReset();
+    openOrCreateWeeklyPlanEditDraft.mockReset();
   });
 
   afterEach(() => {
@@ -307,5 +309,122 @@ describe("ManualProgramProvider autosave race (Phase 1A)", () => {
       updateWeeklyPlanDraft.mock.calls[1][2].workouts[0].blocks[0].exercises[0].setTemplates[0]
         .targetReps
     ).toBe(11);
+  });
+});
+
+// Phase 2: DRAFT_REVISION_CONFLICT must never silently discard local content --
+// deliberately NOT the same recovery path as DRAFT_EXPIRED (which is cycle-only anyway).
+describe("ManualProgramProvider revision conflict (Phase 2)", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    currentContext = null;
+    updateWeeklyPlanDraft.mockReset();
+    openOrCreateWeeklyPlanEditDraft.mockReset();
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  function conflictError() {
+    return Object.assign(new Error("This draft was updated elsewhere."), {
+      code: "DRAFT_REVISION_CONFLICT",
+      status: 409,
+    });
+  }
+
+  test("preserves local content untouched on conflict and does not call hydrate/openOrCreateWeeklyPlanEditDraft", async () => {
+    updateWeeklyPlanDraft.mockRejectedValue(conflictError());
+    renderProvider();
+
+    act(() => currentContext.hydrateProgramDraft(buildResponse({ reps: 8 })));
+    act(() => currentContext.updateSet("workout_1", "block_1", 0, { reps: 42 }));
+
+    await act(async () => {
+      jest.advanceTimersByTime(700);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("save-state")).toHaveTextContent("conflict");
+    // The edit the user actually made is still exactly what's on screen --
+    // nothing was reverted or overwritten by the rejected response.
+    expect(screen.getByTestId("reps")).toHaveTextContent("42");
+    expect(openOrCreateWeeklyPlanEditDraft).not.toHaveBeenCalled();
+  });
+
+  test("autosave suspends while saveState is conflict -- further edits and elapsed time never fire another PATCH", async () => {
+    updateWeeklyPlanDraft.mockRejectedValue(conflictError());
+    renderProvider();
+
+    act(() => currentContext.hydrateProgramDraft(buildResponse({ reps: 8 })));
+    act(() => currentContext.updateSet("workout_1", "block_1", 0, { reps: 42 }));
+
+    await act(async () => {
+      jest.advanceTimersByTime(700);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("save-state")).toHaveTextContent("conflict");
+    expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+
+    // Further edits while conflicted must not re-arm autosave.
+    act(() => currentContext.updateSet("workout_1", "block_1", 0, { reps: 43 }));
+    await act(async () => {
+      jest.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+
+    expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("save-state")).toHaveTextContent("conflict");
+    expect(screen.getByTestId("reps")).toHaveTextContent("43");
+  });
+
+  test("reloadLatestAfterConflict() is the only path back to saved, and it discards local edits by calling hydrateProgramDraft", async () => {
+    updateWeeklyPlanDraft.mockRejectedValue(conflictError());
+    renderProvider();
+
+    act(() => currentContext.hydrateProgramDraft(buildResponse({ reps: 8 })));
+    act(() => currentContext.updateSet("workout_1", "block_1", 0, { reps: 42 }));
+
+    await act(async () => {
+      jest.advanceTimersByTime(700);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("save-state")).toHaveTextContent("conflict");
+
+    openOrCreateWeeklyPlanEditDraft.mockResolvedValue(
+      buildResponse({ reps: 99, updatedAt: "2026-07-21T13:00:00.000Z" })
+    );
+
+    await act(async () => {
+      await currentContext.reloadLatestAfterConflict();
+    });
+
+    expect(openOrCreateWeeklyPlanEditDraft).toHaveBeenCalledTimes(1);
+    expect(openOrCreateWeeklyPlanEditDraft).toHaveBeenCalledWith("weekly_parent_1");
+    // The local edit (42) is gone -- the server's fresh value (99) won instead,
+    // because the user explicitly confirmed the discard-and-reload.
+    expect(screen.getByTestId("reps")).toHaveTextContent("99");
+    expect(screen.getByTestId("save-state")).toHaveTextContent("saved");
+  });
+
+  test("DRAFT_EXPIRED-style behavior is irrelevant here -- a generic error still uses the plain error path, not conflict", async () => {
+    updateWeeklyPlanDraft.mockRejectedValue(new Error("network down"));
+    renderProvider();
+
+    act(() => currentContext.hydrateProgramDraft(buildResponse({ reps: 8 })));
+    act(() => currentContext.updateSet("workout_1", "block_1", 0, { reps: 42 }));
+
+    await act(async () => {
+      jest.advanceTimersByTime(700);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("save-state")).toHaveTextContent("error");
   });
 });

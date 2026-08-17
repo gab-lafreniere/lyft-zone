@@ -74,6 +74,7 @@ export default function ManualBuilder() {
     updateProgramMeta,
     updateSessionsPerWeek,
     resetProgramDraft,
+    reloadLatestAfterConflict,
   } = useManualProgram();
   const [showMuscleDistribution, setShowMuscleDistribution] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -86,6 +87,7 @@ export default function ManualBuilder() {
   const [settingsSessionsError, setSettingsSessionsError] = useState("");
   const [showDeleteProgramConfirm, setShowDeleteProgramConfirm] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isReloadingAfterConflict, setIsReloadingAfterConflict] = useState(false);
   const [isPublishingAndTransforming, setIsPublishingAndTransforming] = useState(false);
   const [publishAndTransformError, setPublishAndTransformError] = useState("");
   const [deleteProgramError, setDeleteProgramError] = useState("");
@@ -229,6 +231,10 @@ export default function ManualBuilder() {
   const backTarget = resolveBackTarget(location, "/program");
 
   const saveStatusLabel = useMemo(() => {
+    if (draftMetadata.saveState === "conflict") {
+      return "Update available";
+    }
+
     if (draftMetadata.saveState === "saving") {
       return "Saving...";
     }
@@ -243,6 +249,27 @@ export default function ManualBuilder() {
 
     return "Draft";
   }, [draftMetadata.lastSavedAt, draftMetadata.saveState]);
+
+  const handleReloadAfterConflict = async () => {
+    if (isReloadingAfterConflict) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Reload latest version? Your unsaved local changes will be discarded."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsReloadingAfterConflict(true);
+    try {
+      await reloadLatestAfterConflict();
+    } finally {
+      setIsReloadingAfterConflict(false);
+    }
+  };
 
   const toggleEditMode = () => {
     setIsEditMode((prev) => {
@@ -397,7 +424,8 @@ export default function ManualBuilder() {
     if (
       !isWeeklyTemplateReady ||
       !draftMetadata.weeklyPlanParentId ||
-      isPublishing
+      isPublishing ||
+      draftMetadata.saveState === "conflict"
     ) {
       return;
     }
@@ -421,7 +449,12 @@ export default function ManualBuilder() {
   };
 
   const handlePublishAndTransform = async () => {
-    if (!isWeeklyTemplateReady || isPublishing || isPublishingAndTransforming) {
+    if (
+      !isWeeklyTemplateReady ||
+      isPublishing ||
+      isPublishingAndTransforming ||
+      draftMetadata.saveState === "conflict"
+    ) {
       return;
     }
 
@@ -515,6 +548,25 @@ export default function ManualBuilder() {
       </header>
 
       <main className="mx-auto max-w-md space-y-4 px-4 pt-4">
+        {draftMetadata.saveState === "conflict" && (
+          <div className="flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-800 shadow-sm">
+            <p className="text-sm font-semibold">
+              This plan was updated elsewhere.
+            </p>
+            <p className="text-xs text-amber-700">
+              Your unsaved changes are not being saved while this is unresolved.
+            </p>
+            <button
+              type="button"
+              onClick={handleReloadAfterConflict}
+              disabled={isReloadingAfterConflict}
+              className="mt-1 self-start rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isReloadingAfterConflict ? "Reloading..." : "Reload latest version"}
+            </button>
+          </div>
+        )}
+
         <div className="relative flex flex-col gap-3 overflow-hidden rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
           <div className="absolute -right-16 -top-16 h-32 w-32 rounded-full bg-primary/5" />
 
@@ -788,11 +840,19 @@ export default function ManualBuilder() {
         <div className="flex flex-col items-center pb-12 pt-8">
           <button
             type="button"
-            disabled={!isWeeklyTemplateReady || isPublishing || isPublishingAndTransforming}
+            disabled={
+              !isWeeklyTemplateReady ||
+              isPublishing ||
+              isPublishingAndTransforming ||
+              draftMetadata.saveState === "conflict"
+            }
             onClick={handlePublishAndTransform}
             className={[
               "flex w-full max-w-xs items-center justify-center gap-2 rounded-xl border-2 p-3 font-semibold transition-all",
-              isWeeklyTemplateReady && !isPublishing && !isPublishingAndTransforming
+              isWeeklyTemplateReady &&
+                !isPublishing &&
+                !isPublishingAndTransforming &&
+                draftMetadata.saveState !== "conflict"
                 ? "border-primary/30 bg-white text-primary hover:border-primary/50"
                 : "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400",
             ].join(" ")}
@@ -825,12 +885,16 @@ export default function ManualBuilder() {
             disabled={
               !isWeeklyTemplateReady ||
               !draftMetadata.weeklyPlanParentId ||
-              isPublishing
+              isPublishing ||
+              draftMetadata.saveState === "conflict"
             }
             onClick={handlePublish}
             className={[
               "flex w-full items-center justify-center rounded-xl py-4 font-bold transition-colors",
-              isWeeklyTemplateReady && draftMetadata.weeklyPlanParentId && !isPublishing
+              isWeeklyTemplateReady &&
+                draftMetadata.weeklyPlanParentId &&
+                !isPublishing &&
+                draftMetadata.saveState !== "conflict"
                 ? "bg-primary text-slate-900"
                 : "cursor-not-allowed bg-slate-300 text-white/60",
             ].join(" ")}

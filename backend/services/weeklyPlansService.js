@@ -591,6 +591,7 @@ function mapVersionToBuilderPayload(parent, version) {
     status: version.status,
     source: sourceTypeToClientValue(parent.sourceType),
     updatedAt: version.updatedAt,
+    revision: version.revision ?? null,
     builderPayload: {
       programName: version.name,
       sessionsPerWeek: version.sessionsPerWeek,
@@ -1111,11 +1112,31 @@ async function updateWeeklyPlanDraft(weeklyPlanParentId, versionId, payload) {
       },
       select: {
         id: true,
+        revision: true,
       },
     });
 
     if (!draft) {
       throw new ApiError(404, 'NOT_FOUND', 'Draft version not found');
+    }
+
+    // Atomic compare-and-swap: a single conditional UPDATE, not a
+    // read-then-compare-in-JS-then-later-write. Postgres re-evaluates this
+    // WHERE clause against the row's committed state if it had to wait on a
+    // concurrent writer's lock, so a stale `revision` genuinely cannot slip
+    // through even under real concurrent transactions. Runs before any
+    // content mutation below. A missing `revision` (old clients mid-rollout)
+    // omits the predicate and always succeeds -- compatibility opt-out only.
+    const claim = await tx.weeklyPlanVersion.updateMany({
+      where:
+        payload.revision != null
+          ? { id: versionId, revision: normalizeInt(payload.revision, null) }
+          : { id: versionId },
+      data: { revision: { increment: 1 } },
+    });
+
+    if (payload.revision != null && claim.count === 0) {
+      throw new ApiError(409, 'DRAFT_REVISION_CONFLICT', 'This draft was updated elsewhere.');
     }
 
     await tx.weeklyPlanWorkout.deleteMany({

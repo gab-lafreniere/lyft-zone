@@ -244,9 +244,11 @@ export default function ManualBuilderMulti() {
     moveSelectedWeekWorkoutToScheduledDay,
     duplicateSelectedWeekWorkout,
     deleteSelectedWeekWorkout,
+    reloadLatestAfterConflict,
   } = useMultiWeekProgram();
   const [isLoading, setIsLoading] = useState(true);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isReloadingAfterConflict, setIsReloadingAfterConflict] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isDeletingCycle, setIsDeletingCycle] = useState(false);
   const [loadError, setLoadError] = useState(null);
@@ -686,6 +688,10 @@ export default function ManualBuilderMulti() {
       return "Reloading...";
     }
 
+    if (draftMetadata.saveState === "conflict") {
+      return "Update available";
+    }
+
     if (draftMetadata.saveState === "saving") {
       return "Saving...";
     }
@@ -700,6 +706,27 @@ export default function ManualBuilderMulti() {
 
     return "Draft";
   }, [draftMetadata.isRecoveringDraft, draftMetadata.lastSavedAt, draftMetadata.saveState]);
+
+  const handleReloadAfterConflict = async () => {
+    if (isReloadingAfterConflict) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Reload latest version? Your unsaved local changes will be discarded."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsReloadingAfterConflict(true);
+    try {
+      await reloadLatestAfterConflict();
+    } finally {
+      setIsReloadingAfterConflict(false);
+    }
+  };
   const autosaveError = useMemo(() => {
     if (draftMetadata.recoveryMessage || draftMetadata.saveState !== "error") {
       return null;
@@ -924,7 +951,12 @@ export default function ManualBuilderMulti() {
   };
 
   const handlePublish = async () => {
-    if (!cycleId || !activePlanId || isRecoveringDraft) {
+    if (
+      !cycleId ||
+      !activePlanId ||
+      isRecoveringDraft ||
+      draftMetadata.saveState === "conflict"
+    ) {
       return;
     }
 
@@ -1115,6 +1147,25 @@ export default function ManualBuilderMulti() {
               {isRecoveringDraft ? "Recovering draft" : "Draft recovery failed"}
             </p>
             <p className="mt-1">{draftMetadata.recoveryMessage}</p>
+          </div>
+        )}
+
+        {draftMetadata.saveState === "conflict" && (
+          <div className="flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-800 shadow-sm">
+            <p className="text-sm font-semibold">
+              This cycle was updated elsewhere.
+            </p>
+            <p className="text-xs text-amber-700">
+              Your unsaved changes are not being saved while this is unresolved.
+            </p>
+            <button
+              type="button"
+              onClick={handleReloadAfterConflict}
+              disabled={isReloadingAfterConflict}
+              className="mt-1 self-start rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isReloadingAfterConflict ? "Reloading..." : "Reload latest version"}
+            </button>
           </div>
         )}
 
@@ -1444,11 +1495,19 @@ export default function ManualBuilderMulti() {
 
           <button
             type="button"
-            disabled={isPublishing || isRecoveringDraft || !activePlanId}
+            disabled={
+              isPublishing ||
+              isRecoveringDraft ||
+              !activePlanId ||
+              draftMetadata.saveState === "conflict"
+            }
             onClick={handlePublish}
             className={[
               "flex w-full items-center justify-center rounded-xl py-4 font-bold transition-colors",
-              !isPublishing && !isRecoveringDraft && activePlanId
+              !isPublishing &&
+                !isRecoveringDraft &&
+                activePlanId &&
+                draftMetadata.saveState !== "conflict"
                 ? "bg-primary text-white"
                 : "cursor-not-allowed bg-slate-300 text-white/60",
             ].join(" ")}

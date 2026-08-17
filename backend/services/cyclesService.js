@@ -3374,6 +3374,7 @@ async function openOrCreateCycleEditDraft(cycleId, payload = {}) {
             endDate: toDateKey(cycle.endDate),
             durationWeeks: cycle.durationWeeks,
           },
+          revision: draftPlan.revision ?? null,
           builderPayload: buildCycleBuilderPayload(cycle, draftPlan),
           draftTimeline: serializeTimeline(resolvePlanTimeline(cycle, draftPlan)),
           draftState: {
@@ -3446,6 +3447,30 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
         throw new ApiError(409, 'DRAFT_EXPIRED', 'This draft expired and must be reopened from the published version');
       }
 
+      // Atomic compare-and-swap: a single conditional UPDATE, not a
+      // read-then-compare-in-JS-then-later-write. Postgres re-evaluates this
+      // WHERE clause against the row's committed state if it had to wait on
+      // a concurrent writer's lock, so a stale `revision` genuinely cannot
+      // slip through even under real concurrent transactions. Must run
+      // before any content-mutation statement -- including the timeline
+      // initialization write below -- so it comes immediately after the
+      // draft existence/expiry checks and before everything else. A missing
+      // `revision` (old clients mid-rollout) omits the predicate and always
+      // succeeds -- compatibility opt-out only.
+      phase = 'claim_draft_revision';
+      const revisionClaim = await tx.plan.updateMany({
+        where:
+          payload.revision != null
+            ? { id: draftPlan.id, revision: normalizeInt(payload.revision, null) }
+            : { id: draftPlan.id },
+        data: { revision: { increment: 1 } },
+      });
+
+      if (payload.revision != null && revisionClaim.count === 0) {
+        throw new ApiError(409, 'DRAFT_REVISION_CONFLICT', 'This draft was updated elsewhere.');
+      }
+
+      phase = 'validate_timeline';
       const draftTimeline = resolvePlanTimeline(cycle, draftPlan);
       assertTimelineMatchesWeeks(draftTimeline, document.weeks, 'Cycle draft');
 
@@ -3642,6 +3667,7 @@ async function updateCycleDraft(cycleId, planId, payload = {}) {
         status: updatedPlan.status,
         temporalStatus,
         timezone: effectiveTimezone,
+        revision: updatedPlan.revision ?? null,
         builderPayload: buildCycleBuilderPayload(cycle, updatedPlan),
         draftTimeline: serializeTimeline(resolvePlanTimeline(cycle, updatedPlan)),
         draftState: {

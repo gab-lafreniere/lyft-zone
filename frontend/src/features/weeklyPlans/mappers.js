@@ -232,6 +232,7 @@ export function mapBuilderPayloadToProgramDraft(response) {
       loadedFromBackend: true,
       lastSavedAt: response.updatedAt || null,
       saveState: "saved",
+      revision: response.revision ?? null,
       lastPersistedSignature: JSON.stringify(
         mapProgramDraftToWeeklyPlanUpdate({
           programName: builderPayload.programName,
