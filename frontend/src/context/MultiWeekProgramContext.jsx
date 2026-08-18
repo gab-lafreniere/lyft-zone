@@ -2,7 +2,6 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -15,6 +14,7 @@ import { mapCycleBuilderPayload, mapMultiWeekDraftToApi } from "../features/mult
 import { openOrCreateCycleEditDraft, updateCycleDraft } from "../services/api";
 import { attachBlockUiKeys, createBlockUiKey } from "../utils/blockUiKeys";
 import { getDuplicateWorkoutName } from "../utils/duplicateWorkoutName";
+import { useDraftAutosaveCoordinator } from "./useDraftAutosaveCoordinator";
 
 const MultiWeekProgramContext = createContext(null);
 export const MAX_BLOCK_SET_COUNT = 10;
@@ -396,18 +396,41 @@ function getMultiWeekTodayDateKey(metadata, draft) {
   );
 }
 
-function sameIdentity(a, b) {
-  return Boolean(a && b && a.cycleId === b.cycleId && a.planId === b.planId);
+function getCycleIdentity(metadata) {
+  if (!metadata?.cycleId || !metadata?.cyclePlanId) {
+    return null;
+  }
+
+  return {
+    documentId: metadata.cycleId,
+    versionId: metadata.cyclePlanId,
+  };
 }
 
-// A hydration target is declared before its planId is knowable (the draft
-// plan is resolved server-side by openOrCreateCycleEditDraft), so the
-// hydrate-response mismatch check can only compare the outer key -- unlike
-// sameIdentity, which requires both fields and is for the already-loaded
-// same-document check and the send-side abort check, where both sides
-// always have a fully-resolved identity by the time they run.
-function sameRequestedCycle(target, responseIdentity) {
-  return Boolean(target && responseIdentity && target.cycleId === responseIdentity.cycleId);
+function getCycleResponseIdentity(response) {
+  return getCycleIdentity(mapCycleBuilderPayload(response).metadata);
+}
+
+function toCycleCoordinatorIdentity(identity) {
+  if (!identity) {
+    return null;
+  }
+
+  return {
+    documentId: identity.cycleId,
+    versionId: identity.planId,
+  };
+}
+
+function isCycleAutosavePaused(metadata) {
+  return Boolean(metadata?.isRecoveringDraft);
+}
+
+function getCycleSaveErrorPatch(error) {
+  return {
+    lastSaveErrorMessage: error?.message || "Unable to autosave this draft.",
+    lastSaveErrorCode: error?.code || null,
+  };
 }
 
 function isLockedActiveCycleWorkoutOccurrence({
@@ -435,31 +458,7 @@ function isLockedActiveCycleWorkoutOccurrence({
 export function MultiWeekProgramProvider({ children }) {
   const [multiWeekDraft, setMultiWeekDraft] = useState(createInitialDraft);
   const [draftMetadata, setDraftMetadata] = useState(createInitialDraftMetadata);
-  const multiWeekDraftRef = useRef(multiWeekDraft);
-  const draftMetadataRef = useRef(draftMetadata);
   const draftRecoveryPromiseRef = useRef(null);
-  const saveRequestIdRef = useRef(0);
-  const latestAppliedSaveRequestIdRef = useRef(0);
-  const saveInFlightPromiseRef = useRef(null);
-  const pendingSaveRequestedRef = useRef(false);
-
-  // Identity refs (plan §D): `loadedIdentityRef` is what's truly reflected in
-  // `multiWeekDraft`/`draftMetadata` right now; `targetIdentityRef` is what
-  // the user currently wants to be viewing/editing. A debounced save
-  // captures its target identity at the moment it's scheduled and
-  // revalidates it against `targetIdentityRef.current` immediately before
-  // sending, so a save for a document the user has since navigated away from
-  // is silently aborted instead of being sent to the wrong row.
-  const loadedIdentityRef = useRef(null);
-  const targetIdentityRef = useRef(null);
-
-  useEffect(() => {
-    multiWeekDraftRef.current = multiWeekDraft;
-  }, [multiWeekDraft]);
-
-  useEffect(() => {
-    draftMetadataRef.current = draftMetadata;
-  }, [draftMetadata]);
 
   const selectedWeek = useMemo(
     () => multiWeekDraft.weeks.find((week) => week.weekNumber === multiWeekDraft.selectedWeek) || multiWeekDraft.weeks[0] || null,
@@ -475,60 +474,8 @@ export function MultiWeekProgramProvider({ children }) {
     [multiWeekDraft, selectedWeek]
   );
 
-  // The only way targetIdentityRef is ever set ahead of a fetch dispatching.
-  // Callers that are about to open a (possibly different) cycle must call
-  // this synchronously, before starting the fetch -- planId is left null
-  // since it isn't resolved until openOrCreateCycleEditDraft returns.
-  // hydrateProgramDraft compares an arriving response's cycleId against
-  // whatever was most recently declared here; a response for a cycleId a
-  // newer call here has since superseded is dropped rather than applied.
-  const beginHydrationTarget = useCallback((identity) => {
-    targetIdentityRef.current = identity;
-  }, []);
-
-  const hydrateProgramDraft = useCallback((response, options = {}) => {
+  const applyCycleHydrationResponse = useCallback((response) => {
     const nextState = mapCycleBuilderPayload(response);
-    const responseIdentity = {
-      cycleId: nextState.metadata.cycleId,
-      planId: nextState.metadata.cyclePlanId,
-    };
-
-    if (!options.force) {
-      const declaredTarget = targetIdentityRef.current;
-      const isStaleAgainstDeclaredTarget =
-        declaredTarget != null && !sameRequestedCycle(declaredTarget, responseIdentity);
-
-      if (isStaleAgainstDeclaredTarget) {
-        // A newer beginHydrationTarget() call has already superseded this
-        // fetch's target since it was dispatched -- this response is for a
-        // cycle the user is no longer requesting. Drop it entirely (no
-        // partial apply), regardless of what loadedIdentityRef says.
-        return;
-      }
-
-      const isSameDocumentAlreadyLoaded = sameIdentity(
-        loadedIdentityRef.current,
-        responseIdentity
-      );
-
-      if (isSameDocumentAlreadyLoaded) {
-        const currentSaveState = draftMetadataRef.current.saveState;
-
-        if (
-          currentSaveState === "dirty" ||
-          currentSaveState === "saving" ||
-          currentSaveState === "conflict"
-        ) {
-          // Local edits, an in-flight/queued save, or an unresolved conflict
-          // for this exact document all take priority over a redundant
-          // "open draft" response -- applying it here would silently revert
-          // whatever the user is mid-editing (this is the fix for the
-          // reproduced navigation-revert bug), or silently resolve a
-          // conflict without the user's explicit confirmation.
-          return;
-        }
-      }
-    }
 
     setMultiWeekDraft((prev) => ({
       ...nextState.programDraft,
@@ -542,16 +489,38 @@ export function MultiWeekProgramProvider({ children }) {
       ...createInitialDraftMetadata(),
       ...nextState.metadata,
     });
-    loadedIdentityRef.current = responseIdentity;
-    // A response that was just applied (whether it passed the checks above
-    // or arrived via force:true) is, by definition, now what the user is
-    // looking at -- keep the target in sync so later callers (the send-side
-    // check in persistDraftNow, and the next hydrateProgramDraft call) see a
-    // fully-resolved identity rather than the pre-dispatch partial one.
-    targetIdentityRef.current = responseIdentity;
   }, []);
 
-  const handleDraftExpired = useCallback(async (error, cycleIdOverride = null) => {
+  const applyCanonicalCycleResponse = useCallback((response) => {
+    const activePlanId = response?.planId || null;
+    const nextState = mapCycleBuilderPayload(response);
+
+    setMultiWeekDraft((prev) => ({
+      ...nextState.programDraft,
+      weeks: attachUiKeysToWeeks(
+        nextState.programDraft.weeks || [],
+        prev.weeks || []
+      ),
+      selectedWeek: resolvePreservedSelectedWeek(prev.selectedWeek, nextState.programDraft),
+    }));
+    setDraftMetadata((prev) => ({
+      ...prev,
+      ...nextState.metadata,
+      cycleId: nextState.metadata.cycleId,
+      cyclePlanId: activePlanId || nextState.metadata.cyclePlanId,
+      lastSavedAt: response.updatedAt || new Date().toISOString(),
+      saveState: "saved",
+      lastSaveErrorMessage: null,
+      lastSaveErrorCode: null,
+    }));
+  }, []);
+
+  const recoverExpiredDraft = useCallback(async (
+    error,
+    cycleIdOverride,
+    hydrateRecoveredDraft,
+    metadataSnapshot
+  ) => {
     if (error?.code !== "DRAFT_EXPIRED") {
       return false;
     }
@@ -561,7 +530,7 @@ export function MultiWeekProgramProvider({ children }) {
       return true;
     }
 
-    const currentMetadata = draftMetadataRef.current;
+    const currentMetadata = metadataSnapshot;
     const resolvedCycleId = cycleIdOverride || currentMetadata?.cycleId || null;
     const recoveryFailureMessage = "Unable to recover draft. Please refresh the page.";
 
@@ -595,7 +564,7 @@ export function MultiWeekProgramProvider({ children }) {
         // The draft row that expired no longer exists server-side -- this
         // recovery must force past the local-authority guard regardless of
         // in-progress edits, unlike a normal hydrate.
-        hydrateProgramDraft(response, { force: true });
+        hydrateRecoveredDraft(response, { force: true });
         return response;
       } catch (recoveryError) {
         setDraftMetadata((prev) => ({
@@ -615,25 +584,89 @@ export function MultiWeekProgramProvider({ children }) {
     draftRecoveryPromiseRef.current = recoveryPromise;
     await recoveryPromise;
     return true;
-  }, [hydrateProgramDraft]);
-
-  // `DRAFT_REVISION_CONFLICT` is deliberately NOT the same recovery path as
-  // `DRAFT_EXPIRED` above: it must never silently discard local content.
-  // This handler only sets state -- it does not touch multiWeekDraft and
-  // does not auto-retry. The only way out of "conflict" is the user
-  // explicitly confirming reloadLatestAfterConflict().
-  const handleRevisionConflict = useCallback((error) => {
-    setDraftMetadata((prev) => (
-      prev.saveState === "conflict"
-        ? prev
-        : {
-          ...prev,
-          saveState: "conflict",
-          lastSaveErrorMessage: error?.message || "This draft was updated elsewhere.",
-          lastSaveErrorCode: error?.code || "DRAFT_REVISION_CONFLICT",
-        }
-    ));
   }, []);
+
+  const persistCycleDocument = useCallback(({ identity, payload, metadata }) => (
+    updateCycleDraft(identity.documentId, identity.versionId, {
+      ...payload,
+      allowCrossDayDraft: metadata.allowCrossDayDraft,
+      revision: metadata.revision,
+    })
+  ), []);
+
+  const handleCycleSaveError = useCallback((error, { currentMetadata, hydrate }) => (
+    recoverExpiredDraft(
+      error,
+      currentMetadata?.cycleId || null,
+      hydrate,
+      currentMetadata
+    )
+  ), [recoverExpiredDraft]);
+
+  const logCycleAutosaveError = useCallback((error, metadata) => {
+    console.error("[MultiWeekProgramContext] autosave failed", {
+      cycleId: metadata?.cycleId || null,
+      cyclePlanId: metadata?.cyclePlanId || null,
+      errorCode: error?.code || null,
+      errorMessage: error?.message || null,
+    });
+  }, []);
+
+  const logQueuedCycleAutosaveError = useCallback((error, metadata) => {
+    console.error("[MultiWeekProgramContext] queued autosave failed", {
+      cycleId: metadata?.cycleId || null,
+      cyclePlanId: metadata?.cyclePlanId || null,
+      errorCode: error?.code || null,
+      errorMessage: error?.message || null,
+    });
+  }, []);
+
+  const {
+    beginHydrationTarget: beginCoordinatorHydrationTarget,
+    draftRef: multiWeekDraftRef,
+    hydrate: hydrateCoordinatorDraft,
+    metadataRef: draftMetadataRef,
+    persistDraftNow: persistCoordinatorDraftNow,
+  } = useDraftAutosaveCoordinator({
+    draft: multiWeekDraft,
+    metadata: draftMetadata,
+    setMetadata: setDraftMetadata,
+    serializeDraft: mapMultiWeekDraftToApi,
+    getCurrentIdentity: getCycleIdentity,
+    getResponseIdentity: getCycleResponseIdentity,
+    persistDocument: persistCycleDocument,
+    onHydrate: applyCycleHydrationResponse,
+    onCanonicalSaveResponse: applyCanonicalCycleResponse,
+    handleSaveError: handleCycleSaveError,
+    getSaveErrorPatch: getCycleSaveErrorPatch,
+    isTransientlyPaused: isCycleAutosavePaused,
+    onAutosaveError: logCycleAutosaveError,
+    onQueuedSaveError: logQueuedCycleAutosaveError,
+  });
+
+  const beginHydrationTarget = useCallback((identity) => {
+    beginCoordinatorHydrationTarget(toCycleCoordinatorIdentity(identity));
+  }, [beginCoordinatorHydrationTarget]);
+
+  const hydrateProgramDraft = useCallback((response, options = {}) => {
+    hydrateCoordinatorDraft(response, options);
+  }, [hydrateCoordinatorDraft]);
+
+  const persistDraftNow = useCallback((overrideDraft = null, overrideIdentity = null) => (
+    persistCoordinatorDraftNow(
+      overrideDraft,
+      toCycleCoordinatorIdentity(overrideIdentity)
+    )
+  ), [persistCoordinatorDraftNow]);
+
+  const handleDraftExpired = useCallback((error, cycleIdOverride = null) => (
+    recoverExpiredDraft(
+      error,
+      cycleIdOverride,
+      hydrateProgramDraft,
+      draftMetadataRef.current
+    )
+  ), [draftMetadataRef, hydrateProgramDraft, recoverExpiredDraft]);
 
   // The only path back from `saveState === "conflict"`. Explicitly
   // destructive -- discards every unsaved local edit made since the
@@ -665,285 +698,7 @@ export function MultiWeekProgramProvider({ children }) {
       }));
       return null;
     }
-  }, [hydrateProgramDraft]);
-
-  const persistDraftNow = useCallback(async (overrideDraft = null, overrideIdentity = null) => {
-    const currentMetadata = draftMetadataRef.current;
-    const currentPlanId = currentMetadata?.cyclePlanId || null;
-    if (currentMetadata?.isRecoveringDraft) {
-      return null;
-    }
-
-    if (
-      !currentMetadata.loadedFromBackend ||
-      !currentMetadata.cycleId ||
-      !currentPlanId
-    ) {
-      return null;
-    }
-
-    const identity = overrideIdentity || {
-      cycleId: currentMetadata.cycleId,
-      planId: currentPlanId,
-    };
-
-    const nextDraft = overrideDraft || multiWeekDraftRef.current;
-    const payload = mapMultiWeekDraftToApi(nextDraft);
-    const signature = JSON.stringify(payload);
-
-    if (signature === currentMetadata.lastPersistedSignature) {
-      return null;
-    }
-
-    if (saveInFlightPromiseRef.current) {
-      pendingSaveRequestedRef.current = true;
-      return saveInFlightPromiseRef.current;
-    }
-
-    const requestId = saveRequestIdRef.current + 1;
-    saveRequestIdRef.current = requestId;
-
-    setDraftMetadata((prev) => (
-      prev.saveState === "saving"
-        ? prev
-        : {
-          ...prev,
-          saveState: "saving",
-        }
-    ));
-
-    const isStillCurrentTarget = () => sameIdentity(targetIdentityRef.current, identity);
-
-    const runSave = async () => {
-      if (!isStillCurrentTarget()) {
-        // The user has navigated away from this document since this save was
-        // scheduled (or since it was sent). Sending stale content to a
-        // document that's no longer the active target would corrupt whatever
-        // the user is now looking at, so drop it instead.
-        return null;
-      }
-
-      const response = await updateCycleDraft(identity.cycleId, identity.planId, {
-        ...payload,
-        allowCrossDayDraft: currentMetadata.allowCrossDayDraft,
-        revision: currentMetadata.revision,
-      });
-
-      if (!isStillCurrentTarget()) {
-        return response;
-      }
-
-      const currentSignature = JSON.stringify(
-        mapMultiWeekDraftToApi(multiWeekDraftRef.current)
-      );
-      const hasNewerLocalEdits = currentSignature !== signature;
-      const isOlderThanAppliedResponse =
-        requestId < latestAppliedSaveRequestIdRef.current;
-
-      if (hasNewerLocalEdits || isOlderThanAppliedResponse) {
-        setDraftMetadata((prev) => {
-          const latestLocalSignature = JSON.stringify(
-            mapMultiWeekDraftToApi(multiWeekDraftRef.current)
-          );
-          const hasUnsavedLocalEdits =
-            latestLocalSignature !== prev.lastPersistedSignature;
-
-          if (!hasUnsavedLocalEdits) {
-            return prev;
-          }
-
-          const hasNewerSaveRequestInFlight = requestId < saveRequestIdRef.current;
-          const nextSaveState = hasNewerSaveRequestInFlight ? "saving" : "dirty";
-
-          return prev.saveState === nextSaveState
-            ? prev
-            : {
-              ...prev,
-              saveState: nextSaveState,
-            };
-        });
-
-        return response;
-      }
-
-      latestAppliedSaveRequestIdRef.current = requestId;
-      const activePlanId = response?.planId || null;
-      const nextState = mapCycleBuilderPayload(response);
-      setMultiWeekDraft((prev) => ({
-        ...nextState.programDraft,
-        weeks: attachUiKeysToWeeks(
-          nextState.programDraft.weeks || [],
-          prev.weeks || []
-        ),
-        selectedWeek: resolvePreservedSelectedWeek(prev.selectedWeek, nextState.programDraft),
-      }));
-      setDraftMetadata((prev) => ({
-        ...prev,
-        ...nextState.metadata,
-        cycleId: nextState.metadata.cycleId,
-        cyclePlanId: activePlanId || nextState.metadata.cyclePlanId,
-        lastSavedAt: response.updatedAt || new Date().toISOString(),
-        saveState: "saved",
-        lastSaveErrorMessage: null,
-        lastSaveErrorCode: null,
-      }));
-      loadedIdentityRef.current = {
-        cycleId: nextState.metadata.cycleId,
-        planId: activePlanId || nextState.metadata.cyclePlanId,
-      };
-
-      return response;
-    };
-
-    const savePromise = (async () => {
-      let saveError = null;
-      let result = null;
-
-      try {
-        result = await runSave();
-      } catch (error) {
-        if (error?.code === "DRAFT_REVISION_CONFLICT") {
-          saveError = error;
-          handleRevisionConflict(error);
-        } else {
-          const didRecoverDraft = await handleDraftExpired(error, currentMetadata?.cycleId || null);
-
-          if (!didRecoverDraft) {
-            saveError = error;
-            setDraftMetadata((prev) => (
-              prev.saveState === "error"
-                ? prev
-                : {
-                  ...prev,
-                  saveState: "error",
-                  lastSaveErrorMessage: error?.message || "Unable to autosave this draft.",
-                  lastSaveErrorCode: error?.code || null,
-                }
-            ));
-          }
-        }
-      } finally {
-        saveInFlightPromiseRef.current = null;
-      }
-
-      let followUpPromise = null;
-
-      if (pendingSaveRequestedRef.current) {
-        pendingSaveRequestedRef.current = false;
-        const latestMetadata = draftMetadataRef.current;
-
-        if (!latestMetadata?.isRecoveringDraft && latestMetadata?.saveState !== "conflict") {
-          const latestDraft = multiWeekDraftRef.current;
-          const latestSignature = JSON.stringify(mapMultiWeekDraftToApi(latestDraft));
-
-          if (latestSignature !== latestMetadata.lastPersistedSignature) {
-            // Chain the coalesced follow-up onto this promise, built from the
-            // freshest snapshot, so a single `await persistDraftNow()` (e.g.
-            // a publish flush) resolves only once the follow-up also
-            // settles, not just this leg.
-            followUpPromise = persistDraftNow(latestDraft).catch((queuedError) => {
-              console.error("[MultiWeekProgramContext] queued autosave failed", {
-                cycleId: draftMetadataRef.current?.cycleId || null,
-                cyclePlanId: draftMetadataRef.current?.cyclePlanId || null,
-                errorCode: queuedError?.code || null,
-                errorMessage: queuedError?.message || null,
-              });
-              throw queuedError;
-            });
-          }
-        }
-      }
-
-      if (followUpPromise) {
-        return followUpPromise;
-      }
-
-      if (saveError) {
-        throw saveError;
-      }
-
-      return result;
-    })();
-
-    saveInFlightPromiseRef.current = savePromise;
-    return savePromise;
-  }, [handleDraftExpired, handleRevisionConflict]);
-
-  useEffect(() => {
-    if (
-      draftMetadataRef.current.isRecoveringDraft ||
-      !draftMetadata.loadedFromBackend ||
-      !draftMetadata.cycleId ||
-      !draftMetadata.cyclePlanId ||
-      draftMetadataRef.current.saveState === "conflict"
-    ) {
-      // While conflicted, autosave is suspended entirely -- retrying with
-      // the same known-stale revision would just conflict again. The user
-      // keeps editing normally (multiWeekDraft still updates); this effect
-      // just never re-arms until reloadLatestAfterConflict() resolves it.
-      // Same reasoning for isRecoveringDraft: a *failed* DRAFT_EXPIRED
-      // recovery sets isRecoveringDraft:false and saveState:"error" in the
-      // same setDraftMetadata call, from inside this effect's own dispatched
-      // save. If isRecoveringDraft were a dependency, that transition would
-      // re-run this effect, and its own dirty-fallback below (which treats
-      // any non-saving/non-dirty state as "must be dirty") would stomp the
-      // freshly-set "error" state right back to "dirty" and silently
-      // re-arm a save of a pre-recovery-failure snapshot. Reading both
-      // flags from the ref (not as dependencies) avoids that loop; any
-      // genuine new edit still re-runs this effect via the multiWeekDraft
-      // dependency below, so recovery completing (success or failure) is
-      // still correctly picked up on the next real edit.
-      return undefined;
-    }
-
-    const signature = JSON.stringify(mapMultiWeekDraftToApi(multiWeekDraft));
-    if (signature === draftMetadata.lastPersistedSignature) {
-      return undefined;
-    }
-
-    setDraftMetadata((prev) => {
-      if (prev.saveState === "saving" || prev.saveState === "dirty") {
-        return prev;
-      }
-
-      return {
-        ...prev,
-        saveState: "dirty",
-      };
-    });
-
-    // Capture the draft content and the identity it belongs to together, at
-    // the moment this edit armed the timer -- not read fresh from a ref when
-    // the timer fires. `persistDraftNow` revalidates this identity against
-    // `targetIdentityRef.current` right before sending, which is what
-    // actually protects against a stale send after the user has navigated
-    // away within the debounce window.
-    const draftSnapshot = multiWeekDraft;
-    const identitySnapshot = {
-      cycleId: draftMetadata.cycleId,
-      planId: draftMetadata.cyclePlanId,
-    };
-
-    const timeoutId = window.setTimeout(() => {
-      persistDraftNow(draftSnapshot, identitySnapshot).catch((error) => {
-        console.error("[MultiWeekProgramContext] autosave failed", {
-          cycleId: draftMetadataRef.current?.cycleId || null,
-          cyclePlanId: draftMetadataRef.current?.cyclePlanId || null,
-          errorCode: error?.code || null,
-          errorMessage: error?.message || null,
-        });
-      });
-    }, 700);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [
-    draftMetadata.cycleId,
-    draftMetadata.cyclePlanId,
-    draftMetadata.lastPersistedSignature,
-    draftMetadata.loadedFromBackend,
-    multiWeekDraft,
-    persistDraftNow,
-  ]);
+  }, [draftMetadataRef, hydrateProgramDraft]);
 
   const updateProgramMeta = useCallback((updates = {}) => {
     setMultiWeekDraft((prev) => ({ ...prev, ...updates }));
@@ -976,7 +731,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const addWorkout = useCallback((name) => {
     setMultiWeekDraft((prev) =>
@@ -1109,7 +864,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const reorderBlocks = useCallback((workoutId, fromIndex, toIndex) => {
     setMultiWeekDraft((prev) =>
@@ -1151,7 +906,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const updateSupersetExercise = useCallback((workoutId, blockId, exerciseIndex, updates) => {
     setMultiWeekDraft((prev) =>
@@ -1196,7 +951,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const updateSupersetSetCount = useCallback((workoutId, blockId, nextCount) => {
     const safeCount = clampNumber(nextCount || 1, 1, MAX_BLOCK_SET_COUNT);
@@ -1244,7 +999,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const removeBlock = useCallback((workoutId, blockId) => {
     setMultiWeekDraft((prev) =>
@@ -1274,7 +1029,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const addSet = useCallback((workoutId, blockId, exerciseIndex = null) => {
     setMultiWeekDraft((prev) =>
@@ -1331,7 +1086,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const removeSet = useCallback((workoutId, blockId, setIndex, exerciseIndex = null) => {
     setMultiWeekDraft((prev) =>
@@ -1388,7 +1143,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const moveWorkoutToScheduledDay = useCallback((workoutId, nextScheduledDay) => {
     if (!DAY_OF_WEEK.includes(nextScheduledDay)) {
@@ -1449,7 +1204,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const moveSelectedWeekWorkoutToScheduledDay = useCallback((orderIndex, nextScheduledDay) => {
     if (!DAY_OF_WEEK.includes(nextScheduledDay)) {
@@ -1513,7 +1268,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const duplicateSelectedWeekWorkout = useCallback((orderIndex, targetScheduledDay = null) => {
     setMultiWeekDraft((prev) =>
@@ -1581,7 +1336,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const deleteSelectedWeekWorkout = useCallback((orderIndex) => {
     setMultiWeekDraft((prev) =>
@@ -1608,7 +1363,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const updateSet = useCallback((workoutId, blockId, setIndex, updates, exerciseIndex = null) => {
     const normalizedUpdates = normalizeSetUpdates(updates);
@@ -1679,7 +1434,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const appendSingleBlockFromExercise = useCallback((workoutId, exercise) => {
     if (!exercise?.exerciseId || !exercise?.name) {
@@ -1715,7 +1470,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const convertSingleBlockToSuperset = useCallback((workoutId, blockId) => {
     setMultiWeekDraft((prev) =>
@@ -1776,7 +1531,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const assignSupersetExercise = useCallback((workoutId, blockId, exerciseIndex, exercise) => {
     if (!exercise?.exerciseId || !exercise?.name) {
@@ -1831,7 +1586,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [draftMetadataRef]);
 
   const hasIncompleteSupersets = useCallback((workoutId = null) => {
     return (selectedWeek?.workouts || []).some((workout) => {
@@ -1890,6 +1645,8 @@ export function MultiWeekProgramProvider({ children }) {
     [
       programDraft,
       draftMetadata,
+      draftMetadataRef,
+      multiWeekDraftRef,
       hydrateProgramDraft,
       beginHydrationTarget,
       handleDraftExpired,

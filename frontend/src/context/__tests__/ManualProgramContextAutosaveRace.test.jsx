@@ -125,13 +125,6 @@ function createTrackedSaveMock() {
   };
 }
 
-async function flush() {
-  await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-}
-
 describe("ManualProgramProvider autosave race (Phase 1A)", () => {
   beforeEach(() => {
     jest.useFakeTimers();
@@ -145,7 +138,7 @@ describe("ManualProgramProvider autosave race (Phase 1A)", () => {
     jest.useRealTimers();
   });
 
-  test("(a) a second edit made while a save is in flight is queued, not sent concurrently, and the persisted result reflects it", async () => {
+  test("(a) a v1 save response cannot overwrite a local v2 edit made while v1 is in flight", async () => {
     const tracked = createTrackedSaveMock();
     renderProvider();
 
@@ -181,6 +174,9 @@ describe("ManualProgramProvider autosave race (Phase 1A)", () => {
       await Promise.resolve();
     });
 
+    // The server's canonical v1 response says reps=10, but local v2 is
+    // already reps=12. The response must not be applied over that newer edit.
+    expect(screen.getByTestId("reps")).toHaveTextContent("12");
     expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(2);
     const secondCallPayload = updateWeeklyPlanDraft.mock.calls[1][2];
     expect(secondCallPayload.workouts[0].blocks[0].exercises[0].setTemplates[0].targetReps).toBe(12);
@@ -201,9 +197,7 @@ describe("ManualProgramProvider autosave race (Phase 1A)", () => {
   });
 
   test("(b) three rapid edits within one debounce window coalesce into a single in-flight request", async () => {
-    const tracked = createTrackedSaveMock();
     updateWeeklyPlanDraft.mockImplementation(async (...args) => {
-      tracked.deferreds.length; // no-op to keep lint happy about unused var pattern
       return buildResponse({ reps: args[2].workouts[0].blocks[0].exercises[0].setTemplates[0].targetReps });
     });
     renderProvider();
@@ -224,6 +218,25 @@ describe("ManualProgramProvider autosave race (Phase 1A)", () => {
       updateWeeklyPlanDraft.mock.calls[0][2].workouts[0].blocks[0].exercises[0].setTemplates[0]
         .targetReps
     ).toBe(11);
+  });
+
+  test("applies the canonical Weekly response when no newer local edit exists", async () => {
+    updateWeeklyPlanDraft.mockResolvedValue(
+      buildResponse({ reps: 11, updatedAt: "2026-07-21T12:03:00.000Z" })
+    );
+    renderProvider();
+
+    act(() => currentContext.hydrateProgramDraft(buildResponse({ reps: 8 })));
+    act(() => currentContext.updateSet("workout_1", "block_1", 0, { reps: 10 }));
+
+    await act(async () => {
+      jest.advanceTimersByTime(700);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("reps")).toHaveTextContent("11");
+    expect(screen.getByTestId("save-state")).toHaveTextContent("saved");
   });
 
   test("(c) a hydrate for the same identity while local state is dirty is dropped", async () => {

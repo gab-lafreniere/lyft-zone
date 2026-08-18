@@ -2,15 +2,14 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import { mapProgramDraftToWeeklyPlanUpdate, mapBuilderPayloadToProgramDraft } from "../features/weeklyPlans/mappers";
 import { openOrCreateWeeklyPlanEditDraft, updateWeeklyPlanDraft } from "../services/api";
 import { attachBlockUiKeys, createBlockUiKey } from "../utils/blockUiKeys";
 import { getDuplicateWorkoutName } from "../utils/duplicateWorkoutName";
+import { useDraftAutosaveCoordinator } from "./useDraftAutosaveCoordinator";
 
 const ManualProgramContext = createContext(null);
 export const MAX_BLOCK_SET_COUNT = 10;
@@ -370,299 +369,114 @@ function createInitialDraftMetadata() {
   };
 }
 
-function sameIdentity(a, b) {
-  return Boolean(
-    a &&
-      b &&
-      a.weeklyPlanParentId === b.weeklyPlanParentId &&
-      a.weeklyPlanVersionId === b.weeklyPlanVersionId
-  );
+function getWeeklyPlanIdentity(metadata) {
+  if (!metadata?.weeklyPlanParentId || !metadata?.weeklyPlanVersionId) {
+    return null;
+  }
+
+  return {
+    documentId: metadata.weeklyPlanParentId,
+    versionId: metadata.weeklyPlanVersionId,
+  };
 }
 
-// A hydration target is declared before its weeklyPlanVersionId is knowable
-// (the draft version is resolved server-side by openOrCreateWeeklyPlanEditDraft),
-// so the hydrate-response mismatch check can only compare the outer key --
-// unlike sameIdentity, which requires both fields and is for the
-// already-loaded same-document check and the send-side abort check, where
-// both sides always have a fully-resolved identity by the time they run.
-function sameRequestedWeeklyPlan(target, responseIdentity) {
-  return Boolean(
-    target &&
-      responseIdentity &&
-      target.weeklyPlanParentId === responseIdentity.weeklyPlanParentId
-  );
+function getWeeklyPlanResponseIdentity(response) {
+  return getWeeklyPlanIdentity(mapBuilderPayloadToProgramDraft(response).metadata);
+}
+
+function toWeeklyPlanCoordinatorIdentity(identity) {
+  if (!identity) {
+    return null;
+  }
+
+  return {
+    documentId: identity.weeklyPlanParentId,
+    versionId: identity.weeklyPlanVersionId,
+  };
 }
 
 export function ManualProgramProvider({ children }) {
   const [programDraft, setProgramDraft] = useState(createInitialDraft);
   const [draftMetadata, setDraftMetadata] = useState(createInitialDraftMetadata);
 
-  // Kept in sync via effects below so async code (debounce timers, in-flight
-  // fetch continuations) always reads the latest value instead of a stale
-  // render's closure.
-  const programDraftRef = useRef(programDraft);
-  const draftMetadataRef = useRef(draftMetadata);
+  const applyWeeklyHydrationResponse = useCallback((response, options = {}) => {
+    const nextState = mapBuilderPayloadToProgramDraft(response);
 
-  // Save-sequencing refs (ported from MultiWeekProgramContext.jsx): guarantee
-  // at most one PATCH is ever in flight at a time, and that a save triggered
-  // while another is already in flight coalesces into a single queued
-  // follow-up built from the freshest local snapshot, rather than firing a
-  // second overlapping request.
-  const saveRequestIdRef = useRef(0);
-  const latestAppliedSaveRequestIdRef = useRef(0);
-  const saveInFlightPromiseRef = useRef(null);
-  const pendingSaveRequestedRef = useRef(false);
-
-  // Identity refs (plan §D): `loadedIdentityRef` is what's truly reflected in
-  // `programDraft`/`draftMetadata` right now; `targetIdentityRef` is what the
-  // user currently wants to be viewing/editing. A debounced save captures its
-  // target identity at the moment it's scheduled and revalidates it against
-  // `targetIdentityRef.current` immediately before sending, so a save for a
-  // document the user has since navigated away from is silently aborted
-  // instead of being sent to the wrong row.
-  const loadedIdentityRef = useRef(null);
-  const targetIdentityRef = useRef(null);
-
-  useEffect(() => {
-    programDraftRef.current = programDraft;
-  }, [programDraft]);
-
-  useEffect(() => {
-    draftMetadataRef.current = draftMetadata;
-  }, [draftMetadata]);
-
-  // `DRAFT_REVISION_CONFLICT` is deliberately NOT the same recovery path as
-  // `DRAFT_EXPIRED` (cycle-only, unrelated to this context): it must never
-  // silently discard local content. This handler only sets state -- it does
-  // not touch programDraft and does not auto-retry. The only way out of
-  // "conflict" is the user explicitly confirming reloadLatestAfterConflict().
-  const handleRevisionConflict = useCallback((error) => {
-    setDraftMetadata((prev) => (
-      prev.saveState === "conflict"
-        ? prev
-        : {
-          ...prev,
-          saveState: "conflict",
-          lastSaveErrorMessage: error?.message || "This draft was updated elsewhere.",
-          lastSaveErrorCode: error?.code || "DRAFT_REVISION_CONFLICT",
-        }
-    ));
+    setProgramDraft((prev) => ({
+      ...nextState.programDraft,
+      workouts: attachUiKeysToWorkouts(
+        nextState.programDraft.workouts || [],
+        prev.workouts || []
+      ),
+    }));
+    setDraftMetadata({
+      ...createInitialDraftMetadata(),
+      ...nextState.metadata,
+      originRoute: options.originRoute ?? null,
+    });
   }, []);
 
-  const persistDraftNow = useCallback(async (overrideDraft = null, overrideIdentity = null) => {
-    const currentMetadata = draftMetadataRef.current;
+  const applyCanonicalWeeklyResponse = useCallback((response) => {
+    const nextState = mapBuilderPayloadToProgramDraft(response);
 
-    if (
-      !currentMetadata.loadedFromBackend ||
-      !currentMetadata.weeklyPlanParentId ||
-      !currentMetadata.weeklyPlanVersionId
-    ) {
-      return null;
-    }
-
-    const identity = overrideIdentity || {
-      weeklyPlanParentId: currentMetadata.weeklyPlanParentId,
-      weeklyPlanVersionId: currentMetadata.weeklyPlanVersionId,
-    };
-
-    const nextDraft = overrideDraft || programDraftRef.current;
-    const payload = mapProgramDraftToWeeklyPlanUpdate(nextDraft);
-    const signature = JSON.stringify(payload);
-
-    if (signature === currentMetadata.lastPersistedSignature) {
-      return null;
-    }
-
-    if (saveInFlightPromiseRef.current) {
-      pendingSaveRequestedRef.current = true;
-      return saveInFlightPromiseRef.current;
-    }
-
-    const requestId = saveRequestIdRef.current + 1;
-    saveRequestIdRef.current = requestId;
-
-    setDraftMetadata((prev) => (
-      prev.saveState === "saving" ? prev : { ...prev, saveState: "saving" }
-    ));
-
-    const isStillCurrentTarget = () => sameIdentity(targetIdentityRef.current, identity);
-
-    const runSave = async () => {
-      if (!isStillCurrentTarget()) {
-        // The user has navigated away from this document since this save was
-        // scheduled (or since it was sent). Sending stale content to a
-        // document that's no longer the active target would corrupt whatever
-        // the user is now looking at, so drop it instead.
-        return null;
-      }
-
-      const response = await updateWeeklyPlanDraft(
-        identity.weeklyPlanParentId,
-        identity.weeklyPlanVersionId,
-        { ...payload, revision: currentMetadata.revision }
-      );
-
-      if (!isStillCurrentTarget()) {
-        return response;
-      }
-
-      const currentSignature = JSON.stringify(
-        mapProgramDraftToWeeklyPlanUpdate(programDraftRef.current)
-      );
-      const hasNewerLocalEdits = currentSignature !== signature;
-      const isOlderThanAppliedResponse = requestId < latestAppliedSaveRequestIdRef.current;
-
-      if (hasNewerLocalEdits || isOlderThanAppliedResponse) {
-        setDraftMetadata((prev) => {
-          const latestLocalSignature = JSON.stringify(
-            mapProgramDraftToWeeklyPlanUpdate(programDraftRef.current)
-          );
-          const hasUnsavedLocalEdits = latestLocalSignature !== prev.lastPersistedSignature;
-
-          if (!hasUnsavedLocalEdits) {
-            return prev;
-          }
-
-          const hasNewerSaveRequestInFlight = requestId < saveRequestIdRef.current;
-          const nextSaveState = hasNewerSaveRequestInFlight ? "saving" : "dirty";
-
-          return prev.saveState === nextSaveState
-            ? prev
-            : { ...prev, saveState: nextSaveState };
-        });
-
-        return response;
-      }
-
-      latestAppliedSaveRequestIdRef.current = requestId;
-
-      const updatedSignature = JSON.stringify(
-        mapProgramDraftToWeeklyPlanUpdate(response.builderPayload)
-      );
-
-      setDraftMetadata((prev) => ({
-        ...prev,
-        lastSavedAt: response.updatedAt || new Date().toISOString(),
-        saveState: "saved",
-        lastPersistedSignature: updatedSignature,
-        revision: response.revision ?? prev.revision,
-      }));
-
-      return response;
-    };
-
-    const savePromise = (async () => {
-      let saveError = null;
-      let result = null;
-
-      try {
-        result = await runSave();
-      } catch (error) {
-        saveError = error;
-
-        if (error?.code === "DRAFT_REVISION_CONFLICT") {
-          handleRevisionConflict(error);
-        } else {
-          setDraftMetadata((prev) => (
-            prev.saveState === "error" ? prev : { ...prev, saveState: "error" }
-          ));
-        }
-      } finally {
-        saveInFlightPromiseRef.current = null;
-      }
-
-      let followUpPromise = null;
-
-      if (pendingSaveRequestedRef.current) {
-        pendingSaveRequestedRef.current = false;
-        const latestDraft = programDraftRef.current;
-        const latestMetadata = draftMetadataRef.current;
-        const latestSignature = JSON.stringify(
-          mapProgramDraftToWeeklyPlanUpdate(latestDraft)
-        );
-
-        if (
-          latestMetadata.saveState !== "conflict" &&
-          latestSignature !== latestMetadata.lastPersistedSignature
-        ) {
-          // Award the coalesced follow-up the freshest snapshot, and chain it
-          // onto this promise so a single `await persistDraftNow()` (e.g. a
-          // future publish flush) resolves only once the follow-up also
-          // settles, not just this leg.
-          followUpPromise = persistDraftNow(latestDraft);
-        }
-      }
-
-      if (followUpPromise) {
-        return followUpPromise;
-      }
-
-      if (saveError) {
-        throw saveError;
-      }
-
-      return result;
-    })();
-
-    saveInFlightPromiseRef.current = savePromise;
-    return savePromise;
-  }, [handleRevisionConflict]);
-
-  useEffect(() => {
-    if (
-      !draftMetadata.loadedFromBackend ||
-      !draftMetadata.weeklyPlanParentId ||
-      !draftMetadata.weeklyPlanVersionId ||
-      draftMetadataRef.current.saveState === "conflict"
-    ) {
-      // While conflicted, autosave is suspended entirely -- retrying with
-      // the same known-stale revision would just conflict again. The user
-      // keeps editing normally (programDraft still updates); this effect
-      // just never re-arms until reloadLatestAfterConflict() resolves it.
-      // Reads the ref (not a `saveState` dependency) deliberately: adding
-      // `saveState` to this effect's own deps would make it re-run on every
-      // saveState transition it's responsible for causing -- including
-      // "saving" -> "error" -- and its own dirty-fallback below would then
-      // immediately stomp that error state back to "dirty".
-      return undefined;
-    }
-
-    const signature = JSON.stringify(mapProgramDraftToWeeklyPlanUpdate(programDraft));
-
-    if (signature === draftMetadata.lastPersistedSignature) {
-      return undefined;
-    }
-
+    setProgramDraft((prev) => ({
+      ...nextState.programDraft,
+      workouts: attachUiKeysToWorkouts(
+        nextState.programDraft.workouts || [],
+        prev.workouts || []
+      ),
+    }));
     setDraftMetadata((prev) => ({
       ...prev,
-      saveState: prev.saveState === "saving" ? "saving" : "dirty",
+      ...nextState.metadata,
+      originRoute: prev.originRoute,
+      lastSavedAt: response.updatedAt || new Date().toISOString(),
+      saveState: "saved",
+      lastSaveErrorMessage: null,
+      lastSaveErrorCode: null,
     }));
+  }, []);
 
-    // Capture the draft content and the identity it belongs to together, at
-    // the moment this edit armed the timer -- not read fresh from a ref when
-    // the timer fires. `persistDraftNow` revalidates this identity against
-    // `targetIdentityRef.current` right before sending, which is what
-    // actually protects against a stale send after the user has navigated
-    // away within the debounce window.
-    const draftSnapshot = programDraft;
-    const identitySnapshot = {
-      weeklyPlanParentId: draftMetadata.weeklyPlanParentId,
-      weeklyPlanVersionId: draftMetadata.weeklyPlanVersionId,
-    };
+  const persistWeeklyPlanDocument = useCallback(({ identity, payload, metadata }) => (
+    updateWeeklyPlanDraft(
+      identity.documentId,
+      identity.versionId,
+      { ...payload, revision: metadata.revision }
+    )
+  ), []);
 
-    const timeoutId = window.setTimeout(() => {
-      persistDraftNow(draftSnapshot, identitySnapshot).catch(() => {});
-    }, 700);
+  const {
+    beginHydrationTarget: beginCoordinatorHydrationTarget,
+    hydrate: hydrateCoordinatorDraft,
+    metadataRef: draftMetadataRef,
+    persistDraftNow: persistCoordinatorDraftNow,
+    resetHydrationIdentity,
+  } = useDraftAutosaveCoordinator({
+    draft: programDraft,
+    metadata: draftMetadata,
+    setMetadata: setDraftMetadata,
+    serializeDraft: mapProgramDraftToWeeklyPlanUpdate,
+    getCurrentIdentity: getWeeklyPlanIdentity,
+    getResponseIdentity: getWeeklyPlanResponseIdentity,
+    persistDocument: persistWeeklyPlanDocument,
+    onHydrate: applyWeeklyHydrationResponse,
+    onCanonicalSaveResponse: applyCanonicalWeeklyResponse,
+  });
 
-    return () => window.clearTimeout(timeoutId);
-  }, [
-    draftMetadata.lastPersistedSignature,
-    draftMetadata.loadedFromBackend,
-    draftMetadata.weeklyPlanParentId,
-    draftMetadata.weeklyPlanVersionId,
-    persistDraftNow,
-    programDraft,
-  ]);
+  const beginHydrationTarget = useCallback((identity) => {
+    beginCoordinatorHydrationTarget(toWeeklyPlanCoordinatorIdentity(identity));
+  }, [beginCoordinatorHydrationTarget]);
+
+  const hydrateProgramDraft = useCallback((response, options = {}) => {
+    hydrateCoordinatorDraft(response, options);
+  }, [hydrateCoordinatorDraft]);
+
+  const persistDraftNow = useCallback((overrideDraft = null, overrideIdentity = null) => (
+    persistCoordinatorDraftNow(
+      overrideDraft,
+      toWeeklyPlanCoordinatorIdentity(overrideIdentity)
+    )
+  ), [persistCoordinatorDraftNow]);
 
   const updateSupersetSetCount = useCallback((workoutId, blockId, nextCount) => {
     const safeCount = clampNumber(nextCount || 1, 1, MAX_BLOCK_SET_COUNT);
@@ -716,9 +530,8 @@ export function ManualProgramProvider({ children }) {
       workouts: [],
     });
     setDraftMetadata(createInitialDraftMetadata());
-    loadedIdentityRef.current = null;
-    targetIdentityRef.current = null;
-  }, []);
+    resetHydrationIdentity();
+  }, [resetHydrationIdentity]);
 
   const updateProgramMeta = useCallback((updates = {}) => {
     setProgramDraft((prev) => ({ ...prev, ...updates }));
@@ -1145,91 +958,15 @@ export function ManualProgramProvider({ children }) {
   const resetProgramDraft = useCallback(() => {
     setProgramDraft(createInitialDraft());
     setDraftMetadata(createInitialDraftMetadata());
-    loadedIdentityRef.current = null;
-    targetIdentityRef.current = null;
-  }, []);
-
-  // The only way targetIdentityRef is ever set ahead of a fetch dispatching.
-  // Callers that are about to open a (possibly different) weekly plan must
-  // call this synchronously, before starting the fetch -- weeklyPlanVersionId
-  // is left null since it isn't resolved until openOrCreateWeeklyPlanEditDraft
-  // returns. hydrateProgramDraft compares an arriving response's
-  // weeklyPlanParentId against whatever was most recently declared here; a
-  // response for a parent id a newer call here has since superseded is
-  // dropped rather than applied.
-  const beginHydrationTarget = useCallback((identity) => {
-    targetIdentityRef.current = identity;
-  }, []);
-
-  const hydrateProgramDraft = useCallback((response, options = {}) => {
-    const nextState = mapBuilderPayloadToProgramDraft(response);
-    const responseIdentity = {
-      weeklyPlanParentId: nextState.metadata.weeklyPlanParentId,
-      weeklyPlanVersionId: nextState.metadata.weeklyPlanVersionId,
-    };
-
-    if (!options.force) {
-      const declaredTarget = targetIdentityRef.current;
-      const isStaleAgainstDeclaredTarget =
-        declaredTarget != null && !sameRequestedWeeklyPlan(declaredTarget, responseIdentity);
-
-      if (isStaleAgainstDeclaredTarget) {
-        // A newer beginHydrationTarget() call has already superseded this
-        // fetch's target since it was dispatched -- this response is for a
-        // weekly plan the user is no longer requesting. Drop it entirely (no
-        // partial apply), regardless of what loadedIdentityRef says.
-        return;
-      }
-
-      const isSameDocumentAlreadyLoaded = sameIdentity(
-        loadedIdentityRef.current,
-        responseIdentity
-      );
-
-      if (isSameDocumentAlreadyLoaded) {
-        const currentSaveState = draftMetadataRef.current.saveState;
-
-        if (
-          currentSaveState === "dirty" ||
-          currentSaveState === "saving" ||
-          currentSaveState === "conflict"
-        ) {
-          // Local edits, an in-flight/queued save, or an unresolved conflict
-          // for this exact document all take priority over a redundant
-          // "open draft" response -- applying it here would silently revert
-          // whatever the user is mid-editing, or silently resolve a
-          // conflict without the user's explicit confirmation.
-          return;
-        }
-      }
-    }
-
-    setProgramDraft((prev) => ({
-      ...nextState.programDraft,
-      workouts: attachUiKeysToWorkouts(
-        nextState.programDraft.workouts || [],
-        prev.workouts || []
-      ),
-    }));
-    setDraftMetadata({
-      ...createInitialDraftMetadata(),
-      ...nextState.metadata,
-      originRoute: options.originRoute ?? null,
-    });
-    loadedIdentityRef.current = responseIdentity;
-    // A response that was just applied (whether it passed the checks above
-    // or arrived via force:true) is, by definition, now what the user is
-    // looking at -- keep the target in sync so later callers (the send-side
-    // check in persistDraftNow, and the next hydrateProgramDraft call) see a
-    // fully-resolved identity rather than the pre-dispatch partial one.
-    targetIdentityRef.current = responseIdentity;
-  }, []);
+    resetHydrationIdentity();
+  }, [resetHydrationIdentity]);
 
   // The only path back from `saveState === "conflict"`. Explicitly
   // destructive -- discards every unsaved local edit made since the
   // conflict was detected -- so the calling UI must show an explicit
   // confirmation step before invoking this, not call it as a direct,
-  // unconfirmed side effect of a single click.
+  // unconfirmed side effect of a single click. The coordinator's metadata
+  // ref keeps this domain-specific reload check current across async work.
   const reloadLatestAfterConflict = useCallback(async () => {
     const currentMetadata = draftMetadataRef.current;
 
@@ -1253,7 +990,7 @@ export function ManualProgramProvider({ children }) {
       }));
       return null;
     }
-  }, [hydrateProgramDraft]);
+  }, [draftMetadataRef, hydrateProgramDraft]);
 
   const setDraftOriginRoute = useCallback((originRoute) => {
     setDraftMetadata((prev) => ({
