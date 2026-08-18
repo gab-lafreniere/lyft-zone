@@ -106,14 +106,8 @@ export default function CycleProgramDetails() {
     setIsOpeningDraft(true);
     setError("");
 
-    // Declared synchronously, before the fetch dispatches (plan §D): if the
-    // user leaves this page for a different cycle before this resolves, that
-    // navigation declares its own target, and this response is dropped by
-    // hydrateProgramDraft instead of silently applying over whatever the
-    // user is now looking at.
-    beginHydrationTarget({ cycleId, planId: null });
-
     try {
+      await beginHydrationTarget({ cycleId, planId: null });
       const response = await openOrCreateCycleEditDraft(cycleId);
       hydrateProgramDraft(response);
       navigate(getCycleBuilderPath(cycleId));

@@ -10,10 +10,12 @@ import {
   getDateKeyInTimeZone,
   resolveOccurrenceTemporalState,
 } from "../features/multiWeek/occurrence";
+import { isWorkoutScopedAutosaveEnabled } from "../features/multiWeek/featureFlags";
 import { mapCycleBuilderPayload, mapMultiWeekDraftToApi } from "../features/multiWeek/mappers";
 import { openOrCreateCycleEditDraft, updateCycleDraft } from "../services/api";
 import { attachBlockUiKeys, createBlockUiKey } from "../utils/blockUiKeys";
 import { getDuplicateWorkoutName } from "../utils/duplicateWorkoutName";
+import { useCycleWorkoutAutosaveCoordinator } from "./useCycleWorkoutAutosaveCoordinator";
 import { useDraftAutosaveCoordinator } from "./useDraftAutosaveCoordinator";
 
 const MultiWeekProgramContext = createContext(null);
@@ -92,11 +94,11 @@ function createId(prefix) {
 }
 
 function createSingleSetRow() {
-  return { reps: 8, rpe: 2 };
+  return { id: createId("set"), reps: 8, rpe: 2 };
 }
 
 function createSupersetSetRow() {
-  return { reps: 10, rpe: 2 };
+  return { id: createId("set"), reps: 10, rpe: 2 };
 }
 
 function createSetRows(count, createRow) {
@@ -149,6 +151,7 @@ function createDefaultSingleBlock() {
     id: createId("block"),
     uiKey: createBlockUiKey(),
     type: "single",
+    exerciseRowId: createId("exercise"),
     exercise: "",
     exerciseId: null,
     bodyParts: [],
@@ -162,6 +165,7 @@ function createDefaultSingleBlock() {
 
 function createEmptySupersetExercise(label, setCount = 2) {
   return {
+    id: createId("exercise"),
     label,
     name: "",
     exerciseId: null,
@@ -192,6 +196,7 @@ function createSingleBlockFromExercise(exercise) {
     id: createId("block"),
     uiKey: createBlockUiKey(),
     type: "single",
+    exerciseRowId: createId("exercise"),
     exercise: exercise.name,
     exerciseId: exercise.exerciseId,
     bodyParts: Array.isArray(exercise.bodyParts) ? exercise.bodyParts : [],
@@ -208,6 +213,7 @@ function createCardioBlockFromExercise(exercise) {
     id: createId("block"),
     uiKey: createBlockUiKey(),
     type: "cardio",
+    exerciseRowId: createId("exercise"),
     exerciseId: exercise.exerciseId,
     exercise,
     cardioPrescription: {
@@ -234,6 +240,7 @@ function cloneWorkoutForDuplicate(workout, name = workout.name) {
   return {
     ...workout,
     id: createId("workout"),
+    contentRevision: undefined,
     name,
     persistence: undefined,
     blocks: (workout.blocks || []).map((block) => ({
@@ -241,20 +248,23 @@ function cloneWorkoutForDuplicate(workout, name = workout.name) {
       id: createId("block"),
       uiKey: createBlockUiKey(),
       persistence: undefined,
-      exerciseRowId: undefined,
+      exerciseRowId:
+        block.type === "single" || block.type === "cardio"
+          ? createId("exercise")
+          : undefined,
       exercisePersistence: undefined,
       editIntent: undefined,
       exercises:
         block.type === "superset"
           ? (block.exercises || []).map((exercise) => ({
             ...exercise,
-            id: undefined,
+            id: createId("exercise"),
             persistence: undefined,
             editIntent: undefined,
             sets: Array.isArray(exercise.sets)
               ? exercise.sets.map((set) => ({
                 ...set,
-                id: undefined,
+                id: createId("set"),
                 persistence: undefined,
                 editIntent: undefined,
               }))
@@ -264,7 +274,7 @@ function cloneWorkoutForDuplicate(workout, name = workout.name) {
       sets: Array.isArray(block.sets)
         ? block.sets.map((set) => ({
           ...set,
-          id: undefined,
+          id: createId("set"),
           persistence: undefined,
           editIntent: undefined,
         }))
@@ -458,7 +468,12 @@ function isLockedActiveCycleWorkoutOccurrence({
 export function MultiWeekProgramProvider({ children }) {
   const [multiWeekDraft, setMultiWeekDraft] = useState(createInitialDraft);
   const [draftMetadata, setDraftMetadata] = useState(createInitialDraftMetadata);
+  const [structuralMutationVersion, setStructuralMutationVersion] = useState(0);
   const draftRecoveryPromiseRef = useRef(null);
+  const structuralMutationVersionRef = useRef(0);
+  const lastPersistedStructuralMutationVersionRef = useRef(0);
+  const workoutCoordinatorRef = useRef(null);
+  const workoutScopedAutosaveEnabled = isWorkoutScopedAutosaveEnabled();
 
   const selectedWeek = useMemo(
     () => multiWeekDraft.weeks.find((week) => week.weekNumber === multiWeekDraft.selectedWeek) || multiWeekDraft.weeks[0] || null,
@@ -477,14 +492,23 @@ export function MultiWeekProgramProvider({ children }) {
   const applyCycleHydrationResponse = useCallback((response) => {
     const nextState = mapCycleBuilderPayload(response);
 
-    setMultiWeekDraft((prev) => ({
-      ...nextState.programDraft,
-      weeks: attachUiKeysToWeeks(
-        nextState.programDraft.weeks || [],
-        prev.weeks || []
-      ),
-      selectedWeek: resolvePreservedSelectedWeek(prev.selectedWeek, nextState.programDraft),
-    }));
+    setMultiWeekDraft((prev) => {
+      const nextDraft = {
+        ...nextState.programDraft,
+        weeks: attachUiKeysToWeeks(
+          nextState.programDraft.weeks || [],
+          prev.weeks || []
+        ),
+        selectedWeek: resolvePreservedSelectedWeek(prev.selectedWeek, nextState.programDraft),
+      };
+      workoutCoordinatorRef.current?.rebaseWorkoutDirtyDetectionBaseline(
+        nextDraft,
+        { resetState: true }
+      );
+      return nextDraft;
+    });
+    lastPersistedStructuralMutationVersionRef.current =
+      structuralMutationVersionRef.current;
     setDraftMetadata({
       ...createInitialDraftMetadata(),
       ...nextState.metadata,
@@ -495,14 +519,23 @@ export function MultiWeekProgramProvider({ children }) {
     const activePlanId = response?.planId || null;
     const nextState = mapCycleBuilderPayload(response);
 
-    setMultiWeekDraft((prev) => ({
-      ...nextState.programDraft,
-      weeks: attachUiKeysToWeeks(
-        nextState.programDraft.weeks || [],
-        prev.weeks || []
-      ),
-      selectedWeek: resolvePreservedSelectedWeek(prev.selectedWeek, nextState.programDraft),
-    }));
+    setMultiWeekDraft((prev) => {
+      const nextDraft = {
+        ...nextState.programDraft,
+        weeks: attachUiKeysToWeeks(
+          nextState.programDraft.weeks || [],
+          prev.weeks || []
+        ),
+        selectedWeek: resolvePreservedSelectedWeek(prev.selectedWeek, nextState.programDraft),
+      };
+      workoutCoordinatorRef.current?.rebaseWorkoutDirtyDetectionBaseline(
+        nextDraft,
+        { resetState: true }
+      );
+      return nextDraft;
+    });
+    lastPersistedStructuralMutationVersionRef.current =
+      structuralMutationVersionRef.current;
     setDraftMetadata((prev) => ({
       ...prev,
       ...nextState.metadata,
@@ -642,9 +675,12 @@ export function MultiWeekProgramProvider({ children }) {
     isTransientlyPaused: isCycleAutosavePaused,
     onAutosaveError: logCycleAutosaveError,
     onQueuedSaveError: logQueuedCycleAutosaveError,
+    autosaveTrigger: workoutScopedAutosaveEnabled
+      ? structuralMutationVersion
+      : multiWeekDraft,
   });
 
-  const beginHydrationTarget = useCallback((identity) => {
+  const beginDocumentHydrationTarget = useCallback((identity) => {
     beginCoordinatorHydrationTarget(toCycleCoordinatorIdentity(identity));
   }, [beginCoordinatorHydrationTarget]);
 
@@ -667,6 +703,72 @@ export function MultiWeekProgramProvider({ children }) {
       draftMetadataRef.current
     )
   ), [draftMetadataRef, hydrateProgramDraft, recoverExpiredDraft]);
+
+  const workoutCoordinator = useCycleWorkoutAutosaveCoordinator({
+    enabled: workoutScopedAutosaveEnabled,
+    multiWeekDraft,
+    setMultiWeekDraft,
+    draftMetadata,
+    setDraftMetadata,
+    documentMetadataRef: draftMetadataRef,
+    structuralMutationVersion,
+    handleDraftExpired,
+  });
+  workoutCoordinatorRef.current = workoutCoordinator;
+  const {
+    flushAllWorkouts,
+    flushWorkout,
+    persistWorkoutNow,
+    workoutSaveState,
+  } = workoutCoordinator;
+
+  const markStructuralMutation = useCallback(() => {
+    structuralMutationVersionRef.current += 1;
+    setStructuralMutationVersion(structuralMutationVersionRef.current);
+  }, []);
+
+  const beginHydrationTarget = useCallback((identity) => {
+    const currentMetadata = draftMetadataRef.current;
+    const isDifferentDocument = Boolean(
+      currentMetadata.loadedFromBackend &&
+      currentMetadata.cycleId &&
+      identity?.cycleId &&
+      currentMetadata.cycleId !== identity.cycleId
+    );
+
+    if (!workoutScopedAutosaveEnabled || !isDifferentDocument) {
+      beginDocumentHydrationTarget(identity);
+      return null;
+    }
+
+    return (async () => {
+      const { blockedWorkoutIds } = await flushAllWorkouts();
+      if (blockedWorkoutIds.length > 0) {
+        const error = new Error(
+          "Resolve workout autosave errors before opening another cycle draft."
+        );
+        error.code = "WORKOUT_AUTOSAVE_BLOCKED";
+        error.workoutIds = blockedWorkoutIds;
+        throw error;
+      }
+
+      if (
+        structuralMutationVersionRef.current >
+        lastPersistedStructuralMutationVersionRef.current
+      ) {
+        await persistDraftNow();
+      }
+
+      beginDocumentHydrationTarget(identity);
+      return null;
+    })();
+  }, [
+    beginDocumentHydrationTarget,
+    draftMetadataRef,
+    flushAllWorkouts,
+    persistDraftNow,
+    workoutScopedAutosaveEnabled,
+  ]);
 
   // The only path back from `saveState === "conflict"`. Explicitly
   // destructive -- discards every unsaved local edit made since the
@@ -701,8 +803,9 @@ export function MultiWeekProgramProvider({ children }) {
   }, [draftMetadataRef, hydrateProgramDraft]);
 
   const updateProgramMeta = useCallback((updates = {}) => {
+    markStructuralMutation();
     setMultiWeekDraft((prev) => ({ ...prev, ...updates }));
-  }, []);
+  }, [markStructuralMutation]);
 
   const setSelectedWeek = useCallback((week) => {
     setMultiWeekDraft((prev) => ({ ...prev, selectedWeek: week }));
@@ -734,6 +837,7 @@ export function MultiWeekProgramProvider({ children }) {
   }, [draftMetadataRef]);
 
   const addWorkout = useCallback((name) => {
+    markStructuralMutation();
     setMultiWeekDraft((prev) =>
       updateSelectedWeekDraft(prev, (week) => {
         if (week.workouts.length >= prev.sessionsPerWeek) {
@@ -750,11 +854,12 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [markStructuralMutation]);
 
   const moveWorkouts = useCallback((workoutIds, direction) => {
     const selectedIdSet = new Set(Array.isArray(workoutIds) ? workoutIds : []);
 
+    markStructuralMutation();
     setMultiWeekDraft((prev) =>
       updateSelectedWeekDraft(prev, (week) => {
         const nextWorkouts = [...week.workouts];
@@ -791,11 +896,12 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [markStructuralMutation]);
 
   const duplicateWorkouts = useCallback((workoutIds) => {
     const selectedIdSet = new Set(Array.isArray(workoutIds) ? workoutIds : []);
 
+    markStructuralMutation();
     setMultiWeekDraft((prev) =>
       updateSelectedWeekDraft(prev, (week) => {
         if (week.workouts.length + selectedIdSet.size > prev.sessionsPerWeek) {
@@ -819,18 +925,19 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, []);
+  }, [markStructuralMutation]);
 
   const removeWorkouts = useCallback((workoutIds) => {
     const selectedIdSet = new Set(Array.isArray(workoutIds) ? workoutIds : []);
 
+    markStructuralMutation();
     setMultiWeekDraft((prev) =>
       updateSelectedWeekDraft(prev, (week) => ({
         ...week,
         workouts: week.workouts.filter((workout) => !selectedIdSet.has(workout.id)),
       }))
     );
-  }, []);
+  }, [markStructuralMutation]);
 
   const updateBlock = useCallback((workoutId, blockId, updates) => {
     setMultiWeekDraft((prev) =>
@@ -1150,6 +1257,7 @@ export function MultiWeekProgramProvider({ children }) {
       return;
     }
 
+    markStructuralMutation();
     setMultiWeekDraft((prev) =>
       updateSelectedWeekDraft(prev, (week) => {
         const workouts = week.workouts || [];
@@ -1204,13 +1312,14 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, [draftMetadataRef]);
+  }, [draftMetadataRef, markStructuralMutation]);
 
   const moveSelectedWeekWorkoutToScheduledDay = useCallback((orderIndex, nextScheduledDay) => {
     if (!DAY_OF_WEEK.includes(nextScheduledDay)) {
       return;
     }
 
+    markStructuralMutation();
     setMultiWeekDraft((prev) =>
       updateSelectedWeekDraft(prev, (week) => {
         const workouts = week.workouts || [];
@@ -1268,9 +1377,10 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, [draftMetadataRef]);
+  }, [draftMetadataRef, markStructuralMutation]);
 
   const duplicateSelectedWeekWorkout = useCallback((orderIndex, targetScheduledDay = null) => {
+    markStructuralMutation();
     setMultiWeekDraft((prev) =>
       updateSelectedWeekDraft(prev, (week) => {
         const workouts = week.workouts || [];
@@ -1336,9 +1446,10 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, [draftMetadataRef]);
+  }, [draftMetadataRef, markStructuralMutation]);
 
   const deleteSelectedWeekWorkout = useCallback((orderIndex) => {
+    markStructuralMutation();
     setMultiWeekDraft((prev) =>
       updateSelectedWeekDraft(prev, (week) => {
         const targetWorkout = (week.workouts || []).find(
@@ -1363,7 +1474,7 @@ export function MultiWeekProgramProvider({ children }) {
         };
       })
     );
-  }, [draftMetadataRef]);
+  }, [draftMetadataRef, markStructuralMutation]);
 
   const updateSet = useCallback((workoutId, blockId, setIndex, updates, exerciseIndex = null) => {
     const normalizedUpdates = normalizeSetUpdates(updates);
@@ -1610,10 +1721,15 @@ export function MultiWeekProgramProvider({ children }) {
     () => ({
       programDraft,
       draftMetadata,
+      workoutSaveState,
+      workoutScopedAutosaveEnabled,
       hydrateProgramDraft,
       beginHydrationTarget,
       handleDraftExpired,
       persistDraftNow,
+      persistWorkoutNow,
+      flushWorkout,
+      flushAllWorkouts,
       reloadLatestAfterConflict,
       getMultiWeekTodayDateKey: () =>
         getMultiWeekTodayDateKey(draftMetadataRef.current, multiWeekDraftRef.current),
@@ -1645,12 +1761,17 @@ export function MultiWeekProgramProvider({ children }) {
     [
       programDraft,
       draftMetadata,
+      workoutSaveState,
+      workoutScopedAutosaveEnabled,
       draftMetadataRef,
       multiWeekDraftRef,
       hydrateProgramDraft,
       beginHydrationTarget,
       handleDraftExpired,
       persistDraftNow,
+      persistWorkoutNow,
+      flushWorkout,
+      flushAllWorkouts,
       reloadLatestAfterConflict,
       updateProgramMeta,
       setSelectedWeek,

@@ -227,7 +227,7 @@ function moveWorkoutWithDownwardPush(slots, sourceIndex, direction) {
 export default function ManualConvert() {
   const navigate = useNavigate();
   const { programDraft, draftMetadata } = useManualProgram();
-  const { hydrateProgramDraft } = useMultiWeekProgram();
+  const { beginHydrationTarget, hydrateProgramDraft } = useMultiWeekProgram();
 
   const programName = programDraft.programName || "New Program";
   const sessionsPerWeek = programDraft.sessionsPerWeek || 4;
@@ -387,6 +387,7 @@ export default function ManualConvert() {
           })),
       });
 
+      await beginHydrationTarget({ cycleId: response.cycleId, planId: null });
       hydrateProgramDraft(response);
       navigate(getCycleBuilderPath(response.cycleId));
     } catch (error) {

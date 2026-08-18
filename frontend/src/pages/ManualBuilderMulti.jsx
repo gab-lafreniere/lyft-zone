@@ -230,6 +230,15 @@ function buildUiError(error, fallbackMessage) {
   };
 }
 
+function buildWorkoutAutosaveBlockedError(actionLabel, workoutIds) {
+  const error = new Error(
+    `Resolve workout autosave conflicts or errors before ${actionLabel}.`
+  );
+  error.code = "WORKOUT_AUTOSAVE_BLOCKED";
+  error.workoutIds = workoutIds;
+  return error;
+}
+
 export default function ManualBuilderMulti() {
   const navigate = useNavigate();
   const { cycleId } = useParams();
@@ -240,6 +249,8 @@ export default function ManualBuilderMulti() {
     beginHydrationTarget,
     handleDraftExpired,
     persistDraftNow,
+    flushAllWorkouts,
+    workoutScopedAutosaveEnabled,
     setSelectedWeek,
     updateDraftMetadata,
     moveSelectedWeekWorkoutToScheduledDay,
@@ -329,18 +340,15 @@ export default function ManualBuilderMulti() {
 
     let cancelled = false;
 
-    // Declared synchronously, before the fetch dispatches (plan §D): if the
-    // user navigates to a different cycle before this resolves, that
-    // navigation's own mount-effect run declares a new target here, and this
-    // fetch's eventual response is dropped by hydrateProgramDraft instead of
-    // silently applying over whatever the user is now looking at.
-    beginHydrationTarget({ cycleId, planId: null });
-
     async function loadDraft() {
       setIsLoading(true);
       setLoadError(null);
 
       try {
+        // Flag-off remains synchronous. With workout-scoped autosave enabled,
+        // a genuine document switch first reaches the terminal workout flush
+        // barrier before this target is declared and fetched.
+        await beginHydrationTarget({ cycleId, planId: null });
         const response = await openOrCreateCycleEditDraft(cycleId);
         const activePlanId = response?.planId || null;
         if (cancelled) {
@@ -919,6 +927,16 @@ export default function ManualBuilderMulti() {
     setPublishError(null);
 
     try {
+      if (workoutScopedAutosaveEnabled) {
+        const { blockedWorkoutIds = [] } = await flushAllWorkouts();
+        if (blockedWorkoutIds.length > 0) {
+          throw buildWorkoutAutosaveBlockedError(
+            "saving cycle settings",
+            blockedWorkoutIds
+          );
+        }
+      }
+
       const response = await updateUpcomingDraftTimeline(cycleId, activePlanId, {
         newStartDate: settingsStartDate,
         durationWeeks: settingsDurationWeeks,
@@ -973,6 +991,16 @@ export default function ManualBuilderMulti() {
     setPublishError(null);
 
     try {
+      if (workoutScopedAutosaveEnabled) {
+        const { blockedWorkoutIds = [] } = await flushAllWorkouts();
+        if (blockedWorkoutIds.length > 0) {
+          throw buildWorkoutAutosaveBlockedError(
+            "publishing",
+            blockedWorkoutIds
+          );
+        }
+      }
+
       // All current local edits must be durably persisted before publish
       // begins -- this is a no-op cheaply when nothing is dirty, and closes
       // the asymmetry with the Weekly Plan builder's publish flow.

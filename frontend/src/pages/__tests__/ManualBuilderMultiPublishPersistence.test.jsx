@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import ManualBuilderMulti from "../ManualBuilderMulti";
 import { useMultiWeekProgram } from "../../context/MultiWeekProgramContext";
@@ -74,6 +74,8 @@ function createContextValue(persistDraftNow) {
     hydrateProgramDraft: jest.fn(),
     handleDraftExpired: jest.fn(),
     persistDraftNow,
+    flushAllWorkouts: jest.fn(),
+    workoutScopedAutosaveEnabled: false,
     setSelectedWeek: jest.fn(),
     updateDraftMetadata: jest.fn(),
     moveSelectedWeekWorkoutToScheduledDay: jest.fn(),
@@ -82,19 +84,17 @@ function createContextValue(persistDraftNow) {
   };
 }
 
-async function renderAtCycle(cycleId, contextValue) {
+function renderAtCycle(cycleId, contextValue) {
   useMultiWeekProgram.mockReturnValue(contextValue);
 
-  await act(async () => {
-    render(
-      <MemoryRouter initialEntries={[`/program/cycles/${cycleId}/builder`]}>
-        <Routes>
-          <Route path="/program/cycles/:cycleId/builder" element={<ManualBuilderMulti />} />
-          <Route path="*" element={<div>post-publish destination</div>} />
-        </Routes>
-      </MemoryRouter>
-    );
-  });
+  render(
+    <MemoryRouter initialEntries={[`/program/cycles/${cycleId}/builder`]}>
+      <Routes>
+        <Route path="/program/cycles/:cycleId/builder" element={<ManualBuilderMulti />} />
+        <Route path="*" element={<div>post-publish destination</div>} />
+      </Routes>
+    </MemoryRouter>
+  );
 }
 
 describe("ManualBuilderMulti publish persistence (Phase 1B)", () => {
@@ -112,14 +112,15 @@ describe("ManualBuilderMulti publish persistence (Phase 1B)", () => {
     const persistDraftNow = jest.fn().mockResolvedValue({});
     const contextValue = createContextValue(persistDraftNow);
 
-    await renderAtCycle("cycle_1", contextValue);
+    renderAtCycle("cycle_1", contextValue);
 
-    fireEvent.click(screen.getByRole("button", { name: /Publish Cycle/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Publish Cycle/ }));
 
     await waitFor(() => expect(publishCycleDraft).toHaveBeenCalledTimes(1));
     expect(persistDraftNow).toHaveBeenCalledTimes(1);
     expect(persistDraftNow.mock.invocationCallOrder[0]).toBeLessThan(
       publishCycleDraft.mock.invocationCallOrder[0]
     );
+    expect(contextValue.flushAllWorkouts).not.toHaveBeenCalled();
   });
 });

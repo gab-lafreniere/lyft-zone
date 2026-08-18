@@ -6,6 +6,7 @@ import {
   fetchUserExercisePoolResponse,
   getAIWeeklyPlanGenerationProgress,
   getOnboardingCycleConflicts,
+  saveCycleWorkoutContent,
   updateCycleDraft,
   updateTrainingProfileAvailability,
   updateUserOnboarding,
@@ -495,5 +496,66 @@ describe("readJsonResponse error handling", () => {
       status: 200,
       code: "MALFORMED_RESPONSE",
     });
+  });
+});
+
+describe("saveCycleWorkoutContent", () => {
+  beforeEach(() => {
+    global.fetch = jest.fn();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("patches one workout with its content revision and no document payload", async () => {
+    const responseBody = {
+      cycleId: "cycle_1",
+      planId: "plan_1",
+      workoutId: "workout_1",
+      contentRevision: 8,
+      planRevision: 31,
+      workout: { id: "workout_1", name: "Lower A" },
+    };
+    global.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => responseBody,
+    });
+
+    const result = await saveCycleWorkoutContent(
+      "cycle_1",
+      "plan_1",
+      "workout_1",
+      {
+        contentRevision: 7,
+        allowCrossDayDraft: true,
+        timezone: "America/Toronto",
+        workout: { id: "workout_1", name: "Lower A" },
+      }
+    );
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const [requestUrl, requestOptions] = global.fetch.mock.calls[0];
+    expect(new URL(requestUrl).pathname).toBe(
+      "/api/cycles/cycle_1/drafts/plan_1/workouts/workout_1"
+    );
+    expect(requestOptions.method).toBe("PATCH");
+    expect(requestOptions.headers).toEqual({
+      "Content-Type": "application/json",
+    });
+
+    const requestBody = JSON.parse(requestOptions.body);
+    expect(requestBody).toEqual({
+      contentRevision: 7,
+      allowCrossDayDraft: true,
+      timezone: "America/Toronto",
+      workout: { id: "workout_1", name: "Lower A" },
+      userId: expect.any(String),
+    });
+    expect(requestBody).not.toHaveProperty("revision");
+    expect(requestBody).not.toHaveProperty("weeks");
+    expect(result).toBe(responseBody);
   });
 });

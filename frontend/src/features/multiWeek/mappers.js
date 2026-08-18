@@ -1,6 +1,12 @@
 import { resolveCardioModality } from "../../utils/cardioModality";
 import { mapBuilderWorkoutToApi } from "../draftPersistenceMapper";
 
+export function mapCycleWorkoutToApi(workout, workoutIndex) {
+  return mapBuilderWorkoutToApi(workout, workoutIndex, {
+    includeScheduledDay: true,
+  });
+}
+
 export function mapMultiWeekDraftToApi(programDraft) {
   return {
     name: String(programDraft.programName || "").trim(),
@@ -11,7 +17,7 @@ export function mapMultiWeekDraftToApi(programDraft) {
       label: week.label || `Week ${weekIndex + 1}`,
       notes: week.notes || null,
       workouts: (week.workouts || []).map((workout, workoutIndex) =>
-        mapBuilderWorkoutToApi(workout, workoutIndex, { includeScheduledDay: true })
+        mapCycleWorkoutToApi(workout, workoutIndex)
       ),
     })),
   };

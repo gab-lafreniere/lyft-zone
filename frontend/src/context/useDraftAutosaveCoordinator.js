@@ -43,6 +43,7 @@ export function useDraftAutosaveCoordinator({
   isTransientlyPaused,
   onAutosaveError,
   onQueuedSaveError,
+  autosaveTrigger = draft,
 }) {
   const draftRef = useRef(draft);
   const metadataRef = useRef(metadata);
@@ -303,7 +304,8 @@ export function useDraftAutosaveCoordinator({
       return undefined;
     }
 
-    const signature = JSON.stringify(serializeDraft(draft));
+    const draftSnapshot = draftRef.current;
+    const signature = JSON.stringify(serializeDraft(draftSnapshot));
     if (signature === metadata.lastPersistedSignature) {
       return undefined;
     }
@@ -314,7 +316,6 @@ export function useDraftAutosaveCoordinator({
         : { ...prev, saveState: "dirty" }
     ));
 
-    const draftSnapshot = draft;
     const identitySnapshot = {
       documentId: currentDocumentId,
       versionId: currentVersionId,
@@ -329,7 +330,7 @@ export function useDraftAutosaveCoordinator({
   }, [
     currentDocumentId,
     currentVersionId,
-    draft,
+    autosaveTrigger,
     isTransientlyPaused,
     metadata.lastPersistedSignature,
     metadata.loadedFromBackend,

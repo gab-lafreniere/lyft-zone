@@ -581,6 +581,24 @@ export async function updateCycleDraft(cycleId, planId, payload) {
   return readJsonResponse(response);
 }
 
+export async function saveCycleWorkoutContent(cycleId, planId, workoutId, payload) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/cycles/${cycleId}/drafts/${planId}/workouts/${workoutId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...payload,
+        userId,
+        timezone: payload.timezone || getLocalTimezone(),
+      }),
+    }
+  );
+
+  return readJsonResponse(response);
+}
+
 export async function updateUpcomingDraftTimeline(cycleId, planId, payload) {
   const userId = await ensureCurrentUserId();
   const response = await fetch(
