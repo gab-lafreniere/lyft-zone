@@ -153,6 +153,14 @@ function normalizeWorkoutScalarFields(workout) {
   });
 }
 
+function normalizeWorkoutContentScalarFields(workout) {
+  return JSON.stringify({
+    name: workout.name,
+    estimatedDurationMinutes: normalizeNullableInteger(workout.estimatedDurationMinutes),
+    notes: workout.notes || null,
+  });
+}
+
 function normalizeWorkoutBlockFields(workout, options = {}) {
   const extraExerciseFields = options.extraExerciseFields || noExtraExerciseFields;
 
@@ -282,16 +290,23 @@ function diffWorkoutList(existingWorkouts, incomingWorkouts, parentLabel, option
   return {
     workoutCreates: workoutMatches.creates,
     workoutDeletes: workoutMatches.deletes,
-    workoutUpdates: workoutMatches.pairs.map(({ existingWorkout, incomingWorkout }) => ({
-      existingWorkout,
-      incomingWorkout,
-      scalarChanged:
-        normalizeWorkoutScalarFields(existingWorkout) !==
-        normalizeWorkoutScalarFields(incomingWorkout),
-      blockChanged:
-        normalizeWorkoutBlockFields(existingWorkout, options) !==
-        normalizeWorkoutBlockFields(incomingWorkout, options),
-    })),
+    workoutUpdates: workoutMatches.pairs.map(({ existingWorkout, incomingWorkout }) => {
+      const contentScalarChanged =
+        normalizeWorkoutContentScalarFields(existingWorkout) !==
+        normalizeWorkoutContentScalarFields(incomingWorkout);
+
+      return {
+        existingWorkout,
+        incomingWorkout,
+        scalarChanged:
+          normalizeWorkoutScalarFields(existingWorkout) !==
+          normalizeWorkoutScalarFields(incomingWorkout),
+        contentScalarChanged,
+        blockChanged:
+          normalizeWorkoutBlockFields(existingWorkout, options) !==
+          normalizeWorkoutBlockFields(incomingWorkout, options),
+      };
+    }),
     finalWorkoutOrder,
     reorderChanged:
       originalExistingWorkouts.length !== reorderedExistingWorkouts.length ||
@@ -350,6 +365,13 @@ async function applyWorkoutFinalState(
         entry.existingWorkout.blocks
       );
     }
+
+    if (
+      typeof adapter.incrementContentRevision === 'function' &&
+      (updateEntry.contentScalarChanged || updateEntry.blockChanged)
+    ) {
+      await adapter.incrementContentRevision(entry.existingWorkout.id);
+    }
   }
 }
 
@@ -360,6 +382,7 @@ module.exports = {
   normalizeBlockForPersistence,
   normalizeWorkoutForPersistence,
   normalizeWorkoutScalarFields,
+  normalizeWorkoutContentScalarFields,
   normalizeWorkoutBlockFields,
   matchIncomingWorkouts,
   diffWorkoutList,

@@ -28,6 +28,7 @@ let createUser;
 let createCycle;
 let createPlanForCycle;
 let updateCycleDraft;
+let updateCycleWorkoutContent;
 let getPrisma;
 
 before(async () => {
@@ -45,8 +46,14 @@ before(async () => {
   process.env.DATABASE_URL = pgHandle.url;
 
   ({ createUser } = require('../../services/usersService'));
-  ({ createCycle, createPlanForCycle, updateCycleDraft } = require('../../services/cyclesService'));
+  ({
+    createCycle,
+    createPlanForCycle,
+    updateCycleDraft,
+    updateCycleWorkoutContent,
+  } = require('../../services/cyclesService'));
   ({ getPrisma } = require('../../lib/prisma'));
+  await seedExercise(getPrisma());
 });
 
 after(() => {
@@ -141,8 +148,6 @@ test('two concurrent updateCycleDraft calls at the same revision: exactly one co
   }
 
   const prisma = getPrisma();
-  await seedExercise(prisma);
-
   const user = await createUser({ email: 'revision-cas-cycle@example.com' });
 
   const cycle = await createCycle({
@@ -270,4 +275,238 @@ test('two concurrent updateCycleDraft calls at the same revision: exactly one co
   // than deleting and recreating it, confirming the loser never got far
   // enough to interleave a delete against rows the winner also touched.
   assert.equal(finalWorkout.id, workout.id);
+});
+
+test('structural saves advance only truly changed workout content revisions and stale workout tokens fail', async (t) => {
+  if (skipReason) {
+    t.skip(skipReason);
+    return;
+  }
+
+  const prisma = getPrisma();
+  const user = await createUser({ email: 'structural-content-revision@example.com' });
+  const cycle = await createCycle({
+    userId: user.id,
+    name: 'Structural content revision Cycle',
+    startDate: '2036-09-01',
+    endDate: '2036-09-07',
+    durationWeeks: 1,
+    mode: 'FIXED',
+    timezone: 'UTC',
+  });
+  const plan = await createPlanForCycle(cycle.id, {
+    name: 'Structural content revision Plan',
+    weeks: [{
+      weekNumber: 1,
+      orderIndex: 1,
+      label: 'Week 1',
+      workouts: [
+        {
+          name: 'Touched workout',
+          orderIndex: 1,
+          scheduledDay: 'MONDAY',
+          blocks: [{
+            orderIndex: 1,
+            blockType: 'SINGLE',
+            restStrategy: 'AFTER_EXERCISE',
+            exercises: [{
+              exerciseId: 'ex_bench_press_test',
+              exerciseName: 'Bench Press',
+              orderIndex: 1,
+              intensificationMethod: 'NONE',
+              setTemplates: [{ setIndex: 1, setType: 'WORKING', targetReps: 8 }],
+            }],
+          }],
+        },
+        {
+          name: 'Unchanged sibling',
+          orderIndex: 2,
+          scheduledDay: 'WEDNESDAY',
+          blocks: [{
+            orderIndex: 1,
+            blockType: 'SINGLE',
+            restStrategy: 'AFTER_EXERCISE',
+            exercises: [{
+              exerciseId: 'ex_bench_press_test',
+              exerciseName: 'Bench Press',
+              orderIndex: 1,
+              intensificationMethod: 'NONE',
+              setTemplates: [{ setIndex: 1, setType: 'WORKING', targetReps: 10 }],
+            }],
+          }],
+        },
+      ],
+    }],
+  });
+  const [touched, sibling] = plan.weeks[0].workouts;
+  const startingContentRevision = touched.contentRevision;
+  const contentPayload = buildUpdatePayload(plan, user.id, {
+    workoutName: 'Touched workout renamed',
+    targetReps: 12,
+    revision: plan.revision,
+  });
+  contentPayload.weeks[0].workouts.push({
+    ...buildUpdatePayload({
+      ...plan,
+      weeks: [{ ...plan.weeks[0], workouts: [sibling] }],
+    }, user.id, {
+      workoutName: sibling.name,
+      targetReps: 10,
+      revision: plan.revision,
+    }).weeks[0].workouts[0],
+    orderIndex: 2,
+    scheduledDay: 'WEDNESDAY',
+  });
+
+  const contentResponse = await updateCycleDraft(cycle.id, plan.id, contentPayload);
+  assert.equal(
+    contentResponse.builderPayload.weeks[0].workouts[0].contentRevision,
+    startingContentRevision + 1
+  );
+  assert.equal(
+    contentResponse.builderPayload.weeks[0].workouts[1].contentRevision,
+    sibling.contentRevision
+  );
+
+  const noOpResponse = await updateCycleDraft(cycle.id, plan.id, {
+    ...contentPayload,
+    revision: contentResponse.revision,
+  });
+  assert.deepEqual(
+    noOpResponse.builderPayload.weeks[0].workouts.map((workout) => workout.contentRevision),
+    [startingContentRevision + 1, sibling.contentRevision]
+  );
+
+  const placementPayload = JSON.parse(JSON.stringify(contentPayload));
+  placementPayload.revision = noOpResponse.revision;
+  placementPayload.weeks[0].workouts[0].scheduledDay = 'TUESDAY';
+  const placementResponse = await updateCycleDraft(cycle.id, plan.id, placementPayload);
+  assert.deepEqual(
+    placementResponse.builderPayload.weeks[0].workouts.map((workout) => workout.contentRevision),
+    [startingContentRevision + 1, sibling.contentRevision]
+  );
+
+  await assert.rejects(
+    () => updateCycleWorkoutContent(cycle.id, plan.id, touched.id, {
+      userId: user.id,
+      timezone: 'UTC',
+      contentRevision: startingContentRevision,
+      workout: placementPayload.weeks[0].workouts[0],
+    }),
+    (error) => error?.status === 409 && error?.code === 'WORKOUT_REVISION_CONFLICT'
+  );
+
+  const currentWorkoutResponse = await updateCycleWorkoutContent(
+    cycle.id,
+    plan.id,
+    touched.id,
+    {
+      userId: user.id,
+      timezone: 'UTC',
+      contentRevision: startingContentRevision + 1,
+      workout: {
+        ...placementPayload.weeks[0].workouts[0],
+        name: 'Current token succeeds',
+      },
+    }
+  );
+  assert.equal(currentWorkoutResponse.contentRevision, startingContentRevision + 2);
+});
+
+test('a true same-Plan structural-name and workout-content race has only the two allowed atomic outcomes', async (t) => {
+  if (skipReason) {
+    t.skip(skipReason);
+    return;
+  }
+
+  const prisma = getPrisma();
+  const user = await createUser({ email: 'structural-workout-race@example.com' });
+  const cycle = await createCycle({
+    userId: user.id,
+    name: 'Structural workout race Cycle',
+    startDate: '2035-09-03',
+    endDate: '2035-09-09',
+    durationWeeks: 1,
+    mode: 'FIXED',
+    timezone: 'UTC',
+  });
+  const plan = await createPlanForCycle(cycle.id, {
+    name: 'Before structural race',
+    weeks: [{
+      weekNumber: 1,
+      orderIndex: 1,
+      label: 'Week 1',
+      workouts: [{
+        name: 'Before content race',
+        orderIndex: 1,
+        blocks: [{
+          orderIndex: 1,
+          blockType: 'SINGLE',
+          restStrategy: 'AFTER_EXERCISE',
+          exercises: [{
+            exerciseId: 'ex_bench_press_test',
+            exerciseName: 'Bench Press',
+            orderIndex: 1,
+            intensificationMethod: 'NONE',
+            setTemplates: [{ setIndex: 1, setType: 'WORKING', targetReps: 8 }],
+          }],
+        }],
+      }],
+    }],
+  });
+  const workout = plan.weeks[0].workouts[0];
+  const unchangedWorkoutPayload = buildUpdatePayload(plan, user.id, {
+    workoutName: workout.name,
+    targetReps: 8,
+    revision: plan.revision,
+  });
+  const structuralPayload = {
+    ...unchangedWorkoutPayload,
+    name: 'After structural race',
+  };
+  const contentWorkout = {
+    ...unchangedWorkoutPayload.weeks[0].workouts[0],
+    name: 'After content race',
+  };
+
+  const results = await Promise.allSettled([
+    updateCycleDraft(cycle.id, plan.id, structuralPayload),
+    updateCycleWorkoutContent(cycle.id, plan.id, workout.id, {
+      userId: user.id,
+      timezone: 'UTC',
+      contentRevision: workout.contentRevision,
+      workout: contentWorkout,
+    }),
+  ]);
+  const structuralResult = results[0];
+  const contentResult = results[1];
+  assert.equal(contentResult.status, 'fulfilled');
+  if (structuralResult.status === 'rejected') {
+    assert.equal(structuralResult.reason.status, 409);
+    assert.equal(structuralResult.reason.code, 'DRAFT_REVISION_CONFLICT');
+  }
+
+  const finalPlan = await prisma.plan.findUnique({ where: { id: plan.id } });
+  const finalWorkout = await prisma.workout.findUnique({ where: { id: workout.id } });
+  const finalSet = await prisma.exerciseSetTemplate.findUnique({
+    where: { id: workout.blocks[0].exercises[0].setTemplates[0].id },
+  });
+  const siblingCount = await prisma.workout.count({
+    where: { planWeekId: plan.weeks[0].id },
+  });
+
+  assert.equal(finalWorkout.name, 'After content race');
+  assert.equal(finalWorkout.contentRevision, workout.contentRevision + 1);
+  assert.equal(finalSet.targetReps, 8);
+  assert.equal(siblingCount, 1);
+  assert.equal(
+    finalPlan.revision,
+    plan.revision + (structuralResult.status === 'fulfilled' ? 2 : 1)
+  );
+  assert.equal(
+    finalPlan.name,
+    structuralResult.status === 'fulfilled'
+      ? 'After structural race'
+      : 'Before structural race'
+  );
 });

@@ -193,6 +193,58 @@ function buildSaveResponse(
   };
 }
 
+function buildStructuralResponseFromPayload(
+  baseResponse,
+  payload,
+  { revision, workoutIdMap = {}, contentRevisionById = {} } = {}
+) {
+  const originalById = new Map(
+    baseResponse.builderPayload.weeks.flatMap((week) => week.workouts)
+      .map((workout) => [workout.id, workout])
+  );
+  const weeks = payload.weeks.map((week) => ({
+    ...week,
+    workouts: week.workouts.map((sentWorkout) => {
+      const canonicalId = workoutIdMap[sentWorkout.id] || sentWorkout.id;
+      const source = originalById.get(sentWorkout.id);
+      const reps = sentWorkout.blocks[0]?.exercises[0]?.setTemplates[0]?.targetReps ?? 8;
+      const workout = buildWorkout({
+        id: canonicalId,
+        name: sentWorkout.name,
+        reps,
+        contentRevision:
+          contentRevisionById[canonicalId] ??
+          contentRevisionById[sentWorkout.id] ??
+          source?.contentRevision ??
+          1,
+        orderIndex: sentWorkout.orderIndex,
+        blockId: source?.blocks[0]?.id || `${canonicalId}_block`,
+        exerciseRowId: source?.blocks[0]?.exerciseRowId || `${canonicalId}_exercise_row`,
+        setId: source?.blocks[0]?.sets[0]?.id || `${canonicalId}_set`,
+      });
+      return {
+        ...workout,
+        scheduledDay: sentWorkout.scheduledDay,
+        persistence: {
+          ...workout.persistence,
+          scheduledDay: sentWorkout.scheduledDay,
+        },
+      };
+    }),
+  }));
+
+  return {
+    ...baseResponse,
+    revision,
+    updatedAt: "2026-08-18T12:02:00.000Z",
+    builderPayload: {
+      ...baseResponse.builderPayload,
+      programName: payload.name,
+      weeks,
+    },
+  };
+}
+
 function buildCanonicalSingleBlock(sentBlock, identity) {
   const sentExercise = sentBlock.exercises[0];
   const blockPersistence = { ...sentBlock };
@@ -272,6 +324,23 @@ function createDeferred() {
   return { promise, reject, resolve };
 }
 
+function settleWithinMicrotasks(promise, limit = 100) {
+  const boundedFailure = new Promise((_, reject) => {
+    let remaining = limit;
+    const tick = () => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        reject(new Error("Promise did not settle within the bounded microtask window."));
+        return;
+      }
+      Promise.resolve().then(tick);
+    };
+    Promise.resolve().then(tick);
+  });
+
+  return Promise.race([promise, boundedFailure]);
+}
+
 let currentContext;
 
 function ContextProbe() {
@@ -309,7 +378,7 @@ async function advanceAutosave() {
   });
 }
 
-describe("Cycle workout-scoped autosave (Phase 4)", () => {
+describe("Cycle workout-scoped autosave (Phases 4 and 5)", () => {
   beforeEach(() => {
     process.env[FLAG] = "true";
     jest.useFakeTimers();
@@ -385,6 +454,8 @@ describe("Cycle workout-scoped autosave (Phase 4)", () => {
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(screen.getByTestId("reps-a")).toHaveTextContent("7");
@@ -405,6 +476,8 @@ describe("Cycle workout-scoped autosave (Phase 4)", () => {
           setId: "canonical_set_1",
         },
       }));
+      await Promise.resolve();
+      await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -750,23 +823,34 @@ describe("Cycle workout-scoped autosave (Phase 4)", () => {
 
   test("a document-switch structural save uses the planRevision returned by its terminal workout flush", async () => {
     const response = buildResponse({ revision: 10 });
-    saveCycleWorkoutContent.mockImplementation(async (_cycleId, _planId, workoutId, payload) =>
-      buildSaveResponse(response, workoutId, payload, {
-        contentRevision: 6,
-        planRevision: 24,
+    const workoutSave = createDeferred();
+    saveCycleWorkoutContent.mockImplementation(() => workoutSave.promise);
+    updateCycleDraft.mockImplementation(async (_cycleId, _planId, payload) =>
+      buildStructuralResponseFromPayload(response, payload, {
+        revision: 25,
+        contentRevisionById: { workout_1: 6 },
       })
     );
-    const structuralResponse = buildResponse({ revision: 25 });
-    structuralResponse.builderPayload.programName = "Renamed Cycle";
-    updateCycleDraft.mockResolvedValue(structuralResponse);
     renderProvider();
     act(() => currentContext.hydrateProgramDraft(response));
 
-    act(() => currentContext.updateProgramMeta({ programName: "Renamed Cycle" }));
     act(() => currentContext.updateSet("workout_1", "workout_1_block", 0, { reps: 51 }));
+    await advanceAutosave();
+    expect(saveCycleWorkoutContent).toHaveBeenCalledTimes(1);
+    act(() => currentContext.updateProgramMeta({ programName: "Renamed Cycle" }));
 
+    let switchPromise;
+    act(() => {
+      switchPromise = currentContext.beginHydrationTarget({ cycleId: "cycle_2", planId: null });
+    });
     await act(async () => {
-      await currentContext.beginHydrationTarget({ cycleId: "cycle_2", planId: null });
+      workoutSave.resolve(buildSaveResponse(
+        response,
+        "workout_1",
+        saveCycleWorkoutContent.mock.calls[0][3],
+        { contentRevision: 6, planRevision: 24, reps: 51 }
+      ));
+      await switchPromise;
     });
 
     expect(saveCycleWorkoutContent).toHaveBeenCalledTimes(1);
@@ -800,6 +884,467 @@ describe("Cycle workout-scoped autosave (Phase 4)", () => {
 
     expect(updateCycleDraft).toHaveBeenCalledTimes(1);
     expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
+  });
+
+  test("a structural save waits for workout A, uses its Plan revision, and pauses workout B until reconciliation", async () => {
+    const response = buildResponse({ revision: 10, repsByIndex: [8, 9] });
+    const workoutA = createDeferred();
+    const structuralSave = createDeferred();
+    saveCycleWorkoutContent
+      .mockImplementationOnce(() => workoutA.promise)
+      .mockImplementation(async (_cycleId, _planId, workoutId, payload) =>
+        buildSaveResponse(response, workoutId, payload, {
+          contentRevision: 7,
+          planRevision: 26,
+        })
+      );
+    updateCycleDraft.mockImplementation(() => structuralSave.promise);
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(response));
+
+    act(() => currentContext.updateSet("workout_1", "workout_1_block", 0, { reps: 20 }));
+    await advanceAutosave();
+    expect(saveCycleWorkoutContent).toHaveBeenCalledTimes(1);
+
+    act(() => currentContext.moveSelectedWeekWorkoutToScheduledDay(1, "TUESDAY"));
+    await advanceAutosave();
+    expect(updateCycleDraft).not.toHaveBeenCalled();
+
+    await act(async () => {
+      workoutA.resolve(buildSaveResponse(
+        response,
+        "workout_1",
+        saveCycleWorkoutContent.mock.calls[0][3],
+        { contentRevision: 6, planRevision: 24, reps: 20 }
+      ));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(updateCycleDraft.mock.calls[0][2].revision).toBe(24);
+    expect(updateCycleDraft.mock.calls[0][2].weeks[0].workouts[0].scheduledDay)
+      .toBe("TUESDAY");
+
+    act(() => currentContext.updateSet("workout_2", "workout_2_block", 0, { reps: 31 }));
+    await advanceAutosave();
+    expect(saveCycleWorkoutContent).toHaveBeenCalledTimes(1);
+
+    const structuralPayload = updateCycleDraft.mock.calls[0][2];
+    await act(async () => {
+      structuralSave.resolve(buildStructuralResponseFromPayload(response, structuralPayload, {
+        revision: 25,
+        contentRevisionById: { workout_1: 6, workout_2: 6 },
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("reps-b")).toHaveTextContent("31");
+    expect(currentContext.programDraft.workouts[0].scheduledDay).toBe("TUESDAY");
+    expect(currentContext.workoutSaveState.get("workout_2")?.contentRevision).toBe(6);
+    expect(currentContext.workoutSaveState.get("workout_2")?.status).toBe("debounced");
+
+    await advanceAutosave();
+    expect(saveCycleWorkoutContent).toHaveBeenCalledTimes(2);
+    expect(saveCycleWorkoutContent.mock.calls[1][2]).toBe("workout_2");
+    expect(saveCycleWorkoutContent.mock.calls[1][3].contentRevision).toBe(6);
+    expect(getPayloadReps(saveCycleWorkoutContent.mock.calls[1][3])).toBe(31);
+  });
+
+  test("deleting an in-flight workout lets its conflict settle without blocking or resurrecting it", async () => {
+    const response = buildResponse();
+    const workoutSave = createDeferred();
+    saveCycleWorkoutContent.mockImplementation(() => workoutSave.promise);
+    updateCycleDraft.mockImplementation(async (_cycleId, _planId, payload) =>
+      buildStructuralResponseFromPayload(response, payload, { revision: 11 })
+    );
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(response));
+
+    act(() => currentContext.updateSet("workout_1", "workout_1_block", 0, { reps: 40 }));
+    await advanceAutosave();
+    act(() => currentContext.deleteSelectedWeekWorkout(1));
+    await advanceAutosave();
+    expect(updateCycleDraft).not.toHaveBeenCalled();
+
+    await act(async () => {
+      workoutSave.reject(Object.assign(new Error("stale deleted workout"), {
+        code: "WORKOUT_REVISION_CONFLICT",
+        status: 409,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(updateCycleDraft.mock.calls[0][2].weeks[0].workouts.map((workout) => workout.id))
+      .toEqual(["workout_2"]);
+    expect(currentContext.programDraft.workouts.map((workout) => workout.id))
+      .toEqual(["workout_2"]);
+    expect(currentContext.workoutSaveState.has("workout_1")).toBe(false);
+  });
+
+  test("same-week moves preserve workout ids and never use the workout content endpoint", async () => {
+    const response = buildResponse();
+    updateCycleDraft.mockImplementation(async (_cycleId, _planId, payload) =>
+      buildStructuralResponseFromPayload(response, payload, { revision: 11 })
+    );
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(response));
+
+    act(() => currentContext.moveSelectedWeekWorkoutToScheduledDay(1, "TUESDAY"));
+    await advanceAutosave();
+
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
+    expect(currentContext.programDraft.workouts.map((workout) => workout.id))
+      .toEqual(["workout_1", "workout_2"]);
+    expect(currentContext.programDraft.workouts[0].scheduledDay).toBe("TUESDAY");
+  });
+
+  test("a no-op structural gesture releases the pause without issuing a document request", async () => {
+    const response = buildResponse();
+    saveCycleWorkoutContent.mockImplementation(async (_cycleId, _planId, workoutId, payload) =>
+      buildSaveResponse(response, workoutId, payload, {
+        contentRevision: 6,
+        planRevision: 11,
+      })
+    );
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(response));
+
+    act(() => currentContext.moveSelectedWeekWorkoutToScheduledDay(1, "MONDAY"));
+    await advanceAutosave();
+    expect(updateCycleDraft).not.toHaveBeenCalled();
+
+    act(() => currentContext.updateSet("workout_1", "workout_1_block", 0, { reps: 33 }));
+    await advanceAutosave();
+    expect(saveCycleWorkoutContent).toHaveBeenCalledTimes(1);
+  });
+
+  test("repeated same-week structural moves save serially with stable ids and fresh Plan revisions", async () => {
+    const response = buildResponse({ revision: 10 });
+    updateCycleDraft.mockImplementation(async (_cycleId, _planId, payload) =>
+      buildStructuralResponseFromPayload(response, payload, {
+        revision: 11 + updateCycleDraft.mock.calls.length - 1,
+      })
+    );
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(response));
+
+    act(() => currentContext.moveSelectedWeekWorkoutToScheduledDay(1, "TUESDAY"));
+    await advanceAutosave();
+    act(() => currentContext.moveSelectedWeekWorkoutToScheduledDay(1, "MONDAY"));
+    await advanceAutosave();
+
+    expect(updateCycleDraft).toHaveBeenCalledTimes(2);
+    expect(updateCycleDraft.mock.calls[0][2].revision).toBe(10);
+    expect(updateCycleDraft.mock.calls[1][2].revision).toBe(11);
+    expect(currentContext.programDraft.workouts.map((workout) => workout.id))
+      .toEqual(["workout_1", "workout_2"]);
+    expect(currentContext.programDraft.workouts[0].scheduledDay).toBe("MONDAY");
+    expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
+  });
+
+  test("reordering while two workout saves exist waits for both and uses the newest Plan revision", async () => {
+    const response = buildResponse({ revision: 10 });
+    const saveA = createDeferred();
+    const saveB = createDeferred();
+    saveCycleWorkoutContent.mockImplementation((_cycleId, _planId, workoutId) =>
+      workoutId === "workout_1" ? saveA.promise : saveB.promise
+    );
+    updateCycleDraft.mockImplementation(async (_cycleId, _planId, payload) =>
+      buildStructuralResponseFromPayload(response, payload, {
+        revision: 13,
+        contentRevisionById: { workout_1: 6, workout_2: 7 },
+      })
+    );
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(response));
+
+    act(() => {
+      currentContext.updateSet("workout_1", "workout_1_block", 0, { reps: 41 });
+      currentContext.updateSet("workout_2", "workout_2_block", 0, { reps: 42 });
+    });
+    await advanceAutosave();
+    expect(saveCycleWorkoutContent).toHaveBeenCalledTimes(2);
+
+    act(() => currentContext.moveWorkouts(["workout_2"], "up"));
+    await advanceAutosave();
+    expect(updateCycleDraft).not.toHaveBeenCalled();
+
+    await act(async () => {
+      saveB.resolve(buildSaveResponse(
+        response,
+        "workout_2",
+        saveCycleWorkoutContent.mock.calls.find((call) => call[2] === "workout_2")[3],
+        { contentRevision: 7, planRevision: 11, reps: 42 }
+      ));
+      saveA.resolve(buildSaveResponse(
+        response,
+        "workout_1",
+        saveCycleWorkoutContent.mock.calls.find((call) => call[2] === "workout_1")[3],
+        { contentRevision: 6, planRevision: 12, reps: 41 }
+      ));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(updateCycleDraft.mock.calls[0][2].revision).toBe(12);
+    expect(updateCycleDraft.mock.calls[0][2].weeks[0].workouts.map((workout) => workout.id))
+      .toEqual(["workout_2", "workout_1"]);
+    expect(currentContext.programDraft.workouts.map((workout) => workout.id))
+      .toEqual(["workout_2", "workout_1"]);
+    expect(saveCycleWorkoutContent).toHaveBeenCalledTimes(2);
+  });
+
+  test("a new workout edited during its structural request is unsuppressed and saved with its canonical id", async () => {
+    const response = buildResponse({ workoutCount: 1 });
+    const structuralSave = createDeferred();
+    updateCycleDraft.mockImplementation(() => structuralSave.promise);
+    saveCycleWorkoutContent.mockImplementation(async (_cycleId, _planId, workoutId, payload) => ({
+      ...buildSaveResponse(response, "workout_1", payload, {
+        contentRevision: 2,
+        planRevision: 12,
+      }),
+      workoutId,
+      workout: buildWorkout({
+        id: workoutId,
+        name: payload.workout.name,
+        reps: getPayloadReps(payload),
+        contentRevision: 2,
+        orderIndex: 2,
+      }),
+    }));
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(response));
+
+    act(() => currentContext.duplicateSelectedWeekWorkout(1, "TUESDAY"));
+    const localWorkoutId = currentContext.programDraft.workouts[1].id;
+    await advanceAutosave();
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
+
+    act(() => currentContext.updateSet(
+      localWorkoutId,
+      currentContext.programDraft.workouts[1].blocks[0].id,
+      0,
+      { reps: 44 }
+    ));
+    await advanceAutosave();
+    expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
+
+    const structuralPayload = updateCycleDraft.mock.calls[0][2];
+    await act(async () => {
+      structuralSave.resolve(buildStructuralResponseFromPayload(response, structuralPayload, {
+        revision: 11,
+        workoutIdMap: { [localWorkoutId]: "workout_canonical_2" },
+        contentRevisionById: { workout_canonical_2: 1 },
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(currentContext.programDraft.workouts[1].id).toBe("workout_canonical_2");
+    expect(currentContext.programDraft.workouts[1].blocks[0].sets[0].reps).toBe(44);
+    expect(currentContext.workoutSaveState.get("workout_canonical_2")
+      ?.createdLocallyPendingStructuralSave).toBe(false);
+    expect(currentContext.workoutSaveState.get("workout_canonical_2")?.status)
+      .toBe("debounced");
+
+    await advanceAutosave();
+    expect(saveCycleWorkoutContent).toHaveBeenCalledTimes(1);
+    expect(saveCycleWorkoutContent.mock.calls[0][2]).toBe("workout_canonical_2");
+    expect(saveCycleWorkoutContent.mock.calls[0][3].contentRevision).toBe(1);
+    expect(getPayloadReps(saveCycleWorkoutContent.mock.calls[0][3])).toBe(44);
+  });
+
+  test("a same-commit content edit plus structural move is captured by the structural payload", async () => {
+    const response = buildResponse();
+    updateCycleDraft.mockImplementation(async (_cycleId, _planId, payload) =>
+      buildStructuralResponseFromPayload(response, payload, {
+        revision: 11,
+        contentRevisionById: { workout_1: 6 },
+      })
+    );
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(response));
+
+    act(() => {
+      currentContext.moveSelectedWeekWorkoutToScheduledDay(1, "TUESDAY");
+      currentContext.updateSet("workout_1", "workout_1_block", 0, { reps: 55 });
+    });
+    await advanceAutosave();
+
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(updateCycleDraft.mock.calls[0][2].weeks[0].workouts[0]
+      .blocks[0].exercises[0].setTemplates[0].targetReps).toBe(55);
+    expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
+    expect(screen.getByTestId("reps-a")).toHaveTextContent("55");
+    expect(currentContext.workoutSaveState.get("workout_1")?.contentRevision).toBe(6);
+  });
+
+  test("a surviving workout conflict blocks the structural request and preserves local state", async () => {
+    const response = buildResponse();
+    const workoutSave = createDeferred();
+    saveCycleWorkoutContent.mockImplementation(() => workoutSave.promise);
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(response));
+
+    act(() => currentContext.updateSet("workout_1", "workout_1_block", 0, { reps: 66 }));
+    await advanceAutosave();
+    act(() => currentContext.moveSelectedWeekWorkoutToScheduledDay(1, "TUESDAY"));
+    await advanceAutosave();
+
+    await act(async () => {
+      workoutSave.reject(Object.assign(new Error("workout conflict"), {
+        code: "WORKOUT_REVISION_CONFLICT",
+        status: 409,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(updateCycleDraft).not.toHaveBeenCalled();
+    expect(screen.getByTestId("reps-a")).toHaveTextContent("66");
+    expect(screen.getByTestId("status-a")).toHaveTextContent("conflict");
+    expect(currentContext.draftMetadata.lastSaveErrorCode).toBe("WORKOUT_AUTOSAVE_BLOCKED");
+
+    let flushResult;
+    await act(async () => {
+      flushResult = await settleWithinMicrotasks(currentContext.flushAllWorkouts());
+    });
+
+    expect(flushResult.blockedWorkoutIds).toEqual(["workout_1"]);
+    expect(updateCycleDraft).not.toHaveBeenCalled();
+    expect(currentContext.workoutSaveState.get("workout_2")?.status).toBe("clean");
+    expect(screen.getByTestId("reps-b")).toHaveTextContent("9");
+  });
+
+  test("DRAFT_REVISION_CONFLICT preserves structural and content edits without declaring the workout clean", async () => {
+    const response = buildResponse();
+    updateCycleDraft.mockRejectedValue(Object.assign(
+      new Error("This draft was updated elsewhere."),
+      { code: "DRAFT_REVISION_CONFLICT", status: 409 }
+    ));
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(response));
+
+    act(() => {
+      currentContext.moveSelectedWeekWorkoutToScheduledDay(1, "TUESDAY");
+      currentContext.updateSet("workout_1", "workout_1_block", 0, { reps: 77 });
+    });
+    await advanceAutosave();
+
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
+    expect(currentContext.programDraft.workouts[0].scheduledDay).toBe("TUESDAY");
+    expect(screen.getByTestId("reps-a")).toHaveTextContent("77");
+    expect(currentContext.draftMetadata.saveState).toBe("conflict");
+    expect(currentContext.workoutSaveState.get("workout_1")?.status).toBe("dirty");
+
+    let flushResult;
+    await act(async () => {
+      flushResult = await settleWithinMicrotasks(currentContext.flushAllWorkouts());
+    });
+
+    expect(flushResult).toEqual({
+      blockedWorkoutIds: [],
+      blockedReason: "DOCUMENT_CONFLICT",
+    });
+    expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(currentContext.programDraft.workouts[0].scheduledDay).toBe("TUESDAY");
+    expect(screen.getByTestId("reps-a")).toHaveTextContent("77");
+  });
+
+  test("a generic structural failure releases the barrier so a healthy workout can flush", async () => {
+    const response = buildResponse();
+    updateCycleDraft.mockRejectedValueOnce(new Error("network unavailable"));
+    saveCycleWorkoutContent.mockImplementation(async (_cycleId, _planId, workoutId, payload) =>
+      buildSaveResponse(response, workoutId, payload, {
+        contentRevision: 7,
+        planRevision: 11,
+      })
+    );
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(response));
+
+    act(() => currentContext.moveSelectedWeekWorkoutToScheduledDay(1, "TUESDAY"));
+    await advanceAutosave();
+
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(currentContext.draftMetadata.saveState).toBe("error");
+    expect(currentContext.programDraft.workouts[0].scheduledDay).toBe("TUESDAY");
+
+    act(() => currentContext.updateSet(
+      "workout_2",
+      "workout_2_block",
+      0,
+      { reps: 79 }
+    ));
+
+    await advanceAutosave();
+
+    expect(saveCycleWorkoutContent).toHaveBeenCalledTimes(1);
+    expect(saveCycleWorkoutContent.mock.calls[0][2]).toBe("workout_2");
+    expect(getPayloadReps(saveCycleWorkoutContent.mock.calls[0][3])).toBe(79);
+
+    let flushResult;
+    await act(async () => {
+      flushResult = await settleWithinMicrotasks(currentContext.flushAllWorkouts());
+    });
+
+    expect(flushResult).toEqual({ blockedWorkoutIds: [] });
+    expect(currentContext.programDraft.workouts[0].scheduledDay).toBe("TUESDAY");
+    expect(screen.getByTestId("reps-b")).toHaveTextContent("79");
+  });
+
+  test("workout DRAFT_EXPIRED during structural preparation recovers instead of PATCHing the expired Plan", async () => {
+    const response = buildResponse();
+    const recovered = buildResponse({
+      planId: "plan_recovered",
+      revision: 20,
+      repsByIndex: [88, 9],
+      contentRevisions: [20, 21],
+    });
+    const workoutSave = createDeferred();
+    saveCycleWorkoutContent.mockImplementation(() => workoutSave.promise);
+    openOrCreateCycleEditDraft.mockResolvedValue(recovered);
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(response));
+
+    act(() => currentContext.updateSet("workout_1", "workout_1_block", 0, { reps: 87 }));
+    await advanceAutosave();
+    act(() => currentContext.moveSelectedWeekWorkoutToScheduledDay(1, "TUESDAY"));
+    await advanceAutosave();
+
+    await act(async () => {
+      workoutSave.reject(Object.assign(new Error("expired"), {
+        code: "DRAFT_EXPIRED",
+        status: 409,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(openOrCreateCycleEditDraft).toHaveBeenCalledTimes(1);
+    expect(updateCycleDraft).not.toHaveBeenCalled();
+    expect(currentContext.draftMetadata.cyclePlanId).toBe("plan_recovered");
+    expect(screen.getByTestId("reps-a")).toHaveTextContent("88");
+    expect(screen.getByTestId("status-a")).toHaveTextContent("clean");
   });
 
   test("a 6-week/36-workout draft sends only the edited workout, never the whole Cycle", async () => {

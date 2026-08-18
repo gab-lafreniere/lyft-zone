@@ -327,9 +327,13 @@ test('adding one set writes only the touched workout, not the whole plan', async
   );
   assert.deepEqual(
     [...touchedWorkoutIds],
-    [],
-    'a nested set addition must not write the workout row'
+    [targetWorkout.id],
+    'a nested set addition must touch only its workout row to advance contentRevision'
   );
+  const revisionWrites = writes.filter(
+    (call) => call.model === 'workout' && call.op === 'update'
+  );
+  assert.deepEqual(revisionWrites[0].data, { contentRevision: { increment: 1 } });
 });
 
 test('an unchanged document performs no mutation at all', async () => {
@@ -346,6 +350,72 @@ test('an unchanged document performs no mutation at all', async () => {
     mutationWrites(harness.calls).map((call) => `${call.model}.${call.op}`),
     [],
     'a no-op save must not write'
+  );
+});
+
+test('content scalar plus nested content advances only the touched workout contentRevision once', async () => {
+  const stored = buildStoredPlan();
+  const harness = createHarness(stored);
+  const incoming = toApiDocument(stored);
+  const touched = incoming.weeks[0].workouts[0];
+  touched.name = 'Renamed workout';
+  touched.blocks[0].exercises[0].setTemplates.push({
+    setIndex: 3,
+    setType: 'WORKING',
+    targetReps: 15,
+    minReps: 15,
+    maxReps: 15,
+    targetSeconds: null,
+    targetRir: 2,
+    targetRpe: null,
+    tempo: '3010',
+    restSeconds: 90,
+    notes: null,
+  });
+
+  await updateCycleDraft(CYCLE_ID, PLAN_ID, {
+    ...incoming,
+    userId: USER_ID,
+    timezone: TIMEZONE,
+  });
+
+  const workoutWrites = harness.calls.filter(
+    (call) => call.model === 'workout' && call.op === 'update'
+  );
+  const revisionWrites = workoutWrites.filter(
+    (call) => call.data?.contentRevision?.increment === 1
+  );
+  assert.equal(revisionWrites.length, 1);
+  assert.equal(revisionWrites[0].where.id, touched.id);
+  assert.equal(
+    workoutWrites.some((call) => call.where.id !== touched.id),
+    false,
+    'unchanged siblings must retain their contentRevision'
+  );
+});
+
+test('pure scheduled-day placement changes do not advance contentRevision', async () => {
+  const stored = buildStoredPlan();
+  stored.weeks[0].workouts[0].scheduledDay = 'MONDAY';
+  const harness = createHarness(stored);
+  const incoming = toApiDocument(stored);
+  incoming.weeks[0].workouts[0].scheduledDay = 'TUESDAY';
+
+  await updateCycleDraft(CYCLE_ID, PLAN_ID, {
+    ...incoming,
+    userId: USER_ID,
+    timezone: TIMEZONE,
+  });
+
+  const workoutWrites = harness.calls.filter(
+    (call) => call.model === 'workout' && call.op === 'update'
+  );
+  assert.equal(workoutWrites.length, 1);
+  assert.equal(workoutWrites[0].where.id, incoming.weeks[0].workouts[0].id);
+  assert.equal(workoutWrites[0].data.scheduledDay, 'TUESDAY');
+  assert.equal(
+    workoutWrites.some((call) => call.data?.contentRevision),
+    false
   );
 });
 

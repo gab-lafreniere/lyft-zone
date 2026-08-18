@@ -5,6 +5,8 @@ import { attachBlockUiKeys } from "../utils/blockUiKeys";
 
 export const MAX_CONCURRENT_WORKOUT_SAVES = 4;
 const WORKOUT_AUTOSAVE_DEBOUNCE_MS = 700;
+const DOCUMENT_CONFLICT_BLOCK_REASON = "DOCUMENT_CONFLICT";
+const NO_PROGRESS_BLOCK_REASON = "WORKOUT_AUTOSAVE_NO_PROGRESS";
 
 function isValidRevision(value) {
   return Number.isInteger(value) && value > 0;
@@ -18,13 +20,23 @@ function snapshotsEqual(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function serializeContentSnapshot(workout) {
+  const {
+    id: _id,
+    orderIndex: _orderIndex,
+    scheduledDay: _scheduledDay,
+    ...content
+  } = serializeSnapshot(workout, 0);
+  return content;
+}
+
 function getWorkoutEntries(draft) {
   const entries = [];
 
   (draft?.weeks || []).forEach((week, weekIndex) => {
     (week.workouts || []).forEach((workout, workoutIndex) => {
       if (workout?.id) {
-        entries.push({ weekIndex, workoutIndex, workout });
+        entries.push({ week, weekIndex, workoutIndex, workout });
       }
     });
   });
@@ -54,6 +66,139 @@ function replaceWorkout(draft, workoutId, nextWorkout) {
   });
 
   return didReplace ? { ...draft, weeks } : draft;
+}
+
+function findMatchingWeek(weeks, sentWeek, weekIndex) {
+  return (weeks || []).find((week) => week.id && week.id === sentWeek?.id) ||
+    (weeks || []).find((week) => week.weekNumber === sentWeek?.weekNumber) ||
+    (weeks || [])[weekIndex] ||
+    null;
+}
+
+function buildStructuralWorkoutMatches(sentDraft, canonicalDraft) {
+  const matches = new Map();
+
+  (sentDraft?.weeks || []).forEach((sentWeek, weekIndex) => {
+    const canonicalWeek = findMatchingWeek(canonicalDraft?.weeks, sentWeek, weekIndex);
+    const remainingCanonical = [...(canonicalWeek?.workouts || [])];
+
+    (sentWeek.workouts || []).forEach((sentWorkout, workoutIndex) => {
+      let canonicalIndex = remainingCanonical.findIndex(
+        (workout) => workout.id && workout.id === sentWorkout.id
+      );
+      if (canonicalIndex < 0) {
+        canonicalIndex = remainingCanonical.findIndex(
+          (workout) => Number(workout.orderIndex) === Number(sentWorkout.orderIndex)
+        );
+      }
+      if (canonicalIndex < 0 && remainingCanonical[workoutIndex]) {
+        canonicalIndex = workoutIndex;
+      }
+
+      const canonicalWorkout = canonicalIndex >= 0
+        ? remainingCanonical.splice(canonicalIndex, 1)[0]
+        : null;
+      if (sentWorkout.id && canonicalWorkout) {
+        matches.set(sentWorkout.id, {
+          canonicalWeek,
+          canonicalWorkout,
+          sentWeek,
+          sentWorkout,
+          sentWeekIndex: weekIndex,
+          sentWorkoutIndex: workoutIndex,
+        });
+      }
+    });
+  });
+
+  return matches;
+}
+
+export function reconcileStructuralCycleDraft(currentDraft, sentDraft, canonicalDraft) {
+  const matches = buildStructuralWorkoutMatches(sentDraft, canonicalDraft);
+  const workoutResults = [];
+  const nextWeeks = (currentDraft?.weeks || []).map((currentWeek, currentWeekIndex) => {
+    const sentWeek = findMatchingWeek(sentDraft?.weeks, currentWeek, currentWeekIndex);
+    const canonicalWeek = sentWeek
+      ? findMatchingWeek(canonicalDraft?.weeks, sentWeek, currentWeekIndex)
+      : null;
+
+    const workouts = (currentWeek.workouts || []).map((currentWorkout, workoutIndex) => {
+      const match = matches.get(currentWorkout.id);
+      if (!match) {
+        return currentWorkout;
+      }
+
+      const sentContent = serializeContentSnapshot(match.sentWorkout);
+      const currentContent = serializeContentSnapshot(currentWorkout);
+      const hasNewerContent = !snapshotsEqual(currentContent, sentContent);
+      const reconciledWorkout = hasNewerContent
+        ? reconcileCanonicalWorkoutIdentities(
+          currentWorkout,
+          serializeSnapshot(match.sentWorkout, match.sentWorkoutIndex),
+          match.canonicalWorkout
+        )
+        : {
+          ...match.canonicalWorkout,
+          blocks: attachBlockUiKeys(
+            match.canonicalWorkout.blocks || [],
+            currentWorkout.blocks || []
+          ),
+        };
+      const hasNewerPlacement =
+        currentWeek.weekNumber !== match.sentWeek.weekNumber ||
+        workoutIndex !== match.sentWorkoutIndex ||
+        currentWorkout.orderIndex !== match.sentWorkout.orderIndex ||
+        (currentWorkout.scheduledDay || null) !== (match.sentWorkout.scheduledDay || null);
+      const nextWorkout = {
+        ...reconciledWorkout,
+        id: match.canonicalWorkout.id,
+        contentRevision: match.canonicalWorkout.contentRevision,
+        orderIndex: hasNewerPlacement
+          ? currentWorkout.orderIndex
+          : match.canonicalWorkout.orderIndex,
+        scheduledDay: hasNewerPlacement
+          ? currentWorkout.scheduledDay
+          : match.canonicalWorkout.scheduledDay,
+      };
+
+      workoutResults.push({
+        canonicalWorkout: match.canonicalWorkout,
+        hasNewerContent,
+        nextWorkout,
+        oldWorkoutId: currentWorkout.id,
+      });
+      return nextWorkout;
+    });
+
+    if (!sentWeek || !canonicalWeek) {
+      return { ...currentWeek, workouts };
+    }
+
+    const nextWeek = { ...currentWeek, id: canonicalWeek.id, workouts };
+    ["weekNumber", "orderIndex", "label", "notes"].forEach((field) => {
+      if (currentWeek[field] === sentWeek[field]) {
+        nextWeek[field] = canonicalWeek[field];
+      }
+    });
+    return nextWeek;
+  });
+  const nextDraft = { ...currentDraft, weeks: nextWeeks };
+
+  [
+    "programName",
+    "sessionsPerWeek",
+    "programLength",
+    "durationWeeks",
+    "startDate",
+    "endDate",
+  ].forEach((field) => {
+    if (currentDraft?.[field] === sentDraft?.[field]) {
+      nextDraft[field] = canonicalDraft?.[field];
+    }
+  });
+
+  return { draft: nextDraft, workoutResults };
 }
 
 function getCanonicalExercises(block) {
@@ -214,6 +359,7 @@ function createInitialWorkoutState(workout, workoutIndex, options = {}) {
         message: "This workout is missing its persisted content revision.",
       },
     createdLocallyPendingStructuralSave: pendingStructuralSave,
+    removedPendingStructuralSave: false,
   };
 }
 
@@ -246,6 +392,8 @@ export function useCycleWorkoutAutosaveCoordinator({
   const stateRef = useRef(new Map());
   const timerRef = useRef(new Map());
   const generationRef = useRef(0);
+  const workoutDispatchPausedRef = useRef(false);
+  const structuralPauseBarrierRef = useRef(null);
   const lastStructuralMutationVersionRef = useRef(structuralMutationVersion);
   const activeSaveCountRef = useRef(0);
   const slotQueueRef = useRef([]);
@@ -289,17 +437,46 @@ export function useCycleWorkoutAutosaveCoordinator({
     return next;
   }, [publishState]);
 
+  const acquireStructuralPause = useCallback(() => {
+    workoutDispatchPausedRef.current = true;
+    if (structuralPauseBarrierRef.current) {
+      return;
+    }
+
+    let resolve;
+    const promise = new Promise((settle) => {
+      resolve = settle;
+    });
+    structuralPauseBarrierRef.current = { promise, resolve };
+  }, []);
+
+  const releaseStructuralPause = useCallback(() => {
+    workoutDispatchPausedRef.current = false;
+    const barrier = structuralPauseBarrierRef.current;
+    structuralPauseBarrierRef.current = null;
+    barrier?.resolve();
+  }, []);
+
+  const waitForStructuralPauseRelease = useCallback(() => (
+    structuralPauseBarrierRef.current?.promise || Promise.resolve()
+  ), []);
+
   const rebaseWorkoutDirtyDetectionBaseline = useCallback((draft, options = {}) => {
     const entries = getWorkoutEntries(draft);
     baselineRef.current = new Map(
       entries.map(({ workout, workoutIndex }) => [
         workout.id,
-        { workoutRef: workout, workoutIndex },
+        {
+          contentSnapshot: serializeContentSnapshot(workout),
+          workoutRef: workout,
+          workoutIndex,
+        },
       ])
     );
 
     if (options.resetState) {
       generationRef.current += 1;
+      releaseStructuralPause();
       timerRef.current.forEach((timer) => window.clearTimeout(timer));
       timerRef.current.clear();
       stateRef.current = new Map(
@@ -310,7 +487,7 @@ export function useCycleWorkoutAutosaveCoordinator({
       );
       publishState();
     }
-  }, [publishState]);
+  }, [publishState, releaseStructuralPause]);
 
   const rebaseOneWorkout = useCallback((draft, workoutId) => {
     const entry = findWorkoutEntry(draft, workoutId);
@@ -320,10 +497,28 @@ export function useCycleWorkoutAutosaveCoordinator({
     }
 
     baselineRef.current.set(workoutId, {
+      contentSnapshot: serializeContentSnapshot(entry.workout),
       workoutRef: entry.workout,
       workoutIndex: entry.workoutIndex,
     });
   }, []);
+
+  const notifyStructuralMutation = useCallback(() => {
+    if (!enabled) {
+      return;
+    }
+
+    acquireStructuralPause();
+    timerRef.current.forEach((timer, workoutId) => {
+      window.clearTimeout(timer);
+      const state = stateRef.current.get(workoutId);
+      if (state && state.status === "debounced") {
+        stateRef.current.set(workoutId, { ...state, status: "dirty" });
+      }
+    });
+    timerRef.current.clear();
+    publishState();
+  }, [acquireStructuralPause, enabled, publishState]);
 
   const rebaseStructuralMutation = useCallback((draft) => {
     const entries = getWorkoutEntries(draft);
@@ -333,22 +528,54 @@ export function useCycleWorkoutAutosaveCoordinator({
       if (!nextIds.has(workoutId)) {
         window.clearTimeout(timer);
         timerRef.current.delete(workoutId);
+      }
+    });
+
+    stateRef.current.forEach((state, workoutId) => {
+      if (nextIds.has(workoutId)) {
+        return;
+      }
+
+      if (state.inFlightPromise) {
+        stateRef.current.set(workoutId, {
+          ...state,
+          pendingFollowUp: false,
+          removedPendingStructuralSave: true,
+        });
+      } else {
         stateRef.current.delete(workoutId);
       }
     });
 
     entries.forEach(({ workout, workoutIndex }) => {
-      if (!stateRef.current.has(workout.id)) {
+      const previous = baselineRef.current.get(workout.id);
+      const state = stateRef.current.get(workout.id);
+      if (!state) {
         stateRef.current.set(workout.id, createInitialWorkoutState(workout, workoutIndex, {
           createdLocallyPendingStructuralSave: true,
         }));
+      } else if (
+        previous &&
+        !snapshotsEqual(previous.contentSnapshot, serializeContentSnapshot(workout)) &&
+        state.status !== "conflict" &&
+        state.status !== "error"
+      ) {
+        stateRef.current.set(workout.id, {
+          ...state,
+          status: state.inFlightPromise ? "saving" : "dirty",
+          pendingFollowUp: Boolean(state.inFlightPromise) || state.pendingFollowUp,
+        });
       }
     });
 
     baselineRef.current = new Map(
       entries.map(({ workout, workoutIndex }) => [
         workout.id,
-        { workoutRef: workout, workoutIndex },
+        {
+          contentSnapshot: serializeContentSnapshot(workout),
+          workoutRef: workout,
+          workoutIndex,
+        },
       ])
     );
     publishState();
@@ -436,8 +663,20 @@ export function useCycleWorkoutAutosaveCoordinator({
     if (
       existingState.status === "conflict" ||
       existingState.status === "error" ||
-      existingState.createdLocallyPendingStructuralSave
+      existingState.createdLocallyPendingStructuralSave ||
+      existingState.removedPendingStructuralSave
     ) {
+      return null;
+    }
+
+    if (metadataRef.current?.saveState === "conflict") {
+      return null;
+    }
+
+    if (workoutDispatchPausedRef.current) {
+      setWorkoutEntry(workoutId, (state) => state
+        ? { ...state, status: "dirty", pendingFollowUp: false }
+        : null);
       return null;
     }
 
@@ -456,6 +695,13 @@ export function useCycleWorkoutAutosaveCoordinator({
       let response = null;
       try {
         if (requestGeneration !== generationRef.current) {
+          return null;
+        }
+
+        if (workoutDispatchPausedRef.current) {
+          setWorkoutEntry(workoutId, (state) => state
+            ? { ...state, status: "dirty", pendingFollowUp: false }
+            : null);
           return null;
         }
 
@@ -605,7 +851,8 @@ export function useCycleWorkoutAutosaveCoordinator({
         settledState &&
         settledState.status !== "conflict" &&
         settledState.status !== "error" &&
-        settledState.pendingFollowUp
+        settledState.pendingFollowUp &&
+        !workoutDispatchPausedRef.current
       ) {
         setWorkoutEntry(workoutId, (state) => ({
           ...state,
@@ -656,8 +903,25 @@ export function useCycleWorkoutAutosaveCoordinator({
       !state ||
       state.status === "conflict" ||
       state.status === "error" ||
-      state.createdLocallyPendingStructuralSave
+      state.createdLocallyPendingStructuralSave ||
+      state.removedPendingStructuralSave
     ) {
+      return;
+    }
+
+    if (metadataRef.current?.saveState === "conflict") {
+      clearWorkoutTimer(workoutId);
+      setWorkoutEntry(workoutId, (current) => current
+        ? { ...current, status: "dirty" }
+        : null);
+      return;
+    }
+
+    if (workoutDispatchPausedRef.current) {
+      clearWorkoutTimer(workoutId);
+      setWorkoutEntry(workoutId, (current) => current
+        ? { ...current, status: "dirty" }
+        : null);
       return;
     }
 
@@ -703,7 +967,11 @@ export function useCycleWorkoutAutosaveCoordinator({
       baselineRef.current = new Map(
         getWorkoutEntries(multiWeekDraft).map(({ workout, workoutIndex }) => [
           workout.id,
-          { workoutRef: workout, workoutIndex },
+          {
+            contentSnapshot: serializeContentSnapshot(workout),
+            workoutRef: workout,
+            workoutIndex,
+          },
         ])
       );
       return;
@@ -724,7 +992,11 @@ export function useCycleWorkoutAutosaveCoordinator({
     const nextBaseline = new Map();
     entries.forEach(({ workout, workoutIndex }) => {
       const previous = baselineRef.current.get(workout.id);
-      nextBaseline.set(workout.id, { workoutRef: workout, workoutIndex });
+      nextBaseline.set(workout.id, {
+        contentSnapshot: serializeContentSnapshot(workout),
+        workoutRef: workout,
+        workoutIndex,
+      });
 
       if (!previous) {
         const nextState = createInitialWorkoutState(workout, workoutIndex, {
@@ -770,14 +1042,39 @@ export function useCycleWorkoutAutosaveCoordinator({
         return publicWorkoutState(state);
       }
 
+      if (workoutDispatchPausedRef.current) {
+        await waitForStructuralPauseRelease();
+        continue;
+      }
+
+      if (metadataRef.current?.saveState === "conflict") {
+        return {
+          ...publicWorkoutState(state),
+          blockedReason: DOCUMENT_CONFLICT_BLOCK_REASON,
+        };
+      }
+
       clearWorkoutTimer(workoutId);
       if (state.inFlightPromise) {
         await state.inFlightPromise;
       } else {
         await persistWorkoutNow(workoutId);
       }
+
+      const nextState = stateRef.current.get(workoutId);
+      if (nextState === state) {
+        return {
+          ...publicWorkoutState(nextState),
+          blockedReason: NO_PROGRESS_BLOCK_REASON,
+        };
+      }
     }
-  }, [clearWorkoutTimer, enabled, persistWorkoutNow]);
+  }, [
+    clearWorkoutTimer,
+    enabled,
+    persistWorkoutNow,
+    waitForStructuralPauseRelease,
+  ]);
 
   const flushAllWorkouts = useCallback(async () => {
     if (!enabled) {
@@ -785,39 +1082,227 @@ export function useCycleWorkoutAutosaveCoordinator({
     }
 
     while (true) {
-      const workoutIds = Array.from(stateRef.current.keys());
-      await Promise.all(workoutIds.map(flushWorkout));
+      if (workoutDispatchPausedRef.current) {
+        await waitForStructuralPauseRelease();
+        continue;
+      }
 
-      const pending = Array.from(stateRef.current.values()).some((state) =>
-        !state.createdLocallyPendingStructuralSave &&
-        (
+      if (metadataRef.current?.saveState === "conflict") {
+        return {
+          blockedWorkoutIds: [],
+          blockedReason: DOCUMENT_CONFLICT_BLOCK_REASON,
+        };
+      }
+
+      const workoutIds = Array.from(stateRef.current.keys());
+      const flushResults = await Promise.all(workoutIds.map(async (workoutId) => ({
+        workoutId,
+        state: await flushWorkout(workoutId),
+      })));
+
+      const explicitlyBlockedWorkoutIds = flushResults
+        .filter(({ state }) => state?.blockedReason)
+        .map(({ workoutId }) => workoutId);
+
+      const pendingWorkoutIds = Array.from(stateRef.current.entries())
+        .filter(([, state]) =>
+          !state.createdLocallyPendingStructuralSave &&
+          (
           state.status === "dirty" ||
           state.status === "debounced" ||
           state.status === "saving" ||
           state.pendingFollowUp ||
           state.inFlightPromise
+          )
         )
-      );
+        .map(([workoutId]) => workoutId);
 
-      if (!pending) {
+      if (pendingWorkoutIds.length === 0) {
         return {
           blockedWorkoutIds: Array.from(stateRef.current.entries())
             .filter(([, state]) => state.status === "conflict" || state.status === "error")
             .map(([workoutId]) => workoutId),
         };
       }
+
+      const flushedWorkoutIds = new Set(workoutIds);
+      const stalledWorkoutIds = pendingWorkoutIds.filter((workoutId) =>
+        flushedWorkoutIds.has(workoutId)
+      );
+      if (explicitlyBlockedWorkoutIds.length > 0 || stalledWorkoutIds.length > 0) {
+        return {
+          blockedWorkoutIds: [...new Set([
+            ...explicitlyBlockedWorkoutIds,
+            ...stalledWorkoutIds,
+          ])],
+          blockedReason: NO_PROGRESS_BLOCK_REASON,
+        };
+      }
     }
-  }, [enabled, flushWorkout]);
+  }, [enabled, flushWorkout, waitForStructuralPauseRelease]);
+
+  const prepareStructuralSave = useCallback(async () => {
+    if (!enabled) {
+      return {
+        draft: draftRef.current,
+        metadata: documentMetadataRef?.current || metadataRef.current,
+      };
+    }
+
+    notifyStructuralMutation();
+
+    while (true) {
+      const inFlightPromises = Array.from(stateRef.current.values())
+        .map((state) => state.inFlightPromise)
+        .filter(Boolean);
+      if (inFlightPromises.length === 0) {
+        break;
+      }
+      await Promise.allSettled([...new Set(inFlightPromises)]);
+    }
+
+    const currentIds = new Set(
+      getWorkoutEntries(draftRef.current).map(({ workout }) => workout.id)
+    );
+    stateRef.current.forEach((_state, workoutId) => {
+      if (!currentIds.has(workoutId)) {
+        stateRef.current.delete(workoutId);
+        baselineRef.current.delete(workoutId);
+      }
+    });
+    publishState();
+
+    const blockedWorkoutIds = Array.from(stateRef.current.entries())
+      .filter(([workoutId, state]) =>
+        currentIds.has(workoutId) &&
+        (state.status === "conflict" || state.status === "error")
+      )
+      .map(([workoutId]) => workoutId);
+    if (blockedWorkoutIds.length > 0) {
+      const error = new Error(
+        "Resolve workout autosave errors before saving structural changes."
+      );
+      error.code = "WORKOUT_AUTOSAVE_BLOCKED";
+      error.workoutIds = blockedWorkoutIds;
+      throw error;
+    }
+
+    return {
+      draft: draftRef.current,
+      metadata: documentMetadataRef?.current || metadataRef.current,
+    };
+  }, [documentMetadataRef, enabled, notifyStructuralMutation, publishState]);
+
+  const reconcileStructuralSave = useCallback((sentDraft, canonicalDraft) => {
+    const reconciliation = reconcileStructuralCycleDraft(
+      draftRef.current,
+      sentDraft,
+      canonicalDraft
+    );
+    const nextIds = new Set(
+      getWorkoutEntries(reconciliation.draft).map(({ workout }) => workout.id)
+    );
+
+    stateRef.current.forEach((_state, workoutId) => {
+      if (!nextIds.has(workoutId)) {
+        stateRef.current.delete(workoutId);
+      }
+    });
+
+    reconciliation.workoutResults.forEach((result) => {
+      const currentState = stateRef.current.get(result.oldWorkoutId) ||
+        createInitialWorkoutState(result.nextWorkout, 0);
+      const nextEntry = findWorkoutEntry(reconciliation.draft, result.nextWorkout.id);
+      const canonicalSnapshot = serializeSnapshot(
+        result.canonicalWorkout,
+        nextEntry?.workoutIndex ?? 0
+      );
+
+      if (result.oldWorkoutId !== result.nextWorkout.id) {
+        stateRef.current.delete(result.oldWorkoutId);
+      }
+      stateRef.current.set(result.nextWorkout.id, {
+        ...currentState,
+        status: result.hasNewerContent ? "dirty" : "clean",
+        contentRevision: result.canonicalWorkout.contentRevision,
+        lastSyncedSnapshot: canonicalSnapshot,
+        inFlightSnapshot: null,
+        inFlightPromise: null,
+        pendingFollowUp: result.hasNewerContent,
+        lastError: null,
+        createdLocallyPendingStructuralSave: false,
+        removedPendingStructuralSave: false,
+      });
+    });
+
+    draftRef.current = reconciliation.draft;
+    baselineRef.current = new Map(
+      getWorkoutEntries(reconciliation.draft).map(({ workout, workoutIndex }) => [
+        workout.id,
+        {
+          contentSnapshot: serializeContentSnapshot(workout),
+          workoutRef: workout,
+          workoutIndex,
+        },
+      ])
+    );
+    setMultiWeekDraft(reconciliation.draft);
+    publishState();
+    return reconciliation.draft;
+  }, [publishState, setMultiWeekDraft]);
+
+  const finishStructuralSave = useCallback(({
+    releasePause,
+    resumeDirtySaves,
+  }) => {
+    if (!enabled) {
+      return;
+    }
+
+    if (releasePause) {
+      releaseStructuralPause();
+    }
+
+    if (!resumeDirtySaves || workoutDispatchPausedRef.current) {
+      publishState();
+      return;
+    }
+
+    stateRef.current.forEach((state, workoutId) => {
+      if (
+        state.status === "dirty" &&
+        !state.createdLocallyPendingStructuralSave &&
+        !state.removedPendingStructuralSave
+      ) {
+        stateRef.current.set(workoutId, {
+          ...state,
+          pendingFollowUp: false,
+        });
+        scheduleAutosave(workoutId);
+      }
+    });
+    publishState();
+  }, [
+    enabled,
+    publishState,
+    releaseStructuralPause,
+    scheduleAutosave,
+  ]);
 
   useEffect(() => () => {
     timerRef.current.forEach((timer) => window.clearTimeout(timer));
     timerRef.current.clear();
-  }, []);
+    releaseStructuralPause();
+  }, [releaseStructuralPause]);
 
   return {
+    finishStructuralSave,
     flushAllWorkouts,
     flushWorkout,
+    notifyStructuralMutation,
     persistWorkoutNow,
+    prepareStructuralSave,
+    reconcileStructuralSave,
     rebaseWorkoutDirtyDetectionBaseline,
     workoutSaveState,
   };

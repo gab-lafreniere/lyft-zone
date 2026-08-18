@@ -43,6 +43,10 @@ export function useDraftAutosaveCoordinator({
   isTransientlyPaused,
   onAutosaveError,
   onQueuedSaveError,
+  preparePersistence,
+  onSuccessfulSaveResponse,
+  onPersistenceSettled,
+  shouldAutosave,
   autosaveTrigger = draft,
 }) {
   const draftRef = useRef(draft);
@@ -114,23 +118,14 @@ export function useDraftAutosaveCoordinator({
     overrideDraft = null,
     overrideIdentity = null
   ) => {
-    const currentMetadata = metadataRef.current;
-    const resolvedIdentity = getCurrentIdentity(currentMetadata);
+    const initialMetadata = metadataRef.current;
+    const resolvedIdentity = getCurrentIdentity(initialMetadata);
 
     if (
-      !currentMetadata.loadedFromBackend ||
+      !initialMetadata.loadedFromBackend ||
       !resolvedIdentity ||
-      isTransientlyPaused?.(currentMetadata)
+      isTransientlyPaused?.(initialMetadata)
     ) {
-      return null;
-    }
-
-    const identity = overrideIdentity || resolvedIdentity;
-    const nextDraft = overrideDraft || draftRef.current;
-    const payload = serializeDraft(nextDraft);
-    const signature = JSON.stringify(payload);
-
-    if (signature === currentMetadata.lastPersistedSignature) {
       return null;
     }
 
@@ -142,75 +137,112 @@ export function useDraftAutosaveCoordinator({
     const requestId = saveRequestIdRef.current + 1;
     saveRequestIdRef.current = requestId;
 
-    setMetadata((prev) => (
-      prev.saveState === "saving"
-        ? prev
-        : { ...prev, saveState: "saving" }
-    ));
-
-    const isStillCurrentTarget = () => sameDocumentIdentity(
-      targetIdentityRef.current,
-      identity
-    );
-
-    const runSave = async () => {
-      if (!isStillCurrentTarget()) {
-        return null;
-      }
-
-      const response = await persistDocument({
-        identity,
-        payload,
-        metadata: currentMetadata,
-      });
-
-      if (!isStillCurrentTarget()) {
-        return response;
-      }
-
-      const currentSignature = JSON.stringify(serializeDraft(draftRef.current));
-      const hasNewerLocalEdits = currentSignature !== signature;
-      const isOlderThanAppliedResponse =
-        requestId < latestAppliedSaveRequestIdRef.current;
-
-      if (hasNewerLocalEdits || isOlderThanAppliedResponse) {
-        setMetadata((prev) => {
-          const latestLocalSignature = JSON.stringify(serializeDraft(draftRef.current));
-          const hasUnsavedLocalEdits =
-            latestLocalSignature !== prev.lastPersistedSignature;
-
-          if (!hasUnsavedLocalEdits) {
-            return prev;
-          }
-
-          const hasNewerSaveRequestInFlight = requestId < saveRequestIdRef.current;
-          const nextSaveState = hasNewerSaveRequestInFlight ? "saving" : "dirty";
-
-          return prev.saveState === nextSaveState
-            ? prev
-            : { ...prev, saveState: nextSaveState };
-        });
-
-        return response;
-      }
-
-      latestAppliedSaveRequestIdRef.current = requestId;
-      onCanonicalSaveResponse(response, {
-        source: "canonical-save",
-        requestId,
-        requestSignature: signature,
-      });
-      loadedIdentityRef.current = getResponseIdentity(response);
-      return response;
-    };
-
     const savePromise = (async () => {
       let saveError = null;
       let result = null;
+      let currentMetadata = initialMetadata;
+      let identity = overrideIdentity || resolvedIdentity;
+      let nextDraft = overrideDraft || draftRef.current;
+      let payload = null;
+      let signature = null;
+      let preparationContext = null;
+      let outcome = "skipped";
 
       try {
-        result = await runSave();
+        let prepared = null;
+        if (preparePersistence) {
+          prepared = await preparePersistence({
+            draft: draftRef.current,
+            identity,
+            metadata: metadataRef.current,
+            requestId,
+          });
+        }
+
+        if (prepared) {
+          currentMetadata = prepared.metadata || metadataRef.current;
+          identity = prepared.identity || getCurrentIdentity(currentMetadata) || identity;
+          nextDraft = prepared.draft || draftRef.current;
+          preparationContext = prepared.context || null;
+        } else {
+          currentMetadata = metadataRef.current;
+        }
+
+        payload = serializeDraft(nextDraft);
+        signature = JSON.stringify(payload);
+
+        if (signature !== currentMetadata.lastPersistedSignature) {
+          setMetadata((prev) => (
+            prev.saveState === "saving"
+              ? prev
+              : { ...prev, saveState: "saving" }
+          ));
+
+          const isStillCurrentTarget = () => sameDocumentIdentity(
+            targetIdentityRef.current,
+            identity
+          );
+
+          if (isStillCurrentTarget()) {
+            outcome = "requesting";
+            const response = await persistDocument({
+              identity,
+              payload,
+              metadata: currentMetadata,
+            });
+            result = response;
+            outcome = "succeeded";
+
+            if (isStillCurrentTarget()) {
+              const currentSignature = JSON.stringify(serializeDraft(draftRef.current));
+              const hasNewerLocalEdits = currentSignature !== signature;
+              const isOlderThanAppliedResponse =
+                requestId < latestAppliedSaveRequestIdRef.current;
+              const didHandleResponse = await onSuccessfulSaveResponse?.(response, {
+                source: "canonical-save",
+                requestId,
+                requestDraft: nextDraft,
+                requestPayload: payload,
+                requestSignature: signature,
+                preparationContext,
+                hasNewerLocalEdits,
+                isOlderThanAppliedResponse,
+              });
+
+              if (didHandleResponse) {
+                latestAppliedSaveRequestIdRef.current = requestId;
+                loadedIdentityRef.current = getResponseIdentity(response);
+              } else if (hasNewerLocalEdits || isOlderThanAppliedResponse) {
+                setMetadata((prev) => {
+                  const latestLocalSignature = JSON.stringify(serializeDraft(draftRef.current));
+                  const hasUnsavedLocalEdits =
+                    latestLocalSignature !== prev.lastPersistedSignature;
+
+                  if (!hasUnsavedLocalEdits) {
+                    return prev;
+                  }
+
+                  const hasNewerSaveRequestInFlight = requestId < saveRequestIdRef.current;
+                  const nextSaveState = hasNewerSaveRequestInFlight ? "saving" : "dirty";
+
+                  return prev.saveState === nextSaveState
+                    ? prev
+                    : { ...prev, saveState: nextSaveState };
+                });
+              } else {
+                latestAppliedSaveRequestIdRef.current = requestId;
+                onCanonicalSaveResponse(response, {
+                  source: "canonical-save",
+                  requestId,
+                  requestSignature: signature,
+                });
+                loadedIdentityRef.current = getResponseIdentity(response);
+              }
+            }
+          }
+        }
       } catch (error) {
+        outcome = "failed";
         if (error?.code === "DRAFT_REVISION_CONFLICT") {
           saveError = error;
           markRevisionConflict(setMetadata, error);
@@ -230,6 +262,15 @@ export function useDraftAutosaveCoordinator({
           }
         }
       } finally {
+        await onPersistenceSettled?.({
+          error: saveError,
+          outcome,
+          preparationContext,
+          requestDraft: nextDraft,
+          requestPayload: payload,
+          requestSignature: signature,
+          response: result,
+        });
         saveInFlightPromiseRef.current = null;
       }
 
@@ -280,8 +321,11 @@ export function useDraftAutosaveCoordinator({
     hydrate,
     isTransientlyPaused,
     onCanonicalSaveResponse,
+    onPersistenceSettled,
     onQueuedSaveError,
+    onSuccessfulSaveResponse,
     persistDocument,
+    preparePersistence,
     serializeDraft,
     setMetadata,
   ]);
@@ -294,27 +338,37 @@ export function useDraftAutosaveCoordinator({
   // Keep dirty detection document-level in Phase 3; serializers remain an
   // adapter boundary so later phases can replace that policy independently.
   useEffect(() => {
+    const autosaveDecision = shouldAutosave?.({
+      draft: draftRef.current,
+      metadata: metadataRef.current,
+    });
     if (
       !metadata.loadedFromBackend ||
       !currentDocumentId ||
       !currentVersionId ||
       metadataRef.current.saveState === "conflict" ||
-      isTransientlyPaused?.(metadataRef.current)
+      isTransientlyPaused?.(metadataRef.current) ||
+      autosaveDecision === false
     ) {
       return undefined;
     }
 
     const draftSnapshot = draftRef.current;
     const signature = JSON.stringify(serializeDraft(draftSnapshot));
-    if (signature === metadata.lastPersistedSignature) {
+    if (
+      signature === metadata.lastPersistedSignature &&
+      autosaveDecision !== true
+    ) {
       return undefined;
     }
 
-    setMetadata((prev) => (
-      prev.saveState === "saving" || prev.saveState === "dirty"
-        ? prev
-        : { ...prev, saveState: "dirty" }
-    ));
+    if (signature !== metadata.lastPersistedSignature) {
+      setMetadata((prev) => (
+        prev.saveState === "saving" || prev.saveState === "dirty"
+          ? prev
+          : { ...prev, saveState: "dirty" }
+      ));
+    }
 
     const identitySnapshot = {
       documentId: currentDocumentId,
@@ -338,6 +392,7 @@ export function useDraftAutosaveCoordinator({
     persistDraftNow,
     serializeDraft,
     setMetadata,
+    shouldAutosave,
   ]);
 
   return {

@@ -474,6 +474,8 @@ export function MultiWeekProgramProvider({ children }) {
   const lastPersistedStructuralMutationVersionRef = useRef(0);
   const workoutCoordinatorRef = useRef(null);
   const workoutScopedAutosaveEnabled = isWorkoutScopedAutosaveEnabled();
+  const cycleDocumentMetadataRef = useRef(draftMetadata);
+  cycleDocumentMetadataRef.current = draftMetadata;
 
   const selectedWeek = useMemo(
     () => multiWeekDraft.weeks.find((week) => week.weekNumber === multiWeekDraft.selectedWeek) || multiWeekDraft.weeks[0] || null,
@@ -654,6 +656,84 @@ export function MultiWeekProgramProvider({ children }) {
     });
   }, []);
 
+  const prepareCycleDocumentPersistence = useCallback(async () => {
+    if (!workoutScopedAutosaveEnabled) {
+      return null;
+    }
+
+    const prepared = await workoutCoordinatorRef.current?.prepareStructuralSave();
+    return {
+      draft: prepared?.draft,
+      metadata: prepared?.metadata,
+      context: {
+        structuralMutationVersion: structuralMutationVersionRef.current,
+      },
+    };
+  }, [workoutScopedAutosaveEnabled]);
+
+  const handleSuccessfulCycleDocumentSave = useCallback((response, context) => {
+    if (!workoutScopedAutosaveEnabled) {
+      return false;
+    }
+
+    const nextState = mapCycleBuilderPayload(response);
+    workoutCoordinatorRef.current?.reconcileStructuralSave(
+      context.requestDraft,
+      nextState.programDraft
+    );
+    const persistedStructuralVersion =
+      context.preparationContext?.structuralMutationVersion ??
+      structuralMutationVersionRef.current;
+    lastPersistedStructuralMutationVersionRef.current = Math.max(
+      lastPersistedStructuralMutationVersionRef.current,
+      persistedStructuralVersion
+    );
+    const hasNewerStructuralMutation =
+      structuralMutationVersionRef.current > persistedStructuralVersion;
+    const nextMetadata = {
+      ...cycleDocumentMetadataRef.current,
+      ...nextState.metadata,
+      cyclePlanId: response?.planId || nextState.metadata.cyclePlanId,
+      lastSavedAt: response.updatedAt || new Date().toISOString(),
+      saveState: hasNewerStructuralMutation ? "dirty" : "saved",
+      lastSaveErrorMessage: null,
+      lastSaveErrorCode: null,
+    };
+    cycleDocumentMetadataRef.current = nextMetadata;
+    setDraftMetadata(nextMetadata);
+    return true;
+  }, [workoutScopedAutosaveEnabled, cycleDocumentMetadataRef]);
+
+  const handleCycleDocumentPersistenceSettled = useCallback((context) => {
+    if (!workoutScopedAutosaveEnabled) {
+      return;
+    }
+
+    const persistedStructuralVersion =
+      context.preparationContext?.structuralMutationVersion ?? null;
+    const succeeded = context.outcome === "succeeded" || context.outcome === "skipped";
+    const ownsLatestStructuralPause =
+      persistedStructuralVersion != null &&
+      structuralMutationVersionRef.current <= persistedStructuralVersion;
+    if (succeeded && persistedStructuralVersion != null) {
+      lastPersistedStructuralMutationVersionRef.current = Math.max(
+        lastPersistedStructuralMutationVersionRef.current,
+        persistedStructuralVersion
+      );
+    }
+    workoutCoordinatorRef.current?.finishStructuralSave({
+      releasePause: context.outcome === "failed" || ownsLatestStructuralPause,
+      resumeDirtySaves: succeeded && ownsLatestStructuralPause,
+    });
+  }, [workoutScopedAutosaveEnabled]);
+
+  const shouldAutosaveCycleDocument = useCallback(() => (
+    workoutScopedAutosaveEnabled
+      ? structuralMutationVersionRef.current >
+        lastPersistedStructuralMutationVersionRef.current
+      : undefined
+  ), [workoutScopedAutosaveEnabled]);
+
   const {
     beginHydrationTarget: beginCoordinatorHydrationTarget,
     draftRef: multiWeekDraftRef,
@@ -675,6 +755,18 @@ export function MultiWeekProgramProvider({ children }) {
     isTransientlyPaused: isCycleAutosavePaused,
     onAutosaveError: logCycleAutosaveError,
     onQueuedSaveError: logQueuedCycleAutosaveError,
+    preparePersistence: workoutScopedAutosaveEnabled
+      ? prepareCycleDocumentPersistence
+      : undefined,
+    onSuccessfulSaveResponse: workoutScopedAutosaveEnabled
+      ? handleSuccessfulCycleDocumentSave
+      : undefined,
+    onPersistenceSettled: workoutScopedAutosaveEnabled
+      ? handleCycleDocumentPersistenceSettled
+      : undefined,
+    shouldAutosave: workoutScopedAutosaveEnabled
+      ? shouldAutosaveCycleDocument
+      : undefined,
     autosaveTrigger: workoutScopedAutosaveEnabled
       ? structuralMutationVersion
       : multiWeekDraft,
@@ -710,7 +802,7 @@ export function MultiWeekProgramProvider({ children }) {
     setMultiWeekDraft,
     draftMetadata,
     setDraftMetadata,
-    documentMetadataRef: draftMetadataRef,
+    documentMetadataRef: cycleDocumentMetadataRef,
     structuralMutationVersion,
     handleDraftExpired,
   });
@@ -723,6 +815,7 @@ export function MultiWeekProgramProvider({ children }) {
   } = workoutCoordinator;
 
   const markStructuralMutation = useCallback(() => {
+    workoutCoordinatorRef.current?.notifyStructuralMutation();
     structuralMutationVersionRef.current += 1;
     setStructuralMutationVersion(structuralMutationVersionRef.current);
   }, []);
@@ -742,21 +835,22 @@ export function MultiWeekProgramProvider({ children }) {
     }
 
     return (async () => {
-      const { blockedWorkoutIds } = await flushAllWorkouts();
-      if (blockedWorkoutIds.length > 0) {
-        const error = new Error(
-          "Resolve workout autosave errors before opening another cycle draft."
-        );
-        error.code = "WORKOUT_AUTOSAVE_BLOCKED";
-        error.workoutIds = blockedWorkoutIds;
-        throw error;
-      }
-
       if (
         structuralMutationVersionRef.current >
         lastPersistedStructuralMutationVersionRef.current
       ) {
         await persistDraftNow();
+      }
+
+      const { blockedWorkoutIds, blockedReason } = await flushAllWorkouts();
+      if (blockedReason || blockedWorkoutIds.length > 0) {
+        const error = new Error(
+          "Resolve workout autosave errors before opening another cycle draft."
+        );
+        error.code = "WORKOUT_AUTOSAVE_BLOCKED";
+        error.workoutIds = blockedWorkoutIds;
+        error.blockedReason = blockedReason || null;
+        throw error;
       }
 
       beginDocumentHydrationTarget(identity);

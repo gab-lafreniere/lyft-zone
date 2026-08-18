@@ -230,12 +230,21 @@ function buildUiError(error, fallbackMessage) {
   };
 }
 
-function buildWorkoutAutosaveBlockedError(actionLabel, workoutIds) {
+function buildWorkoutAutosaveBlockedError(actionLabel, workoutIds, blockedReason = null) {
   const error = new Error(
     `Resolve workout autosave conflicts or errors before ${actionLabel}.`
   );
   error.code = "WORKOUT_AUTOSAVE_BLOCKED";
   error.workoutIds = workoutIds;
+  error.blockedReason = blockedReason;
+  return error;
+}
+
+function buildDraftAutosaveBlockedError(actionLabel) {
+  const error = new Error(
+    `Resolve draft autosave conflicts or errors before ${actionLabel}.`
+  );
+  error.code = "DRAFT_AUTOSAVE_BLOCKED";
   return error;
 }
 
@@ -928,13 +937,21 @@ export default function ManualBuilderMulti() {
 
     try {
       if (workoutScopedAutosaveEnabled) {
-        const { blockedWorkoutIds = [] } = await flushAllWorkouts();
-        if (blockedWorkoutIds.length > 0) {
+        const {
+          blockedWorkoutIds = [],
+          blockedReason = null,
+        } = await flushAllWorkouts();
+        if (blockedReason || blockedWorkoutIds.length > 0) {
           throw buildWorkoutAutosaveBlockedError(
             "saving cycle settings",
-            blockedWorkoutIds
+            blockedWorkoutIds,
+            blockedReason
           );
         }
+      }
+
+      if (draftMetadata.saveState === "error") {
+        throw buildDraftAutosaveBlockedError("saving cycle settings");
       }
 
       const response = await updateUpcomingDraftTimeline(cycleId, activePlanId, {
@@ -992,11 +1009,15 @@ export default function ManualBuilderMulti() {
 
     try {
       if (workoutScopedAutosaveEnabled) {
-        const { blockedWorkoutIds = [] } = await flushAllWorkouts();
-        if (blockedWorkoutIds.length > 0) {
+        const {
+          blockedWorkoutIds = [],
+          blockedReason = null,
+        } = await flushAllWorkouts();
+        if (blockedReason || blockedWorkoutIds.length > 0) {
           throw buildWorkoutAutosaveBlockedError(
             "publishing",
-            blockedWorkoutIds
+            blockedWorkoutIds,
+            blockedReason
           );
         }
       }

@@ -356,4 +356,99 @@ describe("ManualBuilderMulti workout terminal-action barrier", () => {
     expect(updateUpcomingDraftTimeline).not.toHaveBeenCalled();
     expect(screen.getByTestId("local-workout-reps")).toHaveTextContent("88");
   });
+
+  test("Save Settings settles after a structural revision conflict without overwriting local content", async () => {
+    updateCycleDraft.mockRejectedValueOnce(Object.assign(
+      new Error("This draft was updated elsewhere."),
+      { code: "DRAFT_REVISION_CONFLICT", status: 409 }
+    ));
+    await renderBuilder();
+
+    act(() => {
+      currentContext.moveSelectedWeekWorkoutToScheduledDay(1, "TUESDAY");
+      currentContext.updateSet("workout_1", "block_1", 0, { reps: 91 });
+    });
+    await act(async () => {
+      await expect(currentContext.persistDraftNow()).rejects.toMatchObject({
+        code: "DRAFT_REVISION_CONFLICT",
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open cycle settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText(
+      "Resolve workout autosave conflicts or errors before saving cycle settings."
+    )).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
+    expect(updateUpcomingDraftTimeline).not.toHaveBeenCalled();
+    expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("local-workout-reps")).toHaveTextContent("91");
+    expect(screen.getByRole("button", { name: "Publish Cycle" })).toBeDisabled();
+  });
+
+  test("Save Settings blocks a generic structural error after flushing healthy workout content", async () => {
+    updateCycleDraft.mockRejectedValueOnce(new Error("network unavailable"));
+    saveCycleWorkoutContent.mockImplementation(async (_cycleId, _planId, _workoutId, payload) =>
+      buildWorkoutSaveResponse(payload, { contentRevision: 6, planRevision: 11 })
+    );
+    await renderBuilder();
+
+    act(() => {
+      currentContext.updateProgramMeta({ programName: "Locally Renamed Cycle" });
+      currentContext.updateSet("workout_1", "block_1", 0, { reps: 92 });
+    });
+    await act(async () => {
+      await expect(currentContext.persistDraftNow()).rejects.toThrow("network unavailable");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open cycle settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText(
+      "Resolve draft autosave conflicts or errors before saving cycle settings."
+    )).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
+    expect(saveCycleWorkoutContent).toHaveBeenCalledTimes(1);
+    expect(updateUpcomingDraftTimeline).not.toHaveBeenCalled();
+    expect(currentContext.programDraft.programName).toBe("Locally Renamed Cycle");
+    expect(screen.getByTestId("local-workout-reps")).toHaveTextContent("92");
+  });
+
+  test("Publish completes after a generic structural failure releases its temporary pause", async () => {
+    const retryResponse = buildCycleResponse({
+      reps: 31,
+      contentRevision: 6,
+      revision: 12,
+    });
+    retryResponse.builderPayload.programName = "Renamed Cycle";
+    const publishedResponse = {
+      ...retryResponse,
+      status: "PUBLISHED",
+      revision: 13,
+    };
+    updateCycleDraft
+      .mockRejectedValueOnce(new Error("network unavailable"))
+      .mockResolvedValueOnce(retryResponse);
+    saveCycleWorkoutContent.mockImplementation(async (_cycleId, _planId, _workoutId, payload) =>
+      buildWorkoutSaveResponse(payload, { contentRevision: 6, planRevision: 11 })
+    );
+    publishCycleDraft.mockResolvedValueOnce(publishedResponse);
+    await renderBuilder();
+
+    act(() => currentContext.updateProgramMeta({ programName: "Renamed Cycle" }));
+    await act(async () => {
+      await expect(currentContext.persistDraftNow()).rejects.toThrow("network unavailable");
+    });
+    expect(currentContext.draftMetadata.saveState).toBe("error");
+
+    editWorkoutReps(31);
+    fireEvent.click(screen.getByRole("button", { name: "Publish Cycle" }));
+
+    await waitFor(() => expect(publishCycleDraft).toHaveBeenCalledTimes(1));
+    expect(saveCycleWorkoutContent).toHaveBeenCalledTimes(1);
+    expect(updateCycleDraft).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("post-action destination")).toBeInTheDocument();
+  });
 });

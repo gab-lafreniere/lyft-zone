@@ -1881,6 +1881,12 @@ function buildCycleWorkoutAdapter(tx) {
     async replaceBlocks(workoutId, blocks, existingBlocks) {
       await replaceWorkoutBlocks(tx, workoutId, blocks, existingBlocks);
     },
+    async incrementContentRevision(workoutId) {
+      await tx.workout.update({
+        where: { id: workoutId },
+        data: { contentRevision: { increment: 1 } },
+      });
+    },
   };
 }
 
