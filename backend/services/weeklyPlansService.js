@@ -424,8 +424,7 @@ async function assertUserExists(userId) {
   return user;
 }
 
-async function assertKnownExerciseIds(exerciseIds = []) {
-  const prisma = getPrisma();
+async function assertKnownExerciseIds(exerciseIds = [], prisma = getPrisma()) {
   const ids = Array.from(new Set(exerciseIds.filter(Boolean)));
 
   if (!ids.length) {
@@ -697,6 +696,7 @@ function mapVersionToBuilderPayload(parent, version) {
         orderIndex: workout.orderIndex,
         estimatedDurationMinutes: workout.estimatedDurationMinutes,
         notes: workout.notes,
+        contentRevision: workout.contentRevision,
         persistence: toWorkoutPersistence(workout),
         blocks: workout.blocks.map((block) => {
           if (block.blockType === 'CARDIO') {
@@ -1342,7 +1342,290 @@ function buildWeeklyPlanWorkoutAdapter(tx) {
         buildSetScalarData: buildWeeklyPlanSetTemplatePersistenceInput,
       });
     },
+    async incrementContentRevision(workoutId) {
+      await tx.weeklyPlanWorkout.update({
+        where: { id: workoutId },
+        data: { contentRevision: { increment: 1 } },
+      });
+    },
   };
+}
+
+function assertWeeklyWorkoutContentRequest(payload, workoutId) {
+  if (
+    !Number.isInteger(payload.contentRevision) ||
+    payload.contentRevision < 1 ||
+    payload.contentRevision > 2147483647
+  ) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'contentRevision must be a positive integer'
+    );
+  }
+
+  if (!payload.workout || typeof payload.workout !== 'object' || Array.isArray(payload.workout)) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'workout is required');
+  }
+
+  if (!Array.isArray(payload.workout.blocks)) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'workout.blocks must be an array');
+  }
+
+  if (payload.workout.id != null && payload.workout.id !== workoutId) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'workout.id must match the route workoutId'
+    );
+  }
+
+  const unsupportedDocumentFields = [
+    'name',
+    'sessionsPerWeek',
+    'workouts',
+    'revision',
+    'versionRevision',
+    'planRevision',
+    'timezone',
+    'allowCrossDayDraft',
+    'cycleId',
+    'planId',
+    'weekId',
+  ];
+  if (unsupportedDocumentFields.some((field) => Object.prototype.hasOwnProperty.call(payload, field))) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'Weekly Plan structural fields are not supported by workout content saves'
+    );
+  }
+}
+
+function assertWeeklyWorkoutStructuralFieldsUnchanged(rawWorkout, storedWorkout) {
+  if (
+    Object.prototype.hasOwnProperty.call(rawWorkout, 'weeklyPlanVersionId') &&
+    rawWorkout.weeklyPlanVersionId !== storedWorkout.weeklyPlanVersionId
+  ) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'weeklyPlanVersionId cannot be changed by a workout content save'
+    );
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(rawWorkout, 'orderIndex') &&
+    (!Number.isInteger(rawWorkout.orderIndex) || rawWorkout.orderIndex !== storedWorkout.orderIndex)
+  ) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'orderIndex cannot be changed by a workout content save'
+    );
+  }
+
+  const unsupportedWorkoutFields = [
+    'weeklyPlanParentId',
+    'versionId',
+    'planWeekId',
+    'weekNumber',
+    'scheduledDay',
+  ];
+  if (unsupportedWorkoutFields.some((field) => Object.prototype.hasOwnProperty.call(rawWorkout, field))) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'Weekly Plan document structure cannot be changed by a workout content save'
+    );
+  }
+}
+
+function mapWeeklyPlanWorkoutToBuilder(workout) {
+  return mapVersionToBuilderPayload(
+    { id: '', sourceType: 'MANUAL' },
+    {
+      id: '',
+      status: 'DRAFT',
+      revision: null,
+      updatedAt: workout.updatedAt,
+      name: '',
+      sessionsPerWeek: 1,
+      workouts: [workout],
+    }
+  ).builderPayload.workouts[0];
+}
+
+async function updateWeeklyPlanWorkoutContent(
+  weeklyPlanParentId,
+  versionId,
+  workoutId,
+  payload = {}
+) {
+  const prisma = getPrisma();
+  const normalizedUserId = normalizeOptionalString(payload.userId);
+  await assertUserExists(normalizedUserId);
+  assertWeeklyWorkoutContentRequest(payload, workoutId);
+
+  return prisma.$transaction(async (tx) => {
+    const parent = await tx.weeklyPlanParent.findFirst({
+      where: {
+        id: weeklyPlanParentId,
+        userId: normalizedUserId,
+      },
+      select: {
+        id: true,
+        latestDraftVersionId: true,
+      },
+    });
+
+    if (!parent) {
+      throw new ApiError(404, 'NOT_FOUND', 'Weekly plan not found');
+    }
+
+    if (parent.latestDraftVersionId !== versionId) {
+      throw new ApiError(
+        400,
+        'VALIDATION_ERROR',
+        'This draft is not the current editable version'
+      );
+    }
+
+    const version = await tx.weeklyPlanVersion.findFirst({
+      where: {
+        id: versionId,
+        weeklyPlanParentId,
+        status: 'DRAFT',
+      },
+      select: { id: true },
+    });
+    if (!version) {
+      throw new ApiError(404, 'NOT_FOUND', 'Draft version not found');
+    }
+
+    const storedWorkout = await tx.weeklyPlanWorkout.findFirst({
+      where: {
+        id: workoutId,
+        weeklyPlanVersionId: versionId,
+      },
+      include: weeklyPlanVersionInclude.workouts.include,
+    });
+    if (!storedWorkout) {
+      throw new ApiError(404, 'WORKOUT_NOT_FOUND', 'Workout not found');
+    }
+
+    const rawWorkout = payload.workout;
+    assertWeeklyWorkoutStructuralFieldsUnchanged(rawWorkout, storedWorkout);
+
+    const [validatedWorkout] = validateDraftDocument(
+      {
+        name: 'Weekly Plan',
+        sessionsPerWeek: 1,
+        workouts: [{
+          ...rawWorkout,
+          id: workoutId,
+          orderIndex: storedWorkout.orderIndex,
+        }],
+      },
+      'draft',
+      { autoGenerateIds: false }
+    ).workouts;
+
+    const siblingWorkouts = await tx.weeklyPlanWorkout.findMany({
+      where: {
+        weeklyPlanVersionId: versionId,
+        id: { not: workoutId },
+      },
+      select: { id: true, orderIndex: true, name: true },
+    });
+    const normalizedIncomingName = String(validatedWorkout.name || '').trim().toLowerCase();
+    if (
+      normalizedIncomingName &&
+      siblingWorkouts.some(
+        (workout) => String(workout.name || '').trim().toLowerCase() === normalizedIncomingName
+      )
+    ) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'Workout names must be unique');
+    }
+
+    const exerciseById = await assertKnownExerciseIds(
+      collectExerciseIds([validatedWorkout]),
+      tx
+    );
+    validateAndNormalizeCardioBlocks([validatedWorkout], exerciseById, {
+      mode: 'draft',
+      path: 'workout',
+    });
+
+    const incomingWorkout = normalizeWorkoutForPersistence(
+      validatedWorkout,
+      storedWorkout.orderIndex,
+      { includeIds: true, extraExerciseFields: weeklyExtraExerciseFields }
+    );
+    const comparableStoredWorkout = normalizeWorkoutForPersistence(
+      buildWeeklyDraftMutationDocument({ workouts: [storedWorkout] }).workouts[0],
+      storedWorkout.orderIndex,
+      { includeIds: true, extraExerciseFields: weeklyExtraExerciseFields }
+    );
+
+    const revisionClaim = await tx.weeklyPlanWorkout.updateMany({
+      where: {
+        id: workoutId,
+        weeklyPlanVersionId: versionId,
+        contentRevision: payload.contentRevision,
+      },
+      data: {
+        name: incomingWorkout.name,
+        estimatedDurationMinutes: incomingWorkout.estimatedDurationMinutes,
+        notes: incomingWorkout.notes,
+        contentRevision: { increment: 1 },
+      },
+    });
+    if (revisionClaim.count === 0) {
+      throw new ApiError(
+        409,
+        'WORKOUT_REVISION_CONFLICT',
+        'This workout was updated elsewhere.'
+      );
+    }
+
+    await buildWeeklyPlanWorkoutAdapter(tx).replaceBlocks(
+      workoutId,
+      incomingWorkout.blocks,
+      comparableStoredWorkout.blocks
+    );
+
+    const updatedVersion = await tx.weeklyPlanVersion.update({
+      where: { id: versionId },
+      data: { revision: { increment: 1 } },
+      select: { revision: true, updatedAt: true },
+    });
+
+    const committedWorkout = await tx.weeklyPlanWorkout.findFirst({
+      where: {
+        id: workoutId,
+        weeklyPlanVersionId: versionId,
+      },
+      include: weeklyPlanVersionInclude.workouts.include,
+    });
+    if (!committedWorkout) {
+      throw new ApiError(
+        500,
+        'INTERNAL_SERVER_ERROR',
+        'Updated workout could not be reloaded'
+      );
+    }
+
+    return {
+      weeklyPlanParentId,
+      versionId,
+      workoutId: committedWorkout.id,
+      contentRevision: committedWorkout.contentRevision,
+      versionRevision: updatedVersion.revision,
+      workout: mapWeeklyPlanWorkoutToBuilder(committedWorkout),
+      updatedAt: updatedVersion.updatedAt,
+    };
+  });
 }
 
 async function updateWeeklyPlanDraft(weeklyPlanParentId, versionId, payload) {
@@ -1707,4 +1990,5 @@ module.exports = {
   publishWeeklyPlanDraft,
   setWeeklyPlanBookmark,
   updateWeeklyPlanDraft,
+  updateWeeklyPlanWorkoutContent,
 };

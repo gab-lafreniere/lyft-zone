@@ -60,6 +60,18 @@ function hasCardioBlock(workout) {
   return (workout?.blocks || []).some((block) => block.type === "cardio");
 }
 
+function isWeeklyDraftReadyForPublish(draft) {
+  const workouts = draft?.workouts || [];
+  const sessionsPerWeek = Number(draft?.sessionsPerWeek) || 0;
+  const names = workouts.map((workout) => normalizeWorkoutName(workout.name));
+  return (
+    workouts.length === sessionsPerWeek &&
+    workouts.every((workout) => Array.isArray(workout.blocks) && workout.blocks.length > 0) &&
+    names.every(Boolean) &&
+    new Set(names).size === names.length
+  );
+}
+
 export default function ManualBuilder() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -69,7 +81,7 @@ export default function ManualBuilder() {
     addWorkout,
     moveWorkouts,
     duplicateWorkouts,
-    persistDraftNow,
+    prepareWeeklyPlanDraftForPublish,
     removeWorkouts,
     updateProgramMeta,
     updateSessionsPerWeek,
@@ -90,6 +102,7 @@ export default function ManualBuilder() {
   const [isReloadingAfterConflict, setIsReloadingAfterConflict] = useState(false);
   const [isPublishingAndTransforming, setIsPublishingAndTransforming] = useState(false);
   const [publishAndTransformError, setPublishAndTransformError] = useState("");
+  const [publishError, setPublishError] = useState("");
   const [deleteProgramError, setDeleteProgramError] = useState("");
   const [isDeleteBlockedByLinkedCycle, setIsDeleteBlockedByLinkedCycle] = useState(false);
   const [isDeletingProgram, setIsDeletingProgram] = useState(false);
@@ -98,12 +111,9 @@ export default function ManualBuilder() {
   const sessionsPerWeek = programDraft.sessionsPerWeek || 4;
   const createdWorkoutCount = programDraft.workouts.length;
   const canCreateWorkout = createdWorkoutCount < sessionsPerWeek;
-  const hasEmptyWorkouts = useMemo(
-    () =>
-      programDraft.workouts.some(
-        (workout) => !Array.isArray(workout.blocks) || workout.blocks.length === 0
-      ),
-    [programDraft.workouts]
+  const isWeeklyTemplateReady = useMemo(
+    () => isWeeklyDraftReadyForPublish(programDraft),
+    [programDraft]
   );
   const selectedWorkoutIdSet = useMemo(
     () => new Set(selectedWorkoutIds),
@@ -160,18 +170,6 @@ export default function ManualBuilder() {
       })
     );
   }, [programDraft.workouts]);
-
-  const hasInvalidWorkoutNames = useMemo(
-    () =>
-      programDraft.workouts.some((workout) => {
-        const validation = workoutNameValidationById[workout.id];
-        return Boolean(validation?.nameError);
-      }),
-    [programDraft.workouts, workoutNameValidationById]
-  );
-  const hasInvalidWorkouts = hasEmptyWorkouts || hasInvalidWorkoutNames;
-  const isWeeklyTemplateComplete = createdWorkoutCount === sessionsPerWeek;
-  const isWeeklyTemplateReady = isWeeklyTemplateComplete && !hasInvalidWorkouts;
 
   const weeklyMetrics = useMemo(
     () => aggregateWorkoutMetrics(programDraft.workouts),
@@ -422,7 +420,6 @@ export default function ManualBuilder() {
 
   const handlePublish = async () => {
     if (
-      !isWeeklyTemplateReady ||
       !draftMetadata.weeklyPlanParentId ||
       isPublishing ||
       draftMetadata.saveState === "conflict"
@@ -431,18 +428,27 @@ export default function ManualBuilder() {
     }
 
     setIsPublishing(true);
+    setPublishError("");
 
     try {
-      await persistDraftNow();
-      await publishWeeklyPlanDraft(draftMetadata.weeklyPlanParentId);
-      navigate(getWeeklyPlanDetailsPath(draftMetadata.weeklyPlanParentId), {
+      const preparation = await prepareWeeklyPlanDraftForPublish();
+      if (preparation?.status !== "ready") {
+        throw new Error("Unable to prepare this weekly plan for publishing.");
+      }
+      if (!isWeeklyDraftReadyForPublish(preparation.draft)) {
+        setPublishError("Complete all workouts before publishing.");
+        return;
+      }
+      const weeklyPlanParentId = preparation.metadata.weeklyPlanParentId;
+      await publishWeeklyPlanDraft(weeklyPlanParentId);
+      navigate(getWeeklyPlanDetailsPath(weeklyPlanParentId), {
         replace: true,
         state: {
           from: location.state?.returnTo || getWeeklyPlansPath(),
         },
       });
     } catch (error) {
-      // Keep the builder open so the user can retry publishing.
+      setPublishError(error.message || "Unable to publish this weekly plan.");
     } finally {
       setIsPublishing(false);
     }
@@ -450,7 +456,6 @@ export default function ManualBuilder() {
 
   const handlePublishAndTransform = async () => {
     if (
-      !isWeeklyTemplateReady ||
       isPublishing ||
       isPublishingAndTransforming ||
       draftMetadata.saveState === "conflict"
@@ -476,8 +481,15 @@ export default function ManualBuilder() {
     setIsPublishingAndTransforming(true);
 
     try {
-      await persistDraftNow();
-      await publishWeeklyPlanDraft(draftMetadata.weeklyPlanParentId);
+      const preparation = await prepareWeeklyPlanDraftForPublish();
+      if (preparation?.status !== "ready") {
+        throw new Error("Unable to prepare this weekly plan for publishing.");
+      }
+      if (!isWeeklyDraftReadyForPublish(preparation.draft)) {
+        setPublishAndTransformError("Complete all workouts before publishing.");
+        return;
+      }
+      await publishWeeklyPlanDraft(preparation.metadata.weeklyPlanParentId);
       navigate("/program/manual-convert", {
         state: {
           from: `${location.pathname}${location.search || ""}`,
@@ -883,16 +895,16 @@ export default function ManualBuilder() {
           <button
             type="button"
             disabled={
-              !isWeeklyTemplateReady ||
               !draftMetadata.weeklyPlanParentId ||
+              !isWeeklyTemplateReady ||
               isPublishing ||
               draftMetadata.saveState === "conflict"
             }
             onClick={handlePublish}
             className={[
               "flex w-full items-center justify-center rounded-xl py-4 font-bold transition-colors",
-              isWeeklyTemplateReady &&
-                draftMetadata.weeklyPlanParentId &&
+              draftMetadata.weeklyPlanParentId &&
+                isWeeklyTemplateReady &&
                 !isPublishing &&
                 draftMetadata.saveState !== "conflict"
                 ? "bg-primary text-slate-900"
@@ -901,6 +913,11 @@ export default function ManualBuilder() {
           >
             <span>{isPublishing ? "Publishing..." : "Publish Program"}</span>
           </button>
+          {publishError ? (
+            <p className="mt-2 text-center text-sm font-medium text-red-500">
+              {publishError}
+            </p>
+          ) : null}
         </div>
       </div>
 

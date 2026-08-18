@@ -47,7 +47,7 @@ function TextList({ title, values }) {
 
 export default function AIBuilderResult({ generationResult, backTarget }) {
   const navigate = useNavigate();
-  const { hydrateProgramDraft } = useManualProgram();
+  const { beginHydrationTarget, hydrateProgramDraft } = useManualProgram();
   const [isOpeningDraft, setIsOpeningDraft] = useState(false);
   const [actionError, setActionError] = useState("");
   const editInFlightRef = useRef(false);
@@ -80,6 +80,10 @@ export default function AIBuilderResult({ generationResult, backTarget }) {
     setActionError("");
 
     try {
+      await beginHydrationTarget({
+        weeklyPlanParentId,
+        weeklyPlanVersionId: null,
+      });
       const draft = await openOrCreateWeeklyPlanEditDraft(weeklyPlanParentId);
       const detailsPath = getWeeklyPlanDetailsPath(weeklyPlanParentId);
       hydrateProgramDraft(draft, { originRoute: detailsPath });

@@ -157,12 +157,11 @@ export default function ProgramDetails() {
     // resolves, that navigation declares its own target, and this response
     // is dropped by hydrateProgramDraft instead of silently applying over
     // whatever the user is now looking at.
-    beginHydrationTarget({
-      weeklyPlanParentId: program.weeklyPlanParentId,
-      weeklyPlanVersionId: null,
-    });
-
     try {
+      await beginHydrationTarget({
+        weeklyPlanParentId: program.weeklyPlanParentId,
+        weeklyPlanVersionId: null,
+      });
       const response = await openOrCreateWeeklyPlanEditDraft(program.weeklyPlanParentId);
       hydrateProgramDraft(response, {
         originRoute: buildOrigin(location),

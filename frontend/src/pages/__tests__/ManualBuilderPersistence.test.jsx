@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import "@testing-library/jest-dom";
 import { MemoryRouter } from "react-router-dom";
 import ManualBuilder from "../ManualBuilder";
 import { useManualProgram } from "../../context/ManualProgramContext";
@@ -13,9 +14,8 @@ jest.mock("../../services/api", () => ({
   publishWeeklyPlanDraft: jest.fn(),
 }));
 
-function createContextValue(persistDraftNow) {
-  return {
-    programDraft: {
+function createContextValue(persistDraftNow, preparedDraft) {
+  const programDraft = {
       programName: "Complete Plan",
       sessionsPerWeek: 1,
       workouts: [
@@ -38,7 +38,9 @@ function createContextValue(persistDraftNow) {
           ],
         },
       ],
-    },
+    };
+  return {
+    programDraft,
     draftMetadata: {
       weeklyPlanParentId: "weekly_parent_1",
       weeklyPlanVersionId: "weekly_version_1",
@@ -51,6 +53,17 @@ function createContextValue(persistDraftNow) {
     moveWorkouts: jest.fn(),
     duplicateWorkouts: jest.fn(),
     persistDraftNow,
+    prepareWeeklyPlanDraftForPublish: jest.fn(async () => {
+      await persistDraftNow();
+      return {
+        status: "ready",
+        draft: preparedDraft || programDraft,
+        metadata: {
+          weeklyPlanParentId: "weekly_parent_1",
+          weeklyPlanVersionId: "weekly_version_1",
+        },
+      };
+    }),
     removeWorkouts: jest.fn(),
     updateProgramMeta: jest.fn(),
     updateSessionsPerWeek: jest.fn(),
@@ -87,6 +100,48 @@ describe("ManualBuilder explicit persistence", () => {
       expect(persistDraftNow.mock.invocationCallOrder[0]).toBeLessThan(
         publishWeeklyPlanDraft.mock.invocationCallOrder[0]
       );
+    }
+  );
+
+  test.each([
+    ["Publish Program", "Publishing..."],
+    ["Turn into multi-week program", "Publishing & transforming..."],
+  ])(
+    "%s surfaces post-barrier validation and exits loading without publishing",
+    async (buttonName, loadingName) => {
+      let resolvePersistence;
+      const persistence = new Promise((resolve) => {
+        resolvePersistence = resolve;
+      });
+      const persistDraftNow = jest.fn().mockReturnValue(persistence);
+      const contextValue = createContextValue(persistDraftNow, {
+        programName: "Incomplete Plan",
+        sessionsPerWeek: 1,
+        workouts: [],
+      });
+      useManualProgram.mockReturnValue(contextValue);
+      renderBuilder();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: new RegExp(buttonName) })
+      );
+
+      expect(
+        screen.getByRole("button", { name: new RegExp(loadingName) })
+      ).toBeDisabled();
+      await act(async () => {
+        resolvePersistence({});
+        await persistence;
+      });
+      expect(
+        await screen.findByText("Complete all workouts before publishing.")
+      ).toBeInTheDocument();
+      expect(persistDraftNow).toHaveBeenCalledTimes(1);
+      expect(contextValue.prepareWeeklyPlanDraftForPublish).toHaveBeenCalledTimes(1);
+      expect(publishWeeklyPlanDraft).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole("button", { name: new RegExp(buttonName) })
+      ).toBeEnabled();
     }
   );
 });

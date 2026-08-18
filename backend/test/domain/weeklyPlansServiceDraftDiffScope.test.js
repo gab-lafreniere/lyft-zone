@@ -285,8 +285,16 @@ test('adding one set writes only the touched workout, not the whole draft', asyn
   );
   assert.deepEqual(
     [...touchedWorkoutIds],
-    [],
-    'a nested set addition must not write the workout row'
+    [stored.workouts[0].id],
+    'a nested content change must increment only the touched workout row'
+  );
+  const workoutRevisionWrite = writes.find(
+    (call) => call.model === 'weeklyPlanWorkout' && call.op === 'update'
+  );
+  assert.deepEqual(
+    workoutRevisionWrite?.data,
+    { contentRevision: { increment: 1 } },
+    'the shared final-state hook must increment contentRevision exactly once'
   );
 
   assert.equal(
@@ -315,6 +323,53 @@ test('an unchanged document performs no mutation at all', async () => {
     [],
     'a no-op save must not write'
   );
+});
+
+test('combined workout scalar and nested content changes increment contentRevision exactly once', async () => {
+  const stored = buildStoredVersion();
+  const harness = createHarness(stored);
+  const incoming = toApiDocument(stored);
+  incoming.workouts[0].name = 'Renamed Day';
+  incoming.workouts[0].blocks[0].exercises[0].setTemplates[0].targetReps = 12;
+
+  await updateWeeklyPlanDraft(PARENT_ID, VERSION_ID, {
+    ...incoming,
+    userId: USER_ID,
+  });
+
+  const revisionWrites = harness.calls.filter(
+    (call) =>
+      call.model === 'weeklyPlanWorkout' &&
+      call.op === 'update' &&
+      call.data?.contentRevision
+  );
+  assert.equal(revisionWrites.length, 1);
+  assert.deepEqual(revisionWrites[0].data, {
+    contentRevision: { increment: 1 },
+  });
+});
+
+test('a pure workout reorder does not increment contentRevision', async () => {
+  const stored = buildStoredVersion();
+  const harness = createHarness(stored);
+  const incoming = toApiDocument(stored);
+  incoming.workouts.reverse();
+  incoming.workouts.forEach((workout, index) => {
+    workout.orderIndex = index + 1;
+  });
+
+  await updateWeeklyPlanDraft(PARENT_ID, VERSION_ID, {
+    ...incoming,
+    userId: USER_ID,
+  });
+
+  const revisionWrites = harness.calls.filter(
+    (call) =>
+      call.model === 'weeklyPlanWorkout' &&
+      call.op === 'update' &&
+      call.data?.contentRevision
+  );
+  assert.equal(revisionWrites.length, 0);
 });
 
 test('omitting a workout deletes it (subtractive semantics)', async () => {

@@ -16,6 +16,7 @@ const {
   publishWeeklyPlanDraft,
   setWeeklyPlanBookmark,
   updateWeeklyPlanDraft,
+  updateWeeklyPlanWorkoutContent,
 } = require('../services/weeklyPlansService');
 const {
   rewriteWeeklyPlanPipelineOutput8,
@@ -343,6 +344,20 @@ async function updateWeeklyPlanDraftHandler(req, res) {
   }
 }
 
+async function updateWeeklyPlanWorkoutContentHandler(req, res) {
+  try {
+    const workout = await updateWeeklyPlanWorkoutContent(
+      req.params.weeklyPlanParentId,
+      req.params.versionId,
+      req.params.workoutId,
+      req.body || {}
+    );
+    return res.status(200).json(workout);
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
 async function publishWeeklyPlanDraftHandler(req, res) {
   try {
     const response = await publishWeeklyPlanDraft(req.params.weeklyPlanParentId, req.body || {});
@@ -390,5 +405,6 @@ module.exports = {
   publishWeeklyPlanDraftHandler,
   unbookmarkWeeklyPlanHandler,
   updateWeeklyPlanDraftHandler,
+  updateWeeklyPlanWorkoutContentHandler,
   projectPublicMetrics,
 };

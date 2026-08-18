@@ -3,13 +3,16 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { mapProgramDraftToWeeklyPlanUpdate, mapBuilderPayloadToProgramDraft } from "../features/weeklyPlans/mappers";
+import { isWeeklyWorkoutScopedAutosaveEnabled } from "../features/weeklyPlans/featureFlags";
 import { openOrCreateWeeklyPlanEditDraft, updateWeeklyPlanDraft } from "../services/api";
 import { attachBlockUiKeys, createBlockUiKey } from "../utils/blockUiKeys";
 import { getDuplicateWorkoutName } from "../utils/duplicateWorkoutName";
 import { useDraftAutosaveCoordinator } from "./useDraftAutosaveCoordinator";
+import { useWeeklyPlanWorkoutAutosaveCoordinator } from "./useWeeklyPlanWorkoutAutosaveCoordinator";
 
 const ManualProgramContext = createContext(null);
 export const MAX_BLOCK_SET_COUNT = 10;
@@ -395,38 +398,100 @@ function toWeeklyPlanCoordinatorIdentity(identity) {
   };
 }
 
+function buildWeeklyPublishWorkoutBlockedError(workoutIds, blockedReason = null) {
+  const error = new Error(
+    "Resolve workout autosave conflicts or errors before publishing."
+  );
+  error.code = "WORKOUT_AUTOSAVE_BLOCKED";
+  error.workoutIds = workoutIds;
+  error.blockedReason = blockedReason;
+  return error;
+}
+
+function buildWeeklyPublishDocumentBlockedError(metadata, fallbackCode) {
+  const error = new Error(
+    metadata?.lastSaveErrorMessage ||
+    "Resolve draft autosave conflicts or errors before publishing."
+  );
+  error.code = metadata?.lastSaveErrorCode || fallbackCode;
+  return error;
+}
+
+function buildWeeklyPublishNoProgressError() {
+  const error = new Error(
+    "Weekly Plan persistence could not reach a stable state for publishing."
+  );
+  error.code = "WEEKLY_PUBLISH_PERSISTENCE_BLOCKED";
+  return error;
+}
+
 export function ManualProgramProvider({ children }) {
   const [programDraft, setProgramDraft] = useState(createInitialDraft);
   const [draftMetadata, setDraftMetadata] = useState(createInitialDraftMetadata);
+  const [structuralMutationVersion, setStructuralMutationVersion] = useState(0);
+  const weeklyWorkoutScopedAutosaveEnabled =
+    isWeeklyWorkoutScopedAutosaveEnabled();
+  const structuralMutationVersionRef = useRef(0);
+  const lastPersistedStructuralMutationVersionRef = useRef(0);
+  const workoutCoordinatorRef = useRef(null);
+  const weeklyDocumentMetadataRef = useRef(draftMetadata);
+  weeklyDocumentMetadataRef.current = draftMetadata;
+
+  const setCoordinatorDraftMetadata = useCallback((updater) => {
+    const currentMetadata = weeklyDocumentMetadataRef.current;
+    const nextMetadata = typeof updater === "function"
+      ? updater(currentMetadata)
+      : updater;
+    weeklyDocumentMetadataRef.current = nextMetadata;
+    setDraftMetadata(nextMetadata);
+  }, []);
 
   const applyWeeklyHydrationResponse = useCallback((response, options = {}) => {
     const nextState = mapBuilderPayloadToProgramDraft(response);
 
-    setProgramDraft((prev) => ({
-      ...nextState.programDraft,
-      workouts: attachUiKeysToWorkouts(
-        nextState.programDraft.workouts || [],
-        prev.workouts || []
-      ),
-    }));
-    setDraftMetadata({
+    setProgramDraft((prev) => {
+      const nextDraft = {
+        ...nextState.programDraft,
+        workouts: attachUiKeysToWorkouts(
+          nextState.programDraft.workouts || [],
+          prev.workouts || []
+        ),
+      };
+      workoutCoordinatorRef.current?.rebaseWorkoutDirtyDetectionBaseline(
+        nextDraft,
+        { resetState: true }
+      );
+      return nextDraft;
+    });
+    lastPersistedStructuralMutationVersionRef.current =
+      structuralMutationVersionRef.current;
+    setCoordinatorDraftMetadata({
       ...createInitialDraftMetadata(),
       ...nextState.metadata,
       originRoute: options.originRoute ?? null,
     });
-  }, []);
+  }, [setCoordinatorDraftMetadata]);
 
   const applyCanonicalWeeklyResponse = useCallback((response) => {
     const nextState = mapBuilderPayloadToProgramDraft(response);
 
-    setProgramDraft((prev) => ({
-      ...nextState.programDraft,
-      workouts: attachUiKeysToWorkouts(
-        nextState.programDraft.workouts || [],
-        prev.workouts || []
-      ),
-    }));
-    setDraftMetadata((prev) => ({
+    setProgramDraft((prev) => {
+      const nextDraft = {
+        ...nextState.programDraft,
+        workouts: attachUiKeysToWorkouts(
+          nextState.programDraft.workouts || [],
+          prev.workouts || []
+        ),
+      };
+      workoutCoordinatorRef.current?.rebaseWorkoutDirtyDetectionBaseline(
+        nextDraft,
+        { resetState: true }
+      );
+      return nextDraft;
+    });
+    lastPersistedStructuralMutationVersionRef.current =
+      structuralMutationVersionRef.current;
+    setCoordinatorDraftMetadata((prev) => ({
       ...prev,
       ...nextState.metadata,
       originRoute: prev.originRoute,
@@ -435,7 +500,7 @@ export function ManualProgramProvider({ children }) {
       lastSaveErrorMessage: null,
       lastSaveErrorCode: null,
     }));
-  }, []);
+  }, [setCoordinatorDraftMetadata]);
 
   const persistWeeklyPlanDocument = useCallback(({ identity, payload, metadata }) => (
     updateWeeklyPlanDraft(
@@ -445,8 +510,89 @@ export function ManualProgramProvider({ children }) {
     )
   ), []);
 
+  const prepareWeeklyDocumentPersistence = useCallback(async () => {
+    if (!weeklyWorkoutScopedAutosaveEnabled) {
+      return null;
+    }
+
+    const prepared = await workoutCoordinatorRef.current?.prepareStructuralSave();
+    return {
+      draft: prepared?.draft,
+      metadata: prepared?.metadata,
+      context: {
+        structuralMutationVersion: structuralMutationVersionRef.current,
+      },
+    };
+  }, [weeklyWorkoutScopedAutosaveEnabled]);
+
+  const handleSuccessfulWeeklyDocumentSave = useCallback((response, context) => {
+    if (!weeklyWorkoutScopedAutosaveEnabled) {
+      return false;
+    }
+
+    const nextState = mapBuilderPayloadToProgramDraft(response);
+    workoutCoordinatorRef.current?.reconcileStructuralSave(
+      context.requestDraft,
+      nextState.programDraft
+    );
+    const persistedStructuralVersion =
+      context.preparationContext?.structuralMutationVersion ??
+      structuralMutationVersionRef.current;
+    lastPersistedStructuralMutationVersionRef.current = Math.max(
+      lastPersistedStructuralMutationVersionRef.current,
+      persistedStructuralVersion
+    );
+    const hasNewerStructuralMutation =
+      structuralMutationVersionRef.current > persistedStructuralVersion;
+    setCoordinatorDraftMetadata((prev) => ({
+      ...prev,
+      ...nextState.metadata,
+      weeklyPlanParentId:
+        response?.weeklyPlanParentId || nextState.metadata.weeklyPlanParentId,
+      weeklyPlanVersionId:
+        response?.weeklyPlanVersionId || nextState.metadata.weeklyPlanVersionId,
+      originRoute: prev.originRoute,
+      lastSavedAt: response.updatedAt || new Date().toISOString(),
+      saveState: hasNewerStructuralMutation ? "dirty" : "saved",
+      lastSaveErrorMessage: null,
+      lastSaveErrorCode: null,
+    }));
+    return true;
+  }, [setCoordinatorDraftMetadata, weeklyWorkoutScopedAutosaveEnabled]);
+
+  const handleWeeklyDocumentPersistenceSettled = useCallback((context) => {
+    if (!weeklyWorkoutScopedAutosaveEnabled) {
+      return;
+    }
+
+    const persistedStructuralVersion =
+      context.preparationContext?.structuralMutationVersion ?? null;
+    const succeeded = context.outcome === "succeeded" || context.outcome === "skipped";
+    const ownsLatestStructuralPause =
+      persistedStructuralVersion != null &&
+      structuralMutationVersionRef.current <= persistedStructuralVersion;
+    if (succeeded && persistedStructuralVersion != null) {
+      lastPersistedStructuralMutationVersionRef.current = Math.max(
+        lastPersistedStructuralMutationVersionRef.current,
+        persistedStructuralVersion
+      );
+    }
+    workoutCoordinatorRef.current?.finishStructuralSave({
+      releasePause: context.outcome === "failed" || ownsLatestStructuralPause,
+      resumeDirtySaves: succeeded && ownsLatestStructuralPause,
+    });
+  }, [weeklyWorkoutScopedAutosaveEnabled]);
+
+  const shouldAutosaveWeeklyDocument = useCallback(() => (
+    weeklyWorkoutScopedAutosaveEnabled
+      ? structuralMutationVersionRef.current >
+        lastPersistedStructuralMutationVersionRef.current
+      : undefined
+  ), [weeklyWorkoutScopedAutosaveEnabled]);
+
   const {
     beginHydrationTarget: beginCoordinatorHydrationTarget,
+    draftRef: programDraftRef,
     hydrate: hydrateCoordinatorDraft,
     metadataRef: draftMetadataRef,
     persistDraftNow: persistCoordinatorDraftNow,
@@ -454,16 +600,32 @@ export function ManualProgramProvider({ children }) {
   } = useDraftAutosaveCoordinator({
     draft: programDraft,
     metadata: draftMetadata,
-    setMetadata: setDraftMetadata,
+    setMetadata: setCoordinatorDraftMetadata,
     serializeDraft: mapProgramDraftToWeeklyPlanUpdate,
     getCurrentIdentity: getWeeklyPlanIdentity,
     getResponseIdentity: getWeeklyPlanResponseIdentity,
     persistDocument: persistWeeklyPlanDocument,
     onHydrate: applyWeeklyHydrationResponse,
     onCanonicalSaveResponse: applyCanonicalWeeklyResponse,
+    preparePersistence: weeklyWorkoutScopedAutosaveEnabled
+      ? prepareWeeklyDocumentPersistence
+      : undefined,
+    onSuccessfulSaveResponse: weeklyWorkoutScopedAutosaveEnabled
+      ? handleSuccessfulWeeklyDocumentSave
+      : undefined,
+    onPersistenceSettled: weeklyWorkoutScopedAutosaveEnabled
+      ? handleWeeklyDocumentPersistenceSettled
+      : undefined,
+    shouldAutosave: weeklyWorkoutScopedAutosaveEnabled
+      ? shouldAutosaveWeeklyDocument
+      : undefined,
+    autosaveTrigger: weeklyWorkoutScopedAutosaveEnabled
+      ? structuralMutationVersion
+      : programDraft,
+    cancelDebouncedAutosaveOnPersist: weeklyWorkoutScopedAutosaveEnabled,
   });
 
-  const beginHydrationTarget = useCallback((identity) => {
+  const beginDocumentHydrationTarget = useCallback((identity) => {
     beginCoordinatorHydrationTarget(toWeeklyPlanCoordinatorIdentity(identity));
   }, [beginCoordinatorHydrationTarget]);
 
@@ -477,6 +639,207 @@ export function ManualProgramProvider({ children }) {
       toWeeklyPlanCoordinatorIdentity(overrideIdentity)
     )
   ), [persistCoordinatorDraftNow]);
+
+  const workoutCoordinator = useWeeklyPlanWorkoutAutosaveCoordinator({
+    enabled: weeklyWorkoutScopedAutosaveEnabled,
+    programDraft,
+    setProgramDraft,
+    draftMetadata,
+    setDraftMetadata: setCoordinatorDraftMetadata,
+    documentMetadataRef: weeklyDocumentMetadataRef,
+    structuralMutationVersion,
+  });
+  workoutCoordinatorRef.current = workoutCoordinator;
+  const {
+    flushAllWorkouts,
+    flushWorkout,
+    getPersistenceSummary,
+    persistWorkoutNow,
+    workoutSaveState,
+  } = workoutCoordinator;
+
+  const markStructuralMutation = useCallback(() => {
+    workoutCoordinatorRef.current?.notifyStructuralMutation();
+    structuralMutationVersionRef.current += 1;
+    setStructuralMutationVersion(structuralMutationVersionRef.current);
+  }, []);
+
+  const prepareWeeklyPlanDraftForPublish = useCallback(async () => {
+    let documentPassRequired = !weeklyWorkoutScopedAutosaveEnabled;
+    let genericDocumentRetryAttempted = false;
+
+    const readState = () => {
+      const metadata = weeklyDocumentMetadataRef.current;
+      const workoutSummary = workoutCoordinatorRef.current
+        ?.getPersistenceSummary() || getPersistenceSummary();
+      return {
+        hasPendingStructuralMutation: weeklyWorkoutScopedAutosaveEnabled && (
+          structuralMutationVersionRef.current >
+          lastPersistedStructuralMutationVersionRef.current
+        ),
+        hasLegacyDocumentChanges: !weeklyWorkoutScopedAutosaveEnabled && (
+          JSON.stringify(mapProgramDraftToWeeklyPlanUpdate(programDraftRef.current)) !==
+          metadata.lastPersistedSignature
+        ),
+        metadata,
+        workoutSummary,
+      };
+    };
+    const progressKey = (state) => JSON.stringify({
+      documentRevision: state.metadata.revision,
+      documentSaveState: state.metadata.saveState,
+      lastPersistedSignature: state.metadata.lastPersistedSignature,
+      lastPersistedStructuralMutationVersion:
+        lastPersistedStructuralMutationVersionRef.current,
+      pendingStructuralWorkoutIds:
+        state.workoutSummary.pendingStructuralWorkoutIds,
+      pendingWorkoutIds: state.workoutSummary.pendingWorkoutIds,
+      structuralMutationVersion: structuralMutationVersionRef.current,
+      structuralPauseActive: state.workoutSummary.structuralPauseActive,
+    });
+
+    while (true) {
+      const flushResult = await flushAllWorkouts();
+      if (flushResult.blockedReason === "DOCUMENT_CONFLICT") {
+        throw buildWeeklyPublishDocumentBlockedError(
+          weeklyDocumentMetadataRef.current,
+          "DRAFT_REVISION_CONFLICT"
+        );
+      }
+      if (flushResult.blockedReason || flushResult.blockedWorkoutIds.length > 0) {
+        throw buildWeeklyPublishWorkoutBlockedError(
+          flushResult.blockedWorkoutIds,
+          flushResult.blockedReason || null
+        );
+      }
+
+      let currentState = readState();
+      if (currentState.workoutSummary.blockedWorkoutIds.length > 0) {
+        throw buildWeeklyPublishWorkoutBlockedError(
+          currentState.workoutSummary.blockedWorkoutIds
+        );
+      }
+      if (currentState.metadata.saveState === "conflict") {
+        throw buildWeeklyPublishDocumentBlockedError(
+          currentState.metadata,
+          "DRAFT_REVISION_CONFLICT"
+        );
+      }
+      if (
+        currentState.metadata.saveState === "error" &&
+        genericDocumentRetryAttempted
+      ) {
+        throw buildWeeklyPublishDocumentBlockedError(
+          currentState.metadata,
+          "WEEKLY_DRAFT_SAVE_FAILED"
+        );
+      }
+
+      const documentNeedsPersistence =
+        documentPassRequired ||
+        currentState.hasPendingStructuralMutation ||
+        currentState.hasLegacyDocumentChanges ||
+        currentState.metadata.saveState === "dirty" ||
+        currentState.metadata.saveState === "saving" ||
+        currentState.metadata.saveState === "error" ||
+        currentState.workoutSummary.pendingStructuralWorkoutIds.length > 0 ||
+        currentState.workoutSummary.structuralPauseActive;
+
+      if (documentNeedsPersistence) {
+        if (currentState.metadata.saveState === "error") {
+          genericDocumentRetryAttempted = true;
+        }
+        const beforeProgressKey = progressKey(currentState);
+        await persistDraftNow();
+        documentPassRequired = false;
+        currentState = readState();
+        const documentStillNeedsPersistence =
+          currentState.hasPendingStructuralMutation ||
+          currentState.hasLegacyDocumentChanges ||
+          currentState.metadata.saveState === "dirty" ||
+          currentState.metadata.saveState === "saving" ||
+          currentState.workoutSummary.pendingStructuralWorkoutIds.length > 0 ||
+          currentState.workoutSummary.structuralPauseActive;
+        if (
+          documentStillNeedsPersistence &&
+          progressKey(currentState) === beforeProgressKey
+        ) {
+          throw buildWeeklyPublishNoProgressError();
+        }
+        continue;
+      }
+
+      currentState = readState();
+      if (currentState.metadata.saveState === "conflict") {
+        throw buildWeeklyPublishDocumentBlockedError(
+          currentState.metadata,
+          "DRAFT_REVISION_CONFLICT"
+        );
+      }
+      if (currentState.metadata.saveState === "error") {
+        throw buildWeeklyPublishDocumentBlockedError(
+          currentState.metadata,
+          "WEEKLY_DRAFT_SAVE_FAILED"
+        );
+      }
+      if (currentState.workoutSummary.blockedWorkoutIds.length > 0) {
+        throw buildWeeklyPublishWorkoutBlockedError(
+          currentState.workoutSummary.blockedWorkoutIds
+        );
+      }
+      if (
+        currentState.hasPendingStructuralMutation ||
+        currentState.hasLegacyDocumentChanges ||
+        currentState.metadata.saveState === "dirty" ||
+        currentState.metadata.saveState === "saving" ||
+        currentState.workoutSummary.pendingWorkoutIds.length > 0 ||
+        currentState.workoutSummary.structuralPauseActive
+      ) {
+        throw buildWeeklyPublishNoProgressError();
+      }
+
+      return {
+        status: "ready",
+        draft: programDraftRef.current,
+        metadata: currentState.metadata,
+      };
+    }
+  }, [
+    flushAllWorkouts,
+    getPersistenceSummary,
+    persistDraftNow,
+    programDraftRef,
+    weeklyWorkoutScopedAutosaveEnabled,
+  ]);
+
+  const beginHydrationTarget = useCallback((identity) => {
+    const currentMetadata = draftMetadataRef.current;
+    const isDifferentDocument = Boolean(
+      currentMetadata.loadedFromBackend &&
+      currentMetadata.weeklyPlanParentId &&
+      identity?.weeklyPlanParentId &&
+      currentMetadata.weeklyPlanParentId !== identity.weeklyPlanParentId
+    );
+
+    if (!weeklyWorkoutScopedAutosaveEnabled || !isDifferentDocument) {
+      beginDocumentHydrationTarget(identity);
+      return null;
+    }
+
+    return (async () => {
+      const preparation = await prepareWeeklyPlanDraftForPublish();
+      if (preparation.status !== "ready") {
+        throw buildWeeklyPublishNoProgressError();
+      }
+      beginDocumentHydrationTarget(identity);
+      return null;
+    })();
+  }, [
+    beginDocumentHydrationTarget,
+    draftMetadataRef,
+    prepareWeeklyPlanDraftForPublish,
+    weeklyWorkoutScopedAutosaveEnabled,
+  ]);
 
   const updateSupersetSetCount = useCallback((workoutId, blockId, nextCount) => {
     const safeCount = clampNumber(nextCount || 1, 1, MAX_BLOCK_SET_COUNT);
@@ -529,15 +892,17 @@ export function ManualProgramProvider({ children }) {
       selectedWeek: payload.selectedWeek ?? 1,
       workouts: [],
     });
-    setDraftMetadata(createInitialDraftMetadata());
+    setCoordinatorDraftMetadata(createInitialDraftMetadata());
     resetHydrationIdentity();
-  }, [resetHydrationIdentity]);
+  }, [resetHydrationIdentity, setCoordinatorDraftMetadata]);
 
   const updateProgramMeta = useCallback((updates = {}) => {
+    markStructuralMutation();
     setProgramDraft((prev) => ({ ...prev, ...updates }));
-  }, []);
+  }, [markStructuralMutation]);
 
   const updateSessionsPerWeek = useCallback((nextValue) => {
+    markStructuralMutation();
     setProgramDraft((prev) => {
       const safeValue = clampNumber(Number(nextValue) || 1, 1, 7);
 
@@ -550,9 +915,10 @@ export function ManualProgramProvider({ children }) {
         sessionsPerWeek: safeValue,
       };
     });
-  }, []);
+  }, [markStructuralMutation]);
 
   const addWorkout = useCallback((name) => {
+    markStructuralMutation();
     setProgramDraft((prev) => {
       if (prev.workouts.length >= prev.sessionsPerWeek) {
         return prev;
@@ -565,7 +931,7 @@ export function ManualProgramProvider({ children }) {
         workouts: [...prev.workouts, createWorkout(workoutName, false)],
       };
     });
-  }, []);
+  }, [markStructuralMutation]);
 
   const updateWorkoutName = useCallback((workoutId, name) => {
     setProgramDraft((prev) => ({
@@ -860,6 +1226,7 @@ export function ManualProgramProvider({ children }) {
       return;
     }
 
+    markStructuralMutation();
     setProgramDraft((prev) => {
       if (!canMoveSelectedWorkouts(prev.workouts, selectedIds, direction)) {
         return prev;
@@ -899,7 +1266,7 @@ export function ManualProgramProvider({ children }) {
         workouts: nextWorkouts,
       };
     });
-  }, []);
+  }, [markStructuralMutation]);
 
   const duplicateWorkouts = useCallback((workoutIds) => {
     const selectedIds = Array.isArray(workoutIds)
@@ -910,6 +1277,7 @@ export function ManualProgramProvider({ children }) {
       return;
     }
 
+    markStructuralMutation();
     setProgramDraft((prev) => {
       if (prev.workouts.length + selectedIds.length > prev.sessionsPerWeek) {
         return prev;
@@ -934,7 +1302,7 @@ export function ManualProgramProvider({ children }) {
         workouts: nextWorkouts,
       };
     });
-  }, []);
+  }, [markStructuralMutation]);
 
   const removeWorkouts = useCallback((workoutIds) => {
     const selectedIds = Array.isArray(workoutIds)
@@ -945,6 +1313,7 @@ export function ManualProgramProvider({ children }) {
       return;
     }
 
+    markStructuralMutation();
     setProgramDraft((prev) => {
       const selectedIdSet = new Set(selectedIds);
 
@@ -953,13 +1322,13 @@ export function ManualProgramProvider({ children }) {
         workouts: prev.workouts.filter((workout) => !selectedIdSet.has(workout.id)),
       };
     });
-  }, []);
+  }, [markStructuralMutation]);
 
   const resetProgramDraft = useCallback(() => {
     setProgramDraft(createInitialDraft());
-    setDraftMetadata(createInitialDraftMetadata());
+    setCoordinatorDraftMetadata(createInitialDraftMetadata());
     resetHydrationIdentity();
-  }, [resetHydrationIdentity]);
+  }, [resetHydrationIdentity, setCoordinatorDraftMetadata]);
 
   // The only path back from `saveState === "conflict"`. Explicitly
   // destructive -- discards every unsaved local edit made since the
@@ -977,12 +1346,11 @@ export function ManualProgramProvider({ children }) {
     try {
       const response = await openOrCreateWeeklyPlanEditDraft(currentMetadata.weeklyPlanParentId);
       // Explicit, user-confirmed discard-and-reload -- force past the
-      // local-authority guard the same way DRAFT_EXPIRED recovery does for
-      // the cycle builder.
+      // local-authority guard used by explicit conflict recovery.
       hydrateProgramDraft(response, { force: true });
       return response;
     } catch (reloadError) {
-      setDraftMetadata((prev) => ({
+      setCoordinatorDraftMetadata((prev) => ({
         ...prev,
         saveState: "error",
         lastSaveErrorMessage: reloadError?.message || "Unable to reload draft. Please refresh the page.",
@@ -990,18 +1358,18 @@ export function ManualProgramProvider({ children }) {
       }));
       return null;
     }
-  }, [draftMetadataRef, hydrateProgramDraft]);
+  }, [draftMetadataRef, hydrateProgramDraft, setCoordinatorDraftMetadata]);
 
   const setDraftOriginRoute = useCallback((originRoute) => {
-    setDraftMetadata((prev) => ({
+    setCoordinatorDraftMetadata((prev) => ({
       ...prev,
       originRoute: originRoute ?? null,
     }));
-  }, []);
+  }, [setCoordinatorDraftMetadata]);
 
   const updateDraftMetadata = useCallback((updates = {}) => {
-    setDraftMetadata((prev) => ({ ...prev, ...updates }));
-  }, []);
+    setCoordinatorDraftMetadata((prev) => ({ ...prev, ...updates }));
+  }, [setCoordinatorDraftMetadata]);
 
   const updateBlock = useCallback((workoutId, blockId, updates) => {
     setProgramDraft((prev) => ({
@@ -1138,6 +1506,12 @@ export function ManualProgramProvider({ children }) {
       hydrateProgramDraft,
       beginHydrationTarget,
       persistDraftNow,
+      prepareWeeklyPlanDraftForPublish,
+      persistWorkoutNow,
+      flushWorkout,
+      flushAllWorkouts,
+      workoutSaveState,
+      weeklyWorkoutScopedAutosaveEnabled,
       reloadLatestAfterConflict,
       setDraftOriginRoute,
       updateDraftMetadata,
@@ -1172,6 +1546,12 @@ export function ManualProgramProvider({ children }) {
       hydrateProgramDraft,
       beginHydrationTarget,
       persistDraftNow,
+      prepareWeeklyPlanDraftForPublish,
+      persistWorkoutNow,
+      flushWorkout,
+      flushAllWorkouts,
+      workoutSaveState,
+      weeklyWorkoutScopedAutosaveEnabled,
       reloadLatestAfterConflict,
       setDraftOriginRoute,
       updateDraftMetadata,

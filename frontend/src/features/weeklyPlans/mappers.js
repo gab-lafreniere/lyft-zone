@@ -20,6 +20,10 @@ export function mapProgramDraftToWeeklyPlanUpdate(programDraft) {
   };
 }
 
+export function mapWeeklyPlanWorkoutToApi(workout, workoutIndex = 0) {
+  return mapBuilderWorkoutToApi(workout, workoutIndex);
+}
+
 export function mapBuilderPayloadToProgramDraft(response) {
   const builderPayload = response?.builderPayload || {};
 

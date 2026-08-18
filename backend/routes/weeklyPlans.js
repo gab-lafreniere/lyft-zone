@@ -11,6 +11,7 @@ const {
   publishWeeklyPlanDraftHandler,
   unbookmarkWeeklyPlanHandler,
   updateWeeklyPlanDraftHandler,
+  updateWeeklyPlanWorkoutContentHandler,
 } = require('../controllers/weeklyPlansController');
 
 const router = express.Router();
@@ -22,6 +23,10 @@ router.get('/', listWeeklyPlansHandler);
 router.delete('/:weeklyPlanParentId', deleteWeeklyPlanHandler);
 router.get('/:weeklyPlanParentId', getWeeklyPlanDetailsHandler);
 router.post('/:weeklyPlanParentId/edit-draft', openOrCreateEditDraftHandler);
+router.patch(
+  '/:weeklyPlanParentId/drafts/:versionId/workouts/:workoutId',
+  updateWeeklyPlanWorkoutContentHandler
+);
 router.patch('/:weeklyPlanParentId/drafts/:versionId', updateWeeklyPlanDraftHandler);
 router.post('/:weeklyPlanParentId/publish', publishWeeklyPlanDraftHandler);
 router.post('/:weeklyPlanParentId/bookmark', bookmarkWeeklyPlanHandler);

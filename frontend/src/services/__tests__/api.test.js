@@ -7,6 +7,7 @@ import {
   getAIWeeklyPlanGenerationProgress,
   getOnboardingCycleConflicts,
   saveCycleWorkoutContent,
+  saveWeeklyPlanWorkoutContent,
   updateCycleDraft,
   updateTrainingProfileAvailability,
   updateUserOnboarding,
@@ -556,6 +557,58 @@ describe("saveCycleWorkoutContent", () => {
     });
     expect(requestBody).not.toHaveProperty("revision");
     expect(requestBody).not.toHaveProperty("weeks");
+    expect(result).toBe(responseBody);
+  });
+});
+
+describe("saveWeeklyPlanWorkoutContent", () => {
+  beforeEach(() => {
+    global.fetch = jest.fn();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test("patches exactly one Weekly workout without Cycle lifecycle fields", async () => {
+    const responseBody = {
+      weeklyPlanParentId: "weekly_parent_1",
+      versionId: "weekly_version_1",
+      workoutId: "workout_1",
+      contentRevision: 8,
+      versionRevision: 31,
+      workout: { id: "workout_1", name: "Lower A" },
+    };
+    global.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => responseBody,
+    });
+
+    const result = await saveWeeklyPlanWorkoutContent(
+      "weekly_parent_1",
+      "weekly_version_1",
+      "workout_1",
+      {
+        contentRevision: 7,
+        workout: { id: "workout_1", name: "Lower A" },
+      }
+    );
+
+    const [requestUrl, requestOptions] = global.fetch.mock.calls[0];
+    expect(new URL(requestUrl).pathname).toBe(
+      "/api/weekly-plans/weekly_parent_1/drafts/weekly_version_1/workouts/workout_1"
+    );
+    expect(requestOptions.method).toBe("PATCH");
+    expect(JSON.parse(requestOptions.body)).toEqual({
+      contentRevision: 7,
+      workout: { id: "workout_1", name: "Lower A" },
+      userId: expect.any(String),
+    });
+    expect(requestOptions.body).not.toContain("timezone");
+    expect(requestOptions.body).not.toContain("allowCrossDayDraft");
+    expect(requestOptions.body).not.toContain("planRevision");
     expect(result).toBe(responseBody);
   });
 });

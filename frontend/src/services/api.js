@@ -392,6 +392,28 @@ export async function updateWeeklyPlanDraft(
   return readJsonResponse(response);
 }
 
+export async function saveWeeklyPlanWorkoutContent(
+  weeklyPlanParentId,
+  weeklyPlanVersionId,
+  workoutId,
+  payload
+) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/weekly-plans/${weeklyPlanParentId}/drafts/${weeklyPlanVersionId}/workouts/${workoutId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...payload,
+        userId,
+      }),
+    }
+  );
+
+  return readJsonResponse(response);
+}
+
 export async function publishWeeklyPlanDraft(weeklyPlanParentId) {
   const userId = await ensureCurrentUserId();
   const response = await fetch(
