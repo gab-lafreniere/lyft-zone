@@ -272,6 +272,7 @@ model WeeklyPlanWorkout {
   orderIndex               Int
   estimatedDurationMinutes Int?
   notes                    String?
+  contentRevision          Int                      @default(1)
   createdAt                DateTime                 @default(now())
   updatedAt                DateTime                 @updatedAt
   weeklyPlanVersion        WeeklyPlanVersion        @relation(fields: [weeklyPlanVersionId], references: [id], onDelete: Cascade)
@@ -416,6 +417,7 @@ model Workout {
   scheduledDay             DayOfWeek?
   estimatedDurationMinutes Int?
   notes                    String?
+  contentRevision          Int                @default(1)
   createdAt                DateTime           @default(now())
   updatedAt                DateTime           @updatedAt
   planWeek                 PlanWeek           @relation(fields: [planWeekId], references: [id], onDelete: Cascade)

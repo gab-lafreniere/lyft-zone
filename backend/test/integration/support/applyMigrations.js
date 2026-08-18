@@ -13,12 +13,13 @@ const { Client } = require('pg');
 
 const MIGRATIONS_DIR = path.join(__dirname, '..', '..', '..', 'prisma', 'migrations');
 
-async function applyMigrations(connectionString) {
+async function applyMigrations(connectionString, options = {}) {
   const migrationDirs = fs
     .readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
-    .sort();
+    .sort()
+    .filter((dir) => !options.before || dir < options.before);
 
   const client = new Client({ connectionString });
   await client.connect();
