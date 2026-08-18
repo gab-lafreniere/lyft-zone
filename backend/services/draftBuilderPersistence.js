@@ -191,6 +191,7 @@ function toCycleBuilderBlock(block) {
 function toCycleBuilderWorkout(workout) {
   return {
     id: workout.id,
+    contentRevision: workout.contentRevision,
     name: workout.name,
     orderIndex: workout.orderIndex,
     scheduledDay: workout.scheduledDay,

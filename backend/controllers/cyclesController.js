@@ -16,6 +16,7 @@ const {
   publishCycleDraft,
   rescheduleUpcomingCycle,
   updateCycleDraft,
+  updateCycleWorkoutContent,
   updateUpcomingDraftTimeline,
 } = require('../services/cyclesService');
 
@@ -30,6 +31,7 @@ function buildErrorContext(req, operation, error) {
     route: `${req.method} ${req.originalUrl}`,
     cycleId: req.params?.cycleId || null,
     planId: req.params?.planId || null,
+    workoutId: req.params?.workoutId || null,
     userId: req.body?.userId || req.query?.userId || null,
     timezone: req.body?.timezone || req.query?.timezone || null,
     errorCode: error?.code || null,
@@ -187,6 +189,23 @@ async function updateCycleDraftHandler(req, res) {
   }
 }
 
+async function updateCycleWorkoutContentHandler(req, res) {
+  try {
+    const response = await updateCycleWorkoutContent(
+      req.params.cycleId,
+      req.params.planId,
+      req.params.workoutId,
+      req.body || {}
+    );
+    return res.status(200).json(response);
+  } catch (error) {
+    return handleError(req, res, error, 'update_cycle_workout_content', {
+      code: 'CYCLE_WORKOUT_SAVE_INTERNAL',
+      message: 'An unexpected error occurred while saving this cycle workout.',
+    });
+  }
+}
+
 async function updateUpcomingDraftTimelineHandler(req, res) {
   try {
     const response = await updateUpcomingDraftTimeline(
@@ -268,5 +287,6 @@ module.exports = {
   publishCycleDraftHandler,
   rescheduleUpcomingCycleHandler,
   updateCycleDraftHandler,
+  updateCycleWorkoutContentHandler,
   updateUpcomingDraftTimelineHandler,
 };

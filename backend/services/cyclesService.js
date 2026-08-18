@@ -150,6 +150,40 @@ const draftMutationInclude = {
   },
 };
 
+const workoutContentInclude = {
+  blocks: {
+    orderBy: { orderIndex: 'asc' },
+    include: {
+      blockExercises: {
+        orderBy: { orderIndex: 'asc' },
+        include: {
+          exercise: {
+            select: {
+              exerciseId: true,
+              name: true,
+              equipmentCategory: true,
+              bodyParts: true,
+              targetMuscles: true,
+              trainingType: true,
+              cardioModality: true,
+            },
+          },
+          setTemplates: {
+            orderBy: { setIndex: 'asc' },
+          },
+        },
+      },
+    },
+  },
+  planWeek: {
+    select: {
+      id: true,
+      planId: true,
+      weekNumber: true,
+    },
+  },
+};
+
 const weeklySourceVersionInclude = {
   workouts: {
     orderBy: { orderIndex: 'asc' },
@@ -921,10 +955,14 @@ function validateCycleDocument(payload, mode = 'draft') {
 
 function collectExerciseIdsFromWeeks(weeks = []) {
   return weeks.flatMap((week) =>
-    week.workouts.flatMap((workout) =>
-      workout.blocks.flatMap((block) =>
-        block.exercises.map((exercise) => exercise.exerciseId).filter(Boolean)
-      )
+    collectExerciseIdsFromWorkouts(week.workouts)
+  );
+}
+
+function collectExerciseIdsFromWorkouts(workouts = []) {
+  return workouts.flatMap((workout) =>
+    workout.blocks.flatMap((block) =>
+      block.exercises.map((exercise) => exercise.exerciseId).filter(Boolean)
     )
   );
 }
@@ -976,8 +1014,7 @@ async function resolveUserTimezone(userId, requestedTimezone) {
   );
 }
 
-async function assertKnownExerciseIds(exerciseIds = []) {
-  const prisma = getPrisma();
+async function assertKnownExerciseIds(exerciseIds = [], prisma = getPrisma()) {
   const ids = Array.from(new Set(exerciseIds.filter(Boolean)));
 
   if (!ids.length) {
@@ -1007,6 +1044,38 @@ async function assertKnownExerciseIds(exerciseIds = []) {
   return new Map(exercises.map((exercise) => [exercise.exerciseId, exercise]));
 }
 
+function serializeWorkout(workout) {
+  return {
+    ...workout,
+    blocks: workout.blocks.map((block) => {
+      const { blockExercises, ...blockFields } = block;
+
+      return {
+        ...blockFields,
+        exercises: blockExercises.map((blockExercise) => ({
+          id: blockExercise.id,
+          workoutBlockId: blockExercise.workoutBlockId,
+          exerciseId: blockExercise.exerciseId,
+          exerciseName: blockExercise.exercise?.name || null,
+          orderIndex: blockExercise.orderIndex,
+          executionNotes: blockExercise.executionNotes,
+          defaultTempo: blockExercise.defaultTempo,
+          defaultRestSeconds: blockExercise.defaultRestSeconds,
+          defaultTargetRir: blockExercise.defaultTargetRir,
+          defaultTargetRpe: blockExercise.defaultTargetRpe,
+          intensificationMethod: blockExercise.intensificationMethod,
+          cardioPrescription: blockExercise.cardioPrescription,
+          notes: blockExercise.notes,
+          bodyParts: blockExercise.exercise?.bodyParts || [],
+          muscleFocus: blockExercise.exercise?.targetMuscles || [],
+          exercise: blockExercise.exercise,
+          setTemplates: blockExercise.setTemplates,
+        })),
+      };
+    }),
+  };
+}
+
 function serializePlan(plan) {
   if (!plan) {
     return null;
@@ -1016,35 +1085,7 @@ function serializePlan(plan) {
     ...plan,
     weeks: plan.weeks.map((week) => ({
       ...week,
-      workouts: week.workouts.map((workout) => ({
-        ...workout,
-        blocks: workout.blocks.map((block) => {
-          const { blockExercises, ...blockFields } = block;
-
-          return {
-            ...blockFields,
-            exercises: blockExercises.map((blockExercise) => ({
-              id: blockExercise.id,
-              workoutBlockId: blockExercise.workoutBlockId,
-              exerciseId: blockExercise.exerciseId,
-              exerciseName: blockExercise.exercise?.name || null,
-              orderIndex: blockExercise.orderIndex,
-              executionNotes: blockExercise.executionNotes,
-              defaultTempo: blockExercise.defaultTempo,
-              defaultRestSeconds: blockExercise.defaultRestSeconds,
-              defaultTargetRir: blockExercise.defaultTargetRir,
-              defaultTargetRpe: blockExercise.defaultTargetRpe,
-              intensificationMethod: blockExercise.intensificationMethod,
-              cardioPrescription: blockExercise.cardioPrescription,
-              notes: blockExercise.notes,
-              bodyParts: blockExercise.exercise?.bodyParts || [],
-              muscleFocus: blockExercise.exercise?.targetMuscles || [],
-              exercise: blockExercise.exercise,
-              setTemplates: blockExercise.setTemplates,
-            })),
-          };
-        }),
-      })),
+      workouts: week.workouts.map(serializeWorkout),
     })),
   };
 }
@@ -1263,6 +1304,38 @@ async function normalizeSingleDraft(tx, cycleId, include = fullPlanInclude) {
     },
     orderBy: { updatedAt: 'desc' },
     include,
+  });
+
+  if (drafts.length <= 1) {
+    return drafts[0] || null;
+  }
+
+  const [latestDraft, ...staleDrafts] = drafts;
+  await tx.plan.deleteMany({
+    where: {
+      id: {
+        in: staleDrafts.map((draft) => draft.id),
+      },
+    },
+  });
+
+  return latestDraft;
+}
+
+async function normalizeSingleDraftMetadata(tx, cycleId) {
+  const drafts = await tx.plan.findMany({
+    where: {
+      trainingCycleId: cycleId,
+      status: 'DRAFT',
+    },
+    orderBy: { updatedAt: 'desc' },
+    select: {
+      id: true,
+      trainingCycleId: true,
+      status: true,
+      revision: true,
+      updatedAt: true,
+    },
   });
 
   if (drafts.length <= 1) {
@@ -2916,6 +2989,323 @@ function isDraftStillUsable(cycle, draftPlan, timeZone, allowCrossDayDraft = fal
   return false;
 }
 
+function assertWorkoutContentRequest(payload, workoutId) {
+  if (
+    !Number.isInteger(payload.contentRevision) ||
+    payload.contentRevision < 1 ||
+    payload.contentRevision > 2147483647
+  ) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'contentRevision must be a positive integer'
+    );
+  }
+
+  if (!payload.workout || typeof payload.workout !== 'object' || Array.isArray(payload.workout)) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'workout is required');
+  }
+
+  if (payload.workout.id != null && payload.workout.id !== workoutId) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'workout.id must match the route workoutId'
+    );
+  }
+
+  const unsupportedDocumentFields = [
+    'weeks',
+    'startDate',
+    'endDate',
+    'durationWeeks',
+    'revision',
+    'planRevision',
+  ];
+  if (unsupportedDocumentFields.some((field) => Object.prototype.hasOwnProperty.call(payload, field))) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'Cycle structural fields are not supported by workout content saves'
+    );
+  }
+}
+
+function assertWorkoutStructuralFieldsUnchanged(rawWorkout, storedWorkout) {
+  if (
+    Object.prototype.hasOwnProperty.call(rawWorkout, 'planWeekId') &&
+    rawWorkout.planWeekId !== storedWorkout.planWeekId
+  ) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'planWeekId cannot be changed by a workout content save'
+    );
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(rawWorkout, 'orderIndex') &&
+    (!Number.isInteger(rawWorkout.orderIndex) || rawWorkout.orderIndex !== storedWorkout.orderIndex)
+  ) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'orderIndex cannot be changed by a workout content save'
+    );
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(rawWorkout, 'scheduledDay') &&
+    (rawWorkout.scheduledDay ?? null) !== (storedWorkout.scheduledDay ?? null)
+  ) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'scheduledDay cannot be changed by a workout content save'
+    );
+  }
+
+  const unsupportedWorkoutFields = ['planId', 'weekId', 'weekNumber'];
+  if (unsupportedWorkoutFields.some((field) => Object.prototype.hasOwnProperty.call(rawWorkout, field))) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'Week structure cannot be changed by a workout content save'
+    );
+  }
+}
+
+async function updateCycleWorkoutContent(cycleId, planId, workoutId, payload = {}) {
+  const prisma = getPrisma();
+  const userId = normalizeOptionalString(payload.userId);
+  await assertUserExists(userId);
+  let phase = 'validate_payload';
+
+  try {
+    assertWorkoutContentRequest(payload, workoutId);
+
+    return await prisma.$transaction(async (tx) => {
+      phase = 'load_cycle';
+      const cycle = await loadCycleSummaryForUser(tx, cycleId, userId);
+      const effectiveTimezone = resolveEffectiveTimezone(
+        cycle.timezone,
+        payload.timezone,
+        DEFAULT_TIMEZONE
+      );
+      const temporalStatus = deriveTemporalStatus(cycle, effectiveTimezone);
+
+      logCycleServiceEvent('update_cycle_workout_content', phase, {
+        cycleId,
+        planId,
+        workoutId,
+        userId,
+        temporalStatus,
+        timezone: effectiveTimezone,
+      });
+
+      if (temporalStatus === 'past') {
+        throw new ApiError(400, 'VALIDATION_ERROR', 'Past cycles cannot be edited');
+      }
+
+      phase = 'resolve_current_draft';
+      const draftPlan = await normalizeSingleDraftMetadata(tx, cycleId);
+      if (!draftPlan || draftPlan.id !== planId) {
+        throw new ApiError(
+          400,
+          'VALIDATION_ERROR',
+          'This draft is not the current editable version'
+        );
+      }
+
+      if (
+        !isDraftStillUsable(
+          cycle,
+          draftPlan,
+          effectiveTimezone,
+          Boolean(payload.allowCrossDayDraft)
+        )
+      ) {
+        phase = 'expire_stale_draft';
+        await tx.plan.delete({ where: { id: draftPlan.id } });
+        throw new ApiError(
+          409,
+          'DRAFT_EXPIRED',
+          'This draft expired and must be reopened from the published version'
+        );
+      }
+
+      phase = 'load_target_workout';
+      const storedWorkout = await tx.workout.findFirst({
+        where: {
+          id: workoutId,
+          planWeek: {
+            planId: draftPlan.id,
+          },
+        },
+        include: workoutContentInclude,
+      });
+
+      if (!storedWorkout) {
+        throw new ApiError(404, 'NOT_FOUND', 'Workout not found');
+      }
+
+      const rawWorkout = payload.workout;
+      assertWorkoutStructuralFieldsUnchanged(rawWorkout, storedWorkout);
+
+      phase = 'validate_workout';
+      const [validatedWorkout] = normalizeWorkoutsInput([{
+        ...rawWorkout,
+        id: workoutId,
+        planWeekId: storedWorkout.planWeekId,
+        orderIndex: storedWorkout.orderIndex,
+        scheduledDay: storedWorkout.scheduledDay,
+      }]);
+      validateWorkoutsDocument([validatedWorkout], 'draft', 'workout');
+      const exerciseById = await assertKnownExerciseIds(
+        collectExerciseIdsFromWorkouts([validatedWorkout]),
+        tx
+      );
+      validateAndNormalizeCardioBlocks([validatedWorkout], exerciseById, {
+        mode: 'draft',
+        path: 'workout',
+      });
+
+      const incomingWorkout = normalizeWorkoutForPersistence(
+        validatedWorkout,
+        storedWorkout.orderIndex,
+        { includeIds: true }
+      );
+      const serializedStoredWorkout = serializeWorkout(storedWorkout);
+      const comparableStoredWorkout = normalizeWorkoutForPersistence(
+        serializedStoredWorkout,
+        storedWorkout.orderIndex,
+        { includeIds: true }
+      );
+
+      if (temporalStatus === 'active') {
+        phase = 'validate_past_workout_lock';
+        const occurrenceDateKey = getOccurrenceDateKey(
+          toDateKey(cycle.startDate),
+          storedWorkout.planWeek.weekNumber,
+          storedWorkout
+        );
+
+        if (
+          compareDateKeys(occurrenceDateKey, getTodayDateKey(effectiveTimezone)) < 0 &&
+          createComparableWorkout(comparableStoredWorkout) !==
+            createComparableWorkout(incomingWorkout)
+        ) {
+          throw new ApiError(
+            400,
+            'VALIDATION_ERROR',
+            'Past workouts cannot be modified on an active cycle'
+          );
+        }
+      }
+
+      phase = 'claim_workout_revision';
+      const revisionClaim = await tx.workout.updateMany({
+        where: {
+          id: storedWorkout.id,
+          planWeekId: storedWorkout.planWeekId,
+          contentRevision: payload.contentRevision,
+        },
+        data: {
+          name: incomingWorkout.name,
+          estimatedDurationMinutes: incomingWorkout.estimatedDurationMinutes,
+          notes: incomingWorkout.notes,
+          contentRevision: { increment: 1 },
+        },
+      });
+
+      if (revisionClaim.count === 0) {
+        throw new ApiError(
+          409,
+          'WORKOUT_REVISION_CONFLICT',
+          'This workout was updated elsewhere.'
+        );
+      }
+
+      phase = 'patch_workout_content';
+      await replaceWorkoutBlocks(
+        tx,
+        storedWorkout.id,
+        incomingWorkout.blocks,
+        comparableStoredWorkout.blocks
+      );
+
+      phase = 'touch_plan_revision';
+      const updatedPlan = await tx.plan.update({
+        where: { id: draftPlan.id },
+        data: {
+          revision: { increment: 1 },
+        },
+        select: {
+          revision: true,
+          updatedAt: true,
+        },
+      });
+
+      phase = 'load_committed_workout';
+      const committedWorkout = await tx.workout.findFirst({
+        where: {
+          id: storedWorkout.id,
+          planWeek: {
+            planId: draftPlan.id,
+          },
+        },
+        include: workoutContentInclude,
+      });
+
+      if (!committedWorkout) {
+        throw new ApiError(
+          500,
+          'INTERNAL_SERVER_ERROR',
+          'Updated workout could not be reloaded'
+        );
+      }
+
+      const canonicalWorkout = toCycleBuilderWorkout(serializeWorkout(committedWorkout));
+
+      logCycleServiceEvent('update_cycle_workout_content', 'updated_workout', {
+        cycleId,
+        planId,
+        workoutId,
+        userId,
+        contentRevision: committedWorkout.contentRevision,
+        planRevision: updatedPlan.revision,
+      });
+
+      return {
+        cycleId,
+        planId: draftPlan.id,
+        workoutId: committedWorkout.id,
+        contentRevision: committedWorkout.contentRevision,
+        planRevision: updatedPlan.revision,
+        workout: canonicalWorkout,
+        draftState: {
+          state: 'reused',
+          effectiveTimezone,
+          localDate: getTodayDateKey(effectiveTimezone),
+          isGraceWindow:
+            temporalStatus === 'active' && isWithinGraceWindow(effectiveTimezone),
+          canExtendDraft:
+            temporalStatus === 'active' && isWithinGraceWindow(effectiveTimezone),
+        },
+        updatedAt: updatedPlan.updatedAt,
+      };
+    });
+  } catch (error) {
+    logCycleServiceError(
+      'update_cycle_workout_content',
+      phase,
+      { cycleId, planId, workoutId, userId },
+      error
+    );
+    throw error;
+  }
+}
+
 async function openOrCreateCycleEditDraft(cycleId, payload = {}) {
   const prisma = getPrisma();
   const userId = normalizeOptionalString(payload.userId);
@@ -4527,6 +4917,7 @@ module.exports = {
   rescheduleUpcomingCycle,
   stableStringify,
   updateCycleDraft,
+  updateCycleWorkoutContent,
   updateUpcomingDraftTimeline,
   _test: {
     appendPlanWeeks,

@@ -15,6 +15,7 @@ const {
   publishCycleDraftHandler,
   rescheduleUpcomingCycleHandler,
   updateCycleDraftHandler,
+  updateCycleWorkoutContentHandler,
   updateUpcomingDraftTimelineHandler,
 } = require('../controllers/cyclesController');
 
@@ -30,6 +31,10 @@ router.post('/:cycleId/plans', createPlanForCycleHandler);
 router.get('/:cycleId/full', getCycleFullHandler);
 router.get('/:cycleId', getCycleDetailsHandler);
 router.post('/:cycleId/edit-draft', openOrCreateCycleEditDraftHandler);
+router.patch(
+  '/:cycleId/drafts/:planId/workouts/:workoutId',
+  updateCycleWorkoutContentHandler
+);
 router.patch('/:cycleId/drafts/:planId', updateCycleDraftHandler);
 router.patch('/:cycleId/drafts/:planId/timeline', updateUpcomingDraftTimelineHandler);
 router.post('/:cycleId/publish', publishCycleDraftHandler);
