@@ -565,7 +565,7 @@ test('targetSeconds is represented as seconds in weekly-plan details', async () 
   assert.equal(details.workouts[0].blocks[0].prescription.repsLabel, '45s');
 });
 
-test('targetSeconds survives cloning a published version into an edit draft', async () => {
+test('published edit-draft cloning is level-batched and preserves targetSeconds', async () => {
   const published = createStoredVersion({
     id: 'version_published',
     status: 'PUBLISHED',
@@ -574,6 +574,8 @@ test('targetSeconds survives cloning a published version into an edit draft', as
     latestPublishedVersion: published,
   });
   let clonedVersionData;
+  const clonedRowsByLevel = {};
+  let transactionOptions;
   const cloned = createStoredVersion({
     id: 'version_cloned',
     status: 'DRAFT',
@@ -587,12 +589,37 @@ test('targetSeconds survives cloning a published version into an edit draft', as
     weeklyPlanParent: {
       findFirst: async () => sourceParent,
     },
-    $transaction: async (callback) =>
-      callback({
+    $transaction: async (callback, options) => {
+      transactionOptions = options;
+      return callback({
         weeklyPlanVersion: {
           create: async ({ data }) => {
             clonedVersionData = data;
             return cloned;
+          },
+        },
+        weeklyPlanWorkout: {
+          createMany: async ({ data }) => {
+            clonedRowsByLevel.workouts = data;
+            return { count: data.length };
+          },
+        },
+        weeklyPlanWorkoutBlock: {
+          createMany: async ({ data }) => {
+            clonedRowsByLevel.blocks = data;
+            return { count: data.length };
+          },
+        },
+        weeklyPlanBlockExercise: {
+          createMany: async ({ data }) => {
+            clonedRowsByLevel.exercises = data;
+            return { count: data.length };
+          },
+        },
+        weeklyPlanExerciseSetTemplate: {
+          createMany: async ({ data }) => {
+            clonedRowsByLevel.sets = data;
+            return { count: data.length };
           },
         },
         weeklyPlanParent: {
@@ -603,14 +630,29 @@ test('targetSeconds survives cloning a published version into an edit draft', as
               latestPublishedVersion: published,
             }),
         },
-      }),
+      });
+    },
   };
 
   const result = await openOrCreateEditDraft('parent_123', 'user_123');
-  const clonedSet =
-    clonedVersionData.workouts.create[0].blocks.create[0].exercises.create[0]
-      .setTemplates.create[0];
+  const clonedWorkout = clonedRowsByLevel.workouts[0];
+  const clonedBlock = clonedRowsByLevel.blocks[0];
+  const clonedExercise = clonedRowsByLevel.exercises[0];
+  const clonedSet = clonedRowsByLevel.sets[0];
 
+  assert.equal(clonedVersionData.workouts, undefined);
+  assert.deepEqual(transactionOptions, { timeout: 15000 });
+  assert.deepEqual(Object.keys(clonedRowsByLevel).sort(), [
+    'blocks',
+    'exercises',
+    'sets',
+    'workouts',
+  ]);
+  assert.equal(clonedWorkout.weeklyPlanVersionId, cloned.id);
+  assert.equal(clonedWorkout.contentRevision, 1);
+  assert.equal(clonedBlock.weeklyPlanWorkoutId, clonedWorkout.id);
+  assert.equal(clonedExercise.weeklyPlanWorkoutBlockId, clonedBlock.id);
+  assert.equal(clonedSet.weeklyPlanBlockExerciseId, clonedExercise.id);
   assert.equal(clonedSet.targetSeconds, 45);
   assert.equal(
     result.builderPayload.workouts[0].blocks[0].sets[0].targetSeconds,

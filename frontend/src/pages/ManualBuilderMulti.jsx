@@ -337,7 +337,11 @@ export default function ManualBuilderMulti() {
       return undefined;
     }
 
-    if (draftMetadata.loadedFromBackend && draftMetadata.cycleId === cycleId) {
+    if (
+      draftMetadata.loadedFromBackend &&
+      draftMetadata.cycleId === cycleId &&
+      draftMetadata.status === "draft"
+    ) {
       // Already loaded for this cycle -- avoid an unconditional re-fetch on
       // every navigation back into the builder, which used to force-hydrate
       // a possibly-stale snapshot over in-flight/dirty local edits (the
@@ -388,6 +392,7 @@ export default function ManualBuilderMulti() {
     cycleId,
     draftMetadata.cycleId,
     draftMetadata.loadedFromBackend,
+    draftMetadata.status,
     beginHydrationTarget,
     hydrateProgramDraft,
     updateDraftMetadata,

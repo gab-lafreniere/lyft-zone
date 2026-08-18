@@ -234,6 +234,97 @@ describe("ManualProgramProvider workout-scoped autosave", () => {
     jest.useRealTimers();
   });
 
+  test("post-Publish re-entry targets the new Weekly draft for workout and structural saves", async () => {
+    const reopened = buildResponse({
+      versionId: "weekly_draft_2",
+      revision: 20,
+      workoutCount: 1,
+      repsByIndex: [8],
+    });
+    saveWeeklyPlanWorkoutContent.mockImplementation(
+      async (_parentId, _versionId, _workoutId, payload) => ({
+        ...buildWorkoutSaveResponse(payload, {
+          contentRevision: 6,
+          versionRevision: 21,
+          reps: 43,
+        }),
+        versionId: "weekly_draft_2",
+      })
+    );
+    updateWeeklyPlanDraft.mockImplementation(async (_parentId, _versionId, payload) => ({
+      ...buildStructuralResponse(payload, { revision: 22 }),
+      weeklyPlanVersionId: "weekly_draft_2",
+    }));
+    renderProvider(buildResponse({ workoutCount: 1, repsByIndex: [8] }));
+
+    act(() => currentContext.updateDraftMetadata({
+      status: "published",
+      weeklyPlanVersionId: null,
+    }));
+    expect(currentContext.draftMetadata.status).toBe("published");
+    expect(currentContext.draftMetadata.weeklyPlanVersionId).toBeNull();
+
+    act(() => currentContext.beginHydrationTarget({
+      weeklyPlanParentId: "weekly_parent_1",
+      weeklyPlanVersionId: null,
+    }));
+    act(() => currentContext.hydrateProgramDraft(reopened));
+    expect(currentContext.draftMetadata.weeklyPlanVersionId).toBe("weekly_draft_2");
+
+    act(() => currentContext.updateSet("workout_1", "workout_1_block_1", 0, { reps: 43 }));
+    await advanceAutosave();
+    expect(saveWeeklyPlanWorkoutContent).toHaveBeenCalledWith(
+      "weekly_parent_1",
+      "weekly_draft_2",
+      "workout_1",
+      expect.any(Object)
+    );
+
+    act(() => currentContext.updateProgramMeta({ programName: "Reopened Weekly draft" }));
+    await act(async () => currentContext.persistDraftNow());
+    expect(updateWeeklyPlanDraft).toHaveBeenCalledWith(
+      "weekly_parent_1",
+      "weekly_draft_2",
+      expect.any(Object)
+    );
+    expect(saveWeeklyPlanWorkoutContent.mock.calls.some((call) => call[1] === "weekly_version_1"))
+      .toBe(false);
+    expect(updateWeeklyPlanDraft.mock.calls.some((call) => call[1] === "weekly_version_1"))
+      .toBe(false);
+  });
+
+  test("flag OFF post-Publish re-entry sends legacy persistence only to the new Weekly draft", async () => {
+    process.env[FLAG] = "false";
+    const reopened = buildResponse({
+      versionId: "weekly_legacy_draft_2",
+      revision: 30,
+      workoutCount: 1,
+      repsByIndex: [8],
+    });
+    updateWeeklyPlanDraft.mockImplementation(async (_parentId, _versionId, payload) => ({
+      ...buildStructuralResponse(payload, { revision: 31 }),
+      weeklyPlanVersionId: "weekly_legacy_draft_2",
+    }));
+    renderProvider(buildResponse({ workoutCount: 1, repsByIndex: [8] }));
+    act(() => currentContext.updateDraftMetadata({
+      status: "published",
+      weeklyPlanVersionId: null,
+    }));
+    act(() => currentContext.hydrateProgramDraft(reopened, { force: true }));
+
+    act(() => currentContext.updateSet("workout_1", "workout_1_block_1", 0, { reps: 44 }));
+    await advanceAutosave();
+
+    expect(saveWeeklyPlanWorkoutContent).not.toHaveBeenCalled();
+    expect(updateWeeklyPlanDraft).toHaveBeenCalledWith(
+      "weekly_parent_1",
+      "weekly_legacy_draft_2",
+      expect.any(Object)
+    );
+    expect(updateWeeklyPlanDraft.mock.calls.some((call) => call[1] === "weekly_version_1"))
+      .toBe(false);
+  });
+
   test("ten rapid edits coalesce into one latest one-workout request", async () => {
     saveWeeklyPlanWorkoutContent.mockImplementation(async (_parent, _version, _id, payload) =>
       buildWorkoutSaveResponse(payload)

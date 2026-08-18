@@ -136,7 +136,8 @@ export default function ProgramDetails() {
 
     if (
       draftMetadata.loadedFromBackend &&
-      draftMetadata.weeklyPlanParentId === program.weeklyPlanParentId
+      draftMetadata.weeklyPlanParentId === program.weeklyPlanParentId &&
+      draftMetadata.status === "draft"
     ) {
       // Already loaded (e.g. re-clicking Edit on the plan currently open in
       // the builder) -- reuse it instead of an unconditional re-fetch that

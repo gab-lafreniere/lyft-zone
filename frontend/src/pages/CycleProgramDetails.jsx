@@ -95,7 +95,11 @@ export default function CycleProgramDetails() {
   }, [details?.cycle?.durationWeeks, publishedWeeks]);
 
   const handleEdit = async () => {
-    if (draftMetadata.loadedFromBackend && draftMetadata.cycleId === cycleId) {
+    if (
+      draftMetadata.loadedFromBackend &&
+      draftMetadata.cycleId === cycleId &&
+      draftMetadata.status === "draft"
+    ) {
       // Already loaded (e.g. re-clicking Edit on the cycle currently open in
       // the builder) -- reuse it instead of an unconditional re-fetch that
       // could force-hydrate over in-flight/dirty local edits.

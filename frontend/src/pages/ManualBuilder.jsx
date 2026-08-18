@@ -87,6 +87,7 @@ export default function ManualBuilder() {
     updateSessionsPerWeek,
     resetProgramDraft,
     reloadLatestAfterConflict,
+    updateDraftMetadata,
   } = useManualProgram();
   const [showMuscleDistribution, setShowMuscleDistribution] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -441,6 +442,10 @@ export default function ManualBuilder() {
       }
       const weeklyPlanParentId = preparation.metadata.weeklyPlanParentId;
       await publishWeeklyPlanDraft(weeklyPlanParentId);
+      updateDraftMetadata({
+        status: "published",
+        weeklyPlanVersionId: null,
+      });
       navigate(getWeeklyPlanDetailsPath(weeklyPlanParentId), {
         replace: true,
         state: {
@@ -490,6 +495,10 @@ export default function ManualBuilder() {
         return;
       }
       await publishWeeklyPlanDraft(preparation.metadata.weeklyPlanParentId);
+      updateDraftMetadata({
+        status: "published",
+        weeklyPlanVersionId: null,
+      });
       navigate("/program/manual-convert", {
         state: {
           from: `${location.pathname}${location.search || ""}`,

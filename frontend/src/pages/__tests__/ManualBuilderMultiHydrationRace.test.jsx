@@ -1,4 +1,4 @@
-import { act, render } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import ManualBuilderMulti from "../ManualBuilderMulti";
 import { useMultiWeekProgram } from "../../context/MultiWeekProgramContext";
@@ -77,21 +77,16 @@ function createContextValue(overrides = {}) {
   };
 }
 
-async function renderAtCycle(cycleId, contextValue) {
+function renderAtCycle(cycleId, contextValue) {
   useMultiWeekProgram.mockReturnValue(contextValue);
 
-  let renderResult;
-  await act(async () => {
-    renderResult = render(
-      <MemoryRouter initialEntries={[`/program/cycles/${cycleId}/builder`]}>
-        <Routes>
-          <Route path="/program/cycles/:cycleId/builder" element={<ManualBuilderMulti />} />
-        </Routes>
-      </MemoryRouter>
-    );
-  });
-
-  return renderResult;
+  return render(
+    <MemoryRouter initialEntries={[`/program/cycles/${cycleId}/builder`]}>
+      <Routes>
+        <Route path="/program/cycles/:cycleId/builder" element={<ManualBuilderMulti />} />
+      </Routes>
+    </MemoryRouter>
+  );
 }
 
 describe("ManualBuilderMulti mount-effect hydration race (Phase 1B)", () => {
@@ -104,7 +99,7 @@ describe("ManualBuilderMulti mount-effect hydration race (Phase 1B)", () => {
     });
   });
 
-  test("does not re-fetch when the target cycle is already loaded", async () => {
+  test("does not re-fetch when the target cycle is already loaded", () => {
     const contextValue = createContextValue({
       draftMetadata: createDraftMetadata({
         cycleId: "cycle_1",
@@ -113,10 +108,60 @@ describe("ManualBuilderMulti mount-effect hydration race (Phase 1B)", () => {
       }),
     });
 
-    await renderAtCycle("cycle_1", contextValue);
+    renderAtCycle("cycle_1", contextValue);
 
     expect(openOrCreateCycleEditDraft).not.toHaveBeenCalled();
     expect(contextValue.hydrateProgramDraft).not.toHaveBeenCalled();
+  });
+
+  test.each(["upcoming", "active"])(
+    "re-opens a %s cycle when the matching loaded state is published",
+    async (temporalStatus) => {
+      const contextValue = createContextValue({
+        draftMetadata: createDraftMetadata({
+          cycleId: "cycle_1",
+          cyclePlanId: null,
+          status: "published",
+          temporalStatus,
+          loadedFromBackend: true,
+        }),
+      });
+      openOrCreateCycleEditDraft.mockResolvedValueOnce({
+        planId: "plan_new_draft",
+        cycleId: "cycle_1",
+        status: "DRAFT",
+        temporalStatus: temporalStatus.toUpperCase(),
+        builderPayload: { weeks: [] },
+      });
+
+      renderAtCycle("cycle_1", contextValue);
+
+      await waitFor(() => {
+        expect(contextValue.hydrateProgramDraft).toHaveBeenCalledWith(
+          expect.objectContaining({ planId: "plan_new_draft", status: "DRAFT" })
+        );
+      });
+      expect(openOrCreateCycleEditDraft).toHaveBeenCalledWith("cycle_1");
+      expect(contextValue.updateDraftMetadata).toHaveBeenCalledWith({
+        cyclePlanId: "plan_new_draft",
+      });
+    }
+  );
+
+  test("an active editable draft keeps the same-cycle no-fetch navigation guard", () => {
+    const contextValue = createContextValue({
+      draftMetadata: createDraftMetadata({
+        cycleId: "cycle_1",
+        cyclePlanId: "plan_1",
+        status: "draft",
+        temporalStatus: "active",
+        loadedFromBackend: true,
+      }),
+    });
+
+    renderAtCycle("cycle_1", contextValue);
+
+    expect(openOrCreateCycleEditDraft).not.toHaveBeenCalled();
   });
 
   test("fetches on first mount when nothing is loaded yet", async () => {
@@ -124,11 +169,13 @@ describe("ManualBuilderMulti mount-effect hydration race (Phase 1B)", () => {
       draftMetadata: createDraftMetadata({ loadedFromBackend: false }),
     });
 
-    await renderAtCycle("cycle_1", contextValue);
+    renderAtCycle("cycle_1", contextValue);
 
+    await waitFor(() => {
+      expect(contextValue.hydrateProgramDraft).toHaveBeenCalledTimes(1);
+    });
     expect(openOrCreateCycleEditDraft).toHaveBeenCalledTimes(1);
     expect(openOrCreateCycleEditDraft).toHaveBeenCalledWith("cycle_1");
-    expect(contextValue.hydrateProgramDraft).toHaveBeenCalledTimes(1);
   });
 
   test("fetches again when the route points at a different cycle", async () => {
@@ -140,9 +187,11 @@ describe("ManualBuilderMulti mount-effect hydration race (Phase 1B)", () => {
       }),
     });
 
-    await renderAtCycle("cycle_2", contextValue);
+    renderAtCycle("cycle_2", contextValue);
 
+    await waitFor(() => {
+      expect(openOrCreateCycleEditDraft).toHaveBeenCalledWith("cycle_2");
+    });
     expect(openOrCreateCycleEditDraft).toHaveBeenCalledTimes(1);
-    expect(openOrCreateCycleEditDraft).toHaveBeenCalledWith("cycle_2");
   });
 });

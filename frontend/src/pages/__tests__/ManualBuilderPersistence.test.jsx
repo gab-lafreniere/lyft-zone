@@ -67,6 +67,7 @@ function createContextValue(persistDraftNow, preparedDraft) {
     removeWorkouts: jest.fn(),
     updateProgramMeta: jest.fn(),
     updateSessionsPerWeek: jest.fn(),
+    updateDraftMetadata: jest.fn(),
     resetProgramDraft: jest.fn(),
   };
 }
@@ -88,7 +89,8 @@ describe("ManualBuilder explicit persistence", () => {
     "persists the latest draft before %s",
     async (buttonName) => {
       const persistDraftNow = jest.fn().mockResolvedValue({});
-      useManualProgram.mockReturnValue(createContextValue(persistDraftNow));
+      const contextValue = createContextValue(persistDraftNow);
+      useManualProgram.mockReturnValue(contextValue);
       renderBuilder();
 
       fireEvent.click(
@@ -100,6 +102,10 @@ describe("ManualBuilder explicit persistence", () => {
       expect(persistDraftNow.mock.invocationCallOrder[0]).toBeLessThan(
         publishWeeklyPlanDraft.mock.invocationCallOrder[0]
       );
+      expect(contextValue.updateDraftMetadata).toHaveBeenCalledWith({
+        status: "published",
+        weeklyPlanVersionId: null,
+      });
     }
   );
 

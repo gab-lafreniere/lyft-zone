@@ -25,6 +25,10 @@ export function mapMultiWeekDraftToApi(programDraft) {
 
 export function mapCycleBuilderPayload(response) {
   const builderPayload = response?.builderPayload || {};
+  const status = String(response.status || "DRAFT").toLowerCase();
+  const visiblePlanId =
+    response.planId || response.publishedPlanId || response.visiblePlanId || null;
+  const editablePlanId = status === "draft" ? visiblePlanId : null;
   const weeks = (builderPayload.weeks || []).map((week) => ({
     id: week.id,
     weekNumber: week.weekNumber,
@@ -77,7 +81,7 @@ export function mapCycleBuilderPayload(response) {
 
   const programDraft = {
     cycleId: response.cycleId || response.cycle?.id || null,
-    planId: response.planId || response.publishedPlanId || response.visiblePlanId || null,
+    planId: visiblePlanId,
     programName: builderPayload.programName || "",
     sessionsPerWeek: builderPayload.sessionsPerWeek || weeks[0]?.workouts?.length || 0,
     programLength: builderPayload.programLength || weeks.length,
@@ -93,9 +97,9 @@ export function mapCycleBuilderPayload(response) {
   return {
     metadata: {
       cycleId: response.cycleId || response.cycle?.id || null,
-      planId: response.planId || response.publishedPlanId || response.visiblePlanId || null,
-      cyclePlanId: response.planId || response.publishedPlanId || response.visiblePlanId || null,
-      status: String(response.status || "DRAFT").toLowerCase(),
+      planId: editablePlanId,
+      cyclePlanId: editablePlanId,
+      status,
       temporalStatus: String(response.temporalStatus || response.cycle?.temporalStatus || "upcoming").toLowerCase(),
       timezone: response.timezone || response.draftState?.effectiveTimezone || "America/Toronto",
       loadedFromBackend: true,

@@ -394,6 +394,82 @@ describe("Cycle workout-scoped autosave (Phases 4 and 5)", () => {
     jest.useRealTimers();
   });
 
+  test("post-Publish re-entry targets the new draft for workout and structural saves", async () => {
+    const published = buildResponse({ planId: "published_plan" });
+    delete published.planId;
+    published.publishedPlanId = "published_plan";
+    published.status = "PUBLISHED";
+    const reopened = buildResponse({ planId: "new_draft_plan", revision: 20 });
+    saveCycleWorkoutContent.mockImplementation(
+      async (_cycleId, _planId, workoutId, payload) =>
+        buildSaveResponse(reopened, workoutId, payload, {
+          contentRevision: 6,
+          planRevision: 21,
+        })
+    );
+    updateCycleDraft.mockImplementation(async (_cycleId, _planId, payload) =>
+      buildStructuralResponseFromPayload(reopened, payload, { revision: 22 })
+    );
+    renderProvider();
+
+    act(() => currentContext.hydrateProgramDraft(published, { force: true }));
+    expect(currentContext.draftMetadata.status).toBe("published");
+    expect(currentContext.draftMetadata.cyclePlanId).toBeNull();
+
+    act(() => currentContext.beginHydrationTarget({ cycleId: "cycle_1", planId: null }));
+    act(() => currentContext.hydrateProgramDraft(reopened));
+    expect(currentContext.draftMetadata.cyclePlanId).toBe("new_draft_plan");
+    expect(currentContext.draftMetadata.cyclePlanId).not.toBe("published_plan");
+
+    act(() => currentContext.updateSet("workout_1", "workout_1_block", 0, { reps: 41 }));
+    await advanceAutosave();
+    expect(saveCycleWorkoutContent).toHaveBeenCalledWith(
+      "cycle_1",
+      "new_draft_plan",
+      "workout_1",
+      expect.any(Object)
+    );
+
+    act(() => currentContext.updateProgramMeta({ programName: "Reopened draft" }));
+    await act(async () => currentContext.persistDraftNow());
+    expect(updateCycleDraft).toHaveBeenCalledWith(
+      "cycle_1",
+      "new_draft_plan",
+      expect.any(Object)
+    );
+    expect(saveCycleWorkoutContent.mock.calls.some((call) => call[1] === "published_plan"))
+      .toBe(false);
+    expect(updateCycleDraft.mock.calls.some((call) => call[1] === "published_plan"))
+      .toBe(false);
+  });
+
+  test("flag OFF post-Publish re-entry sends legacy persistence only to the new draft", async () => {
+    process.env[FLAG] = "false";
+    const published = buildResponse({ planId: "published_plan" });
+    delete published.planId;
+    published.publishedPlanId = "published_plan";
+    published.status = "PUBLISHED";
+    const reopened = buildResponse({ planId: "new_legacy_draft", revision: 30 });
+    updateCycleDraft.mockImplementation(async (_cycleId, _planId, payload) =>
+      buildStructuralResponseFromPayload(reopened, payload, { revision: 31 })
+    );
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(published, { force: true }));
+    act(() => currentContext.hydrateProgramDraft(reopened, { force: true }));
+
+    act(() => currentContext.updateSet("workout_1", "workout_1_block", 0, { reps: 42 }));
+    await advanceAutosave();
+
+    expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
+    expect(updateCycleDraft).toHaveBeenCalledWith(
+      "cycle_1",
+      "new_legacy_draft",
+      expect.any(Object)
+    );
+    expect(updateCycleDraft.mock.calls.some((call) => call[1] === "published_plan"))
+      .toBe(false);
+  });
+
   test("10 rapid edits dirty only one workout, preserve the sibling reference, and send one latest workout snapshot", async () => {
     const response = buildResponse();
     saveCycleWorkoutContent.mockImplementation(async (_cycleId, _planId, workoutId, payload) =>

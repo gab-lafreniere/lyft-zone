@@ -1132,6 +1132,67 @@ function cloneWorkoutTree(workouts = []) {
   }));
 }
 
+async function persistClonedWeeklyPlanWorkoutTree(
+  tx,
+  weeklyPlanVersionId,
+  workouts = []
+) {
+  // cloneWorkoutTree already minted every persistence PK. Insert one level at
+  // a time so clone cost is bounded to four child statements instead of one
+  // nested INSERT per row; explicit FKs keep every edge inside the new tree.
+  const workoutRows = workouts.map((workout) => ({
+    id: workout.id,
+    weeklyPlanVersionId,
+    name: workout.name,
+    orderIndex: workout.orderIndex,
+    estimatedDurationMinutes: workout.estimatedDurationMinutes ?? null,
+    notes: workout.notes ?? null,
+    contentRevision: 1,
+  }));
+  if (workoutRows.length > 0) {
+    await tx.weeklyPlanWorkout.createMany({ data: workoutRows });
+  }
+
+  const blockRows = workouts.flatMap((workout) =>
+    workout.blocks.map((block) => ({
+      id: block.id,
+      weeklyPlanWorkoutId: workout.id,
+      ...buildWeeklyPlanBlockPersistenceInput(block),
+    }))
+  );
+  if (blockRows.length > 0) {
+    await tx.weeklyPlanWorkoutBlock.createMany({ data: blockRows });
+  }
+
+  const exerciseRows = workouts.flatMap((workout) =>
+    workout.blocks.flatMap((block) =>
+      block.exercises.map((exercise) => ({
+        id: exercise.id,
+        weeklyPlanWorkoutBlockId: block.id,
+        ...buildWeeklyPlanExercisePersistenceInput(exercise),
+      }))
+    )
+  );
+  if (exerciseRows.length > 0) {
+    await tx.weeklyPlanBlockExercise.createMany({ data: exerciseRows });
+  }
+
+  const setTemplateRows = workouts.flatMap((workout) =>
+    workout.blocks.flatMap((block) =>
+      block.exercises.flatMap((exercise) =>
+        exercise.setTemplates.map((setTemplate) => ({
+          id: setTemplate.id,
+          weeklyPlanBlockExerciseId: exercise.id,
+          ...buildWeeklyPlanSetTemplatePersistenceInput(setTemplate),
+        }))
+      )
+    )
+  );
+  if (setTemplateRows.length > 0) {
+    await tx.weeklyPlanExerciseSetTemplate.createMany({ data: setTemplateRows });
+  }
+}
+
 async function openOrCreateEditDraft(weeklyPlanParentId, userId) {
   const prisma = getPrisma();
   const normalizedUserId = normalizeOptionalString(userId);
@@ -1159,6 +1220,7 @@ async function openOrCreateEditDraft(weeklyPlanParentId, userId) {
 
   const clonedParent = await prisma.$transaction(async (tx) => {
     const nextVersionNumber = parent.latestPublishedVersion.versionNumber + 1;
+    const clonedWorkouts = cloneWorkoutTree(parent.latestPublishedVersion.workouts);
     const clonedVersion = await tx.weeklyPlanVersion.create({
       data: {
         weeklyPlanParentId: parent.id,
@@ -1167,12 +1229,9 @@ async function openOrCreateEditDraft(weeklyPlanParentId, userId) {
         name: parent.latestPublishedVersion.name,
         sessionsPerWeek: parent.latestPublishedVersion.sessionsPerWeek,
         status: 'DRAFT',
-        workouts: {
-          create: toWorkoutCreateInput(cloneWorkoutTree(parent.latestPublishedVersion.workouts)),
-        },
       },
-      include: weeklyPlanVersionInclude,
     });
+    await persistClonedWeeklyPlanWorkoutTree(tx, clonedVersion.id, clonedWorkouts);
 
     await tx.weeklyPlanParent.update({
       where: { id: parent.id },
@@ -1185,6 +1244,8 @@ async function openOrCreateEditDraft(weeklyPlanParentId, userId) {
       where: { id: parent.id },
       include: weeklyPlanParentInclude(normalizedUserId),
     });
+  }, {
+    timeout: 15000,
   });
 
   return mapVersionToBuilderPayload(clonedParent, clonedParent.latestDraftVersion);
