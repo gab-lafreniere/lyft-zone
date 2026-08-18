@@ -344,7 +344,11 @@ async function applyWorkoutFinalState(
     }
 
     if (updateEntry.blockChanged) {
-      await adapter.replaceBlocks(entry.existingWorkout.id, incomingWorkout.blocks);
+      await adapter.replaceBlocks(
+        entry.existingWorkout.id,
+        incomingWorkout.blocks,
+        entry.existingWorkout.blocks
+      );
     }
   }
 }

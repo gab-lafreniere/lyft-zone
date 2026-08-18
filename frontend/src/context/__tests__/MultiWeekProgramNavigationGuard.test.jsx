@@ -24,6 +24,7 @@ function buildResponse({
   planId = "plan_1",
   reps = 8,
   updatedAt = "2026-08-16T12:00:00.000Z",
+  blocks = null,
 } = {}) {
   return {
     cycleId,
@@ -58,7 +59,7 @@ function buildResponse({
               name: "Day 1",
               orderIndex: 1,
               scheduledDay: null,
-              blocks: [
+              blocks: blocks || [
                 {
                   id: "block_1",
                   type: "single",
@@ -184,6 +185,45 @@ describe("MultiWeekProgramProvider navigation/hydration guard (Phase 1B)", () =>
 
     expect(screen.getByTestId("cycle-id")).toHaveTextContent("cycle_2");
     expect(screen.getByTestId("reps")).toHaveTextContent("20");
+  });
+
+  test("a clamped no-op superset count does not add round-count edit intent", () => {
+    const createSuperset = (id, count) => ({
+      id,
+      type: "superset",
+      sets: count,
+      rest: "120s",
+      exercises: ["A1", "A2"].map((label) => ({
+        label,
+        name: label === "A1" ? "Incline Press" : "Cable Row",
+        exerciseId: label === "A1" ? "exercise_1" : "exercise_2",
+        tempo: "3010",
+        sets: Array.from({ length: count }, () => ({ reps: 10, rpe: 2 })),
+        notes: "",
+      })),
+    });
+
+    renderProvider();
+    act(() =>
+      currentContext.hydrateProgramDraft(
+        buildResponse({
+          blocks: [
+            createSuperset("superset_floor", 1),
+            createSuperset("superset_ceiling", 10),
+          ],
+        })
+      )
+    );
+    act(() => {
+      currentContext.updateSupersetSetCount("workout_1", "superset_floor", 0);
+      currentContext.updateSupersetSetCount("workout_1", "superset_ceiling", 11);
+    });
+
+    const [floorBlock, ceilingBlock] = currentContext.programDraft.workouts[0].blocks;
+    expect(floorBlock.sets).toBe(1);
+    expect(floorBlock.editIntent).toBeUndefined();
+    expect(ceilingBlock.sets).toBe(10);
+    expect(ceilingBlock.editIntent).toBeUndefined();
   });
 
   test("a rejected save still attempts a coalesced follow-up, and awaiting persistDraftNow() resolves only once the follow-up settles", async () => {

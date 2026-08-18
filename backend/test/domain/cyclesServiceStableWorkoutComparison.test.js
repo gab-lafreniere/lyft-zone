@@ -322,6 +322,10 @@ function createPrismaMock(draft) {
     calls.writeOperations.push({ operation, args });
     return {};
   };
+  const recordCreateManyAndReturn = (operation, prefix) => async (args) => {
+    calls.writeOperations.push({ operation, args });
+    return args.data.map((entry, index) => ({ ...entry, id: `${prefix}_${index + 1}` }));
+  };
   const tx = {
     trainingCycle: {
       findFirst: async () => cycle,
@@ -349,6 +353,27 @@ function createPrismaMock(draft) {
     },
     workoutBlock: {
       deleteMany: recordWrite('workoutBlock.deleteMany'),
+      updateMany: recordWrite('workoutBlock.updateMany'),
+      update: recordWrite('workoutBlock.update'),
+      createManyAndReturn: recordCreateManyAndReturn(
+        'workoutBlock.createManyAndReturn',
+        'created_block'
+      ),
+    },
+    blockExercise: {
+      deleteMany: recordWrite('blockExercise.deleteMany'),
+      updateMany: recordWrite('blockExercise.updateMany'),
+      update: recordWrite('blockExercise.update'),
+      createManyAndReturn: recordCreateManyAndReturn(
+        'blockExercise.createManyAndReturn',
+        'created_exercise'
+      ),
+    },
+    exerciseSetTemplate: {
+      deleteMany: recordWrite('exerciseSetTemplate.deleteMany'),
+      updateMany: recordWrite('exerciseSetTemplate.updateMany'),
+      update: recordWrite('exerciseSetTemplate.update'),
+      createMany: recordWrite('exerciseSetTemplate.createMany'),
     },
     scheduledSession: {
       findFirst: async () => null,
@@ -472,8 +497,8 @@ test('active six-week draft accepts a future-only W3/O1 addition when past cardi
   assert.ok(
     mock.calls.writeOperations.some(
       (call) =>
-        call.operation === 'workoutBlock.deleteMany' &&
-        call.args.where.workoutId === 'workout_w3_o1'
+        call.operation === 'workoutBlock.createManyAndReturn' &&
+        call.args.data[0].workoutId === 'workout_w3_o1'
     )
   );
 });

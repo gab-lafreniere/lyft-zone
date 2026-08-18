@@ -19,6 +19,10 @@ const {
   applyWorkoutFinalState,
 } = require('./draftDocumentDiff');
 const {
+  toCycleBuilderWorkout,
+} = require('./draftBuilderPersistence');
+const { patchWorkoutBlockTree } = require('./workoutTreePersistence');
+const {
   DEFAULT_TIMEZONE,
   addDays,
   compareDateKeys,
@@ -1049,95 +1053,6 @@ function getWeekSessionsPerWeek(week) {
   return Array.isArray(week?.workouts) ? week.workouts.length : 0;
 }
 
-function toBuilderExercise(exercise, index) {
-  const setTemplates = Array.isArray(exercise.setTemplates) ? exercise.setTemplates : [];
-
-  return {
-    id: exercise.id,
-    label: `A${index + 1}`,
-    name: exercise.exerciseName || exercise.exercise?.name || '',
-    exerciseId: exercise.exerciseId,
-    bodyParts: Array.isArray(exercise.bodyParts) ? exercise.bodyParts : [],
-    muscleFocus: Array.isArray(exercise.muscleFocus) ? exercise.muscleFocus : [],
-    tempo: exercise.defaultTempo || setTemplates[0]?.tempo || '3010',
-    sets: setTemplates.map((setTemplate) => ({
-      id: setTemplate.id,
-      reps:
-        setTemplate.targetReps ??
-        setTemplate.maxReps ??
-        setTemplate.minReps ??
-        8,
-      rpe: Number(setTemplate.targetRir ?? 2),
-    })),
-    notes: exercise.notes || exercise.executionNotes || '',
-  };
-}
-
-function toBuilderBlock(block) {
-  if (block.blockType === 'CARDIO') {
-    const cardioExercise = block.exercises[0];
-
-    return {
-      id: block.id,
-      type: 'cardio',
-      exercise: cardioExercise?.exerciseName || cardioExercise?.exercise?.name || '',
-      exerciseId: cardioExercise?.exerciseId || null,
-      cardioPrescription: cardioExercise?.cardioPrescription || null,
-      notes: block.notes || cardioExercise?.notes || '',
-    };
-  }
-
-  if (block.blockType === 'SUPERSET') {
-    const exercises = block.exercises.map(toBuilderExercise);
-
-    return {
-      id: block.id,
-      type: 'superset',
-      sets: Math.max(1, exercises[0]?.sets?.length || block.roundCount || 1),
-      rest: `${block.restSeconds || 120}s`,
-      exercises,
-      notes: block.notes || '',
-    };
-  }
-
-  const singleExercise = block.exercises[0];
-
-  return {
-    id: block.id,
-    type: 'single',
-    exercise: singleExercise?.exerciseName || singleExercise?.exercise?.name || '',
-    exerciseId: singleExercise?.exerciseId || null,
-    bodyParts: Array.isArray(singleExercise?.bodyParts) ? singleExercise.bodyParts : [],
-    muscleFocus: Array.isArray(singleExercise?.muscleFocus) ? singleExercise.muscleFocus : [],
-    tempo: singleExercise?.defaultTempo || singleExercise?.setTemplates?.[0]?.tempo || '3010',
-    rest: `${block.restSeconds || singleExercise?.defaultRestSeconds || 120}s`,
-    sets: Array.isArray(singleExercise?.setTemplates)
-      ? singleExercise.setTemplates.map((setTemplate) => ({
-        id: setTemplate.id,
-        reps:
-          setTemplate.targetReps ??
-          setTemplate.maxReps ??
-          setTemplate.minReps ??
-          8,
-        rpe: Number(setTemplate.targetRir ?? 2),
-      }))
-      : [],
-    notes: block.notes || singleExercise?.notes || '',
-  };
-}
-
-function toBuilderWorkout(workout) {
-  return {
-    id: workout.id,
-    name: workout.name,
-    orderIndex: workout.orderIndex,
-    scheduledDay: workout.scheduledDay,
-    estimatedDurationMinutes: workout.estimatedDurationMinutes,
-    notes: workout.notes,
-    blocks: workout.blocks.map(toBuilderBlock),
-  };
-}
-
 function buildCycleBuilderPayload(cycle, plan) {
   const serializedPlan = serializePlan(plan);
   const timeline = resolvePlanTimeline(cycle, plan);
@@ -1156,7 +1071,7 @@ function buildCycleBuilderPayload(cycle, plan) {
       orderIndex: week.orderIndex,
       label: week.label || `Week ${week.weekNumber}`,
       notes: week.notes || '',
-      workouts: week.workouts.map(toBuilderWorkout),
+      workouts: week.workouts.map(toCycleBuilderWorkout),
     })),
   };
 }
@@ -1557,6 +1472,50 @@ function buildWorkoutBlockScalarCreateInput(block) {
   };
 }
 
+function buildSetTemplateScalarPersistenceInput(setTemplate) {
+  return {
+    setIndex: setTemplate.setIndex,
+    setType: setTemplate.setType || 'WORKING',
+    targetReps: setTemplate.targetReps ?? null,
+    minReps: setTemplate.minReps ?? null,
+    maxReps: setTemplate.maxReps ?? null,
+    targetSeconds: setTemplate.targetSeconds ?? null,
+    targetRir: setTemplate.targetRir ?? null,
+    targetRpe: setTemplate.targetRpe ?? null,
+    tempo: setTemplate.tempo ?? null,
+    restSeconds: setTemplate.restSeconds ?? null,
+    notes: setTemplate.notes ?? null,
+  };
+}
+
+function buildBlockExerciseScalarPersistenceInput(exercise) {
+  return {
+    exerciseId: exercise.exerciseId,
+    orderIndex: exercise.orderIndex,
+    executionNotes: exercise.executionNotes ?? null,
+    defaultTempo: exercise.defaultTempo ?? null,
+    defaultRestSeconds: exercise.defaultRestSeconds ?? null,
+    defaultTargetRir: exercise.defaultTargetRir ?? null,
+    defaultTargetRpe: exercise.defaultTargetRpe ?? null,
+    intensificationMethod: exercise.intensificationMethod || null,
+    cardioPrescription:
+      exercise.cardioPrescription == null ? Prisma.DbNull : exercise.cardioPrescription,
+    notes: exercise.notes ?? null,
+  };
+}
+
+function buildWorkoutBlockScalarPersistenceInput(block) {
+  return {
+    orderIndex: block.orderIndex,
+    blockType: block.blockType,
+    label: block.label ?? null,
+    roundCount: block.roundCount ?? null,
+    restStrategy: block.restStrategy ?? null,
+    restSeconds: block.restSeconds ?? null,
+    notes: block.notes ?? null,
+  };
+}
+
 function buildWorkoutBlocksCreateInput(blocks = []) {
   return blocks.map((block) => ({
     ...buildWorkoutBlockScalarCreateInput(block),
@@ -1745,24 +1704,20 @@ function diffCycleDraft(currentDraftDocument, incomingDocument) {
   };
 }
 
-async function replaceWorkoutBlocks(tx, workoutId, blocks) {
-  await tx.workoutBlock.deleteMany({
-    where: {
-      workoutId,
-    },
-  });
-
-  if (!blocks.length) {
-    return;
-  }
-
-  await tx.workout.update({
-    where: { id: workoutId },
-    data: {
-      blocks: {
-        create: buildWorkoutBlocksCreateInput(blocks),
-      },
-    },
+async function replaceWorkoutBlocks(tx, workoutId, blocks, existingBlocks) {
+  await patchWorkoutBlockTree({
+    workoutId,
+    existingBlocks,
+    incomingBlocks: blocks,
+    blockModel: tx.workoutBlock,
+    exerciseModel: tx.blockExercise,
+    setModel: tx.exerciseSetTemplate,
+    blockParentField: 'workoutId',
+    exerciseParentField: 'workoutBlockId',
+    setParentField: 'blockExerciseId',
+    buildBlockScalarData: buildWorkoutBlockScalarPersistenceInput,
+    buildExerciseScalarData: buildBlockExerciseScalarPersistenceInput,
+    buildSetScalarData: buildSetTemplateScalarPersistenceInput,
   });
 }
 
@@ -1850,8 +1805,8 @@ function buildCycleWorkoutAdapter(tx) {
         where: { id: { in: workoutIds } },
       });
     },
-    async replaceBlocks(workoutId, blocks) {
-      await replaceWorkoutBlocks(tx, workoutId, blocks);
+    async replaceBlocks(workoutId, blocks, existingBlocks) {
+      await replaceWorkoutBlocks(tx, workoutId, blocks, existingBlocks);
     },
   };
 }

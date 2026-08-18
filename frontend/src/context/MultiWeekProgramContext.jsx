@@ -47,6 +47,46 @@ function normalizeSetUpdates(updates = {}) {
   return nextUpdates;
 }
 
+function applySetUpdatesWithIntent(set, updates) {
+  const editIntent = { ...(set.editIntent || {}) };
+
+  if (Object.prototype.hasOwnProperty.call(updates, "reps") && updates.reps !== set.reps) {
+    editIntent.reps = true;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "rpe") && updates.rpe !== set.rpe) {
+    editIntent.rir = true;
+  }
+
+  return { ...set, ...updates, editIntent };
+}
+
+function applyBlockUpdatesWithIntent(block, updates) {
+  const editIntent = { ...(block.editIntent || {}) };
+
+  ["tempo", "rest", "notes", "cardioPrescription"].forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(updates, field) && updates[field] !== block[field]) {
+      editIntent[field] = true;
+    }
+  });
+
+  return { ...block, ...updates, editIntent };
+}
+
+function applyExerciseUpdatesWithIntent(exercise, updates) {
+  const editIntent = { ...(exercise.editIntent || {}) };
+
+  ["tempo", "notes"].forEach((field) => {
+    if (
+      Object.prototype.hasOwnProperty.call(updates, field) &&
+      updates[field] !== exercise[field]
+    ) {
+      editIntent[field] = true;
+    }
+  });
+
+  return { ...exercise, ...updates, editIntent };
+}
+
 function createId(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -195,21 +235,39 @@ function cloneWorkoutForDuplicate(workout, name = workout.name) {
     ...workout,
     id: createId("workout"),
     name,
+    persistence: undefined,
     blocks: (workout.blocks || []).map((block) => ({
       ...block,
       id: createId("block"),
       uiKey: createBlockUiKey(),
+      persistence: undefined,
+      exerciseRowId: undefined,
+      exercisePersistence: undefined,
+      editIntent: undefined,
       exercises:
         block.type === "superset"
           ? (block.exercises || []).map((exercise) => ({
             ...exercise,
+            id: undefined,
+            persistence: undefined,
+            editIntent: undefined,
             sets: Array.isArray(exercise.sets)
-              ? exercise.sets.map((set) => ({ ...set }))
+              ? exercise.sets.map((set) => ({
+                ...set,
+                id: undefined,
+                persistence: undefined,
+                editIntent: undefined,
+              }))
               : [],
           }))
           : block.exercises,
       sets: Array.isArray(block.sets)
-        ? block.sets.map((set) => ({ ...set }))
+        ? block.sets.map((set) => ({
+          ...set,
+          id: undefined,
+          persistence: undefined,
+          editIntent: undefined,
+        }))
         : block.sets,
     })),
   };
@@ -1041,7 +1099,9 @@ export function MultiWeekProgramProvider({ children }) {
               ? {
                 ...workout,
                 blocks: workout.blocks.map((block) =>
-                  block.id === blockId ? { ...block, ...updates } : block
+                  block.id === blockId
+                    ? applyBlockUpdatesWithIntent(block, updates)
+                    : block
                 ),
               }
               : workout
@@ -1125,7 +1185,9 @@ export function MultiWeekProgramProvider({ children }) {
                 return normalizeSupersetBlock({
                   ...block,
                   exercises: block.exercises.map((exercise, index) =>
-                    index === exerciseIndex ? { ...exercise, ...updates } : exercise
+                    index === exerciseIndex
+                      ? applyExerciseUpdatesWithIntent(exercise, updates)
+                      : exercise
                   ),
                 });
               }),
@@ -1167,9 +1229,14 @@ export function MultiWeekProgramProvider({ children }) {
                   return block;
                 }
 
+                if (Number(block.sets || 1) === safeCount) {
+                  return block;
+                }
+
                 return normalizeSupersetBlock({
                   ...block,
                   sets: safeCount,
+                  editIntent: { ...(block.editIntent || {}), roundCount: true },
                 });
               }),
             };
@@ -1256,6 +1323,7 @@ export function MultiWeekProgramProvider({ children }) {
                 return normalizeSupersetBlock({
                   ...block,
                   sets: (block.sets || 1) + 1,
+                  editIntent: { ...(block.editIntent || {}), roundCount: true },
                 });
               }),
             };
@@ -1312,6 +1380,7 @@ export function MultiWeekProgramProvider({ children }) {
                 return normalizeSupersetBlock({
                   ...block,
                   sets: (block.sets || 1) - 1,
+                  editIntent: { ...(block.editIntent || {}), roundCount: true },
                 });
               }),
             };
@@ -1576,7 +1645,9 @@ export function MultiWeekProgramProvider({ children }) {
                   return {
                     ...block,
                     sets: block.sets.map((set, index) =>
-                      index === setIndex ? { ...set, ...normalizedUpdates } : set
+                      index === setIndex
+                        ? applySetUpdatesWithIntent(set, normalizedUpdates)
+                        : set
                     ),
                   };
                 }
@@ -1590,7 +1661,9 @@ export function MultiWeekProgramProvider({ children }) {
                     ? {
                       ...exercise,
                       sets: exercise.sets.map((set, idx) =>
-                        idx === setIndex ? { ...set, ...normalizedUpdates } : set
+                        idx === setIndex
+                          ? applySetUpdatesWithIntent(set, normalizedUpdates)
+                          : set
                       ),
                     }
                     : exercise
@@ -1679,8 +1752,11 @@ export function MultiWeekProgramProvider({ children }) {
                   type: "superset",
                   sets: Math.max(1, block.sets.length || 1),
                   rest: block.rest,
+                  persistence: block.persistence,
+                  editIntent: { ...(block.editIntent || {}), roundCount: true },
                   exercises: [
                     {
+                      id: block.exerciseRowId,
                       label: "A1",
                       name: block.exercise,
                       exerciseId: block.exerciseId ?? null,
@@ -1689,6 +1765,7 @@ export function MultiWeekProgramProvider({ children }) {
                       tempo: block.tempo,
                       sets: block.sets,
                       notes: block.notes,
+                      persistence: block.exercisePersistence,
                     },
                     createEmptySupersetExercise("A2", Math.max(1, block.sets.length || 1)),
                   ],

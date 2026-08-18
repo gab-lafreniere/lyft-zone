@@ -525,11 +525,26 @@ test('targetSeconds survives AI preflight, create persistence input, and builder
   assert.equal(persistedSet.targetSeconds, 45);
   assert.equal(persistedSet.targetReps, undefined);
   assert.deepEqual(builderSet, {
+    id: 'set_temporal',
     reps: null,
     targetSeconds: 45,
     minReps: null,
     maxReps: null,
     rpe: 2,
+    persistence: {
+      id: 'set_temporal',
+      setIndex: 1,
+      setType: 'WORKING',
+      targetReps: null,
+      minReps: null,
+      maxReps: null,
+      targetSeconds: 45,
+      targetRir: 2,
+      targetRpe: null,
+      tempo: '1010',
+      restSeconds: 60,
+      notes: null,
+    },
   });
 });
 

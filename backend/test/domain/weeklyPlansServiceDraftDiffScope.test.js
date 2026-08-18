@@ -179,6 +179,21 @@ function createHarness(storedVersion, { updateManyResult = { count: 1 } } = {}) 
     },
     weeklyPlanWorkoutBlock: {
       deleteMany: async ({ where }) => { record('weeklyPlanWorkoutBlock', 'deleteMany', { where }); return { count: 0 }; },
+      updateMany: async ({ where, data }) => { record('weeklyPlanWorkoutBlock', 'updateMany', { where, data }); return { count: where.id.in.length }; },
+      update: async ({ where, data }) => { record('weeklyPlanWorkoutBlock', 'update', { where, data }); return { id: where.id, ...data }; },
+      createManyAndReturn: async ({ data }) => { record('weeklyPlanWorkoutBlock', 'createManyAndReturn', { count: data.length }); return data.map((entry, index) => ({ ...entry, id: `wb_${index}` })); },
+    },
+    weeklyPlanBlockExercise: {
+      deleteMany: async ({ where }) => { record('weeklyPlanBlockExercise', 'deleteMany', { where }); return { count: 0 }; },
+      updateMany: async ({ where, data }) => { record('weeklyPlanBlockExercise', 'updateMany', { where, data }); return { count: where.id.in.length }; },
+      update: async ({ where, data }) => { record('weeklyPlanBlockExercise', 'update', { where, data }); return { id: where.id, ...data }; },
+      createManyAndReturn: async ({ data }) => { record('weeklyPlanBlockExercise', 'createManyAndReturn', { count: data.length }); return data.map((entry, index) => ({ ...entry, id: `we_${index}` })); },
+    },
+    weeklyPlanExerciseSetTemplate: {
+      deleteMany: async ({ where }) => { record('weeklyPlanExerciseSetTemplate', 'deleteMany', { where }); return { count: 0 }; },
+      updateMany: async ({ where, data }) => { record('weeklyPlanExerciseSetTemplate', 'updateMany', { where, data }); return { count: where.id.in.length }; },
+      update: async ({ where, data }) => { record('weeklyPlanExerciseSetTemplate', 'update', { where, data }); return { id: where.id, ...data }; },
+      createMany: async ({ data }) => { record('weeklyPlanExerciseSetTemplate', 'createMany', { count: data.length }); return { count: data.length }; },
     },
     weeklyPlanParent: {
       findUnique: async () => {
@@ -250,16 +265,18 @@ test('adding one set writes only the touched workout, not the whole draft', asyn
 
   const writes = mutationWrites(harness.calls);
 
-  // Only the edited workout's blocks may be replaced.
+  // The changed workout is patched at row level; its existing block tree is
+  // never rebuilt.
   const blockDeletes = writes.filter(
     (call) => call.model === 'weeklyPlanWorkoutBlock' && call.op === 'deleteMany'
   );
-  assert.equal(blockDeletes.length, 1, 'exactly one workout may be rebuilt');
-  assert.equal(
-    blockDeletes[0].where?.weeklyPlanWorkoutId,
-    targetWorkout.id,
-    'the rebuilt workout must be the edited one'
+  assert.equal(blockDeletes.length, 0, 'a set addition must not rebuild any block');
+
+  const setCreates = writes.filter(
+    (call) => call.model === 'weeklyPlanExerciseSetTemplate' && call.op === 'createMany'
   );
+  assert.equal(setCreates.length, 1, 'new sets must use one batched create');
+  assert.equal(setCreates[0].count, 1);
 
   const touchedWorkoutIds = new Set(
     writes
@@ -268,8 +285,8 @@ test('adding one set writes only the touched workout, not the whole draft', asyn
   );
   assert.deepEqual(
     [...touchedWorkoutIds],
-    [targetWorkout.id],
-    'no untouched workout may be written'
+    [],
+    'a nested set addition must not write the workout row'
   );
 
   assert.equal(

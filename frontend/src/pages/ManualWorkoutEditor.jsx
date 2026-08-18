@@ -597,9 +597,10 @@ export default function ManualWorkoutEditor() {
       return [];
     }
 
-    return (workout.blocks || []).map((block, blockIndex) =>
-      getBlockUiKey(workout.id, block, blockIndex)
-    );
+    return (workout.blocks || [])
+      .map((block, blockIndex) => ({ block, blockIndex }))
+      .filter(({ block }) => ["single", "superset", "cardio"].includes(block.type))
+      .map(({ block, blockIndex }) => getBlockUiKey(workout.id, block, blockIndex));
   }, [workout]);
 
   useEffect(() => {
@@ -1117,8 +1118,12 @@ export default function ManualWorkoutEditor() {
       return;
     }
 
-    const fromIndex = sortableBlockIds.findIndex((sortableId) => sortableId === activeId);
-    const toIndex = sortableBlockIds.findIndex((sortableId) => sortableId === overId);
+    const fromIndex = (workout.blocks || []).findIndex(
+      (block, blockIndex) => getBlockUiKey(workout.id, block, blockIndex) === activeId
+    );
+    const toIndex = (workout.blocks || []).findIndex(
+      (block, blockIndex) => getBlockUiKey(workout.id, block, blockIndex) === overId
+    );
 
     if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
       return;
@@ -1264,12 +1269,14 @@ export default function ManualWorkoutEditor() {
       draftValue == null ? currentValue : draftValue
     );
 
-    if (exerciseIndex == null) {
-      updateBlock(workoutId, blockId, { tempo: normalizedTempo });
-    } else {
-      updateSupersetExercise(workoutId, blockId, exerciseIndex, {
-        tempo: normalizedTempo,
-      });
+    if (normalizedTempo !== normalizeTempoValue(currentValue)) {
+      if (exerciseIndex == null) {
+        updateBlock(workoutId, blockId, { tempo: normalizedTempo });
+      } else {
+        updateSupersetExercise(workoutId, blockId, exerciseIndex, {
+          tempo: normalizedTempo,
+        });
+      }
     }
 
     setTempoDrafts((prev) => {
@@ -1312,7 +1319,12 @@ export default function ManualWorkoutEditor() {
           ? ""
           : Math.min(100, Number(draftValue));
 
-    updateSet(workoutId, blockId, setIndex, { reps: normalizedValue }, exerciseIndex);
+    const normalizedCurrentValue =
+      currentValue === "" || currentValue == null ? "" : Number(currentValue);
+
+    if (normalizedValue !== normalizedCurrentValue) {
+      updateSet(workoutId, blockId, setIndex, { reps: normalizedValue }, exerciseIndex);
+    }
 
     setRepsDrafts((prev) => {
       const nextDrafts = { ...prev };
@@ -1323,10 +1335,23 @@ export default function ManualWorkoutEditor() {
 
   const updateCardioPrescription = (block, updates) => {
     const currentPrescription = getCardioPrescription(block);
+    const fullPrescription =
+      block.cardioPrescription || block.exercisePersistence?.cardioPrescription || {};
+    const hasMachineSettingsUpdate = Object.prototype.hasOwnProperty.call(
+      updates,
+      "machineSettings"
+    );
+    const hiddenMachineSettings = Array.isArray(fullPrescription.machineSettings)
+      ? fullPrescription.machineSettings.slice(2)
+      : [];
     updateBlock(workout.id, block.id, {
       cardioPrescription: {
+        ...fullPrescription,
         ...currentPrescription,
         ...updates,
+        machineSettings: hasMachineSettingsUpdate
+          ? [...(updates.machineSettings || []), ...hiddenMachineSettings]
+          : fullPrescription.machineSettings || currentPrescription.machineSettings,
       },
     });
   };
@@ -1730,6 +1755,10 @@ export default function ManualWorkoutEditor() {
                 const blockUiKey = getBlockUiKey(workout.id, block, blockIndex);
                 const isCollapsed = openBlockId !== blockUiKey;
                 const isActiveDraggedBlock = activeSortableId === blockUiKey;
+
+                if (!["single", "superset", "cardio"].includes(block.type)) {
+                  return null;
+                }
 
                 if (block.type === "superset") {
                   const isIncompleteSuperset = block.exercises.some(

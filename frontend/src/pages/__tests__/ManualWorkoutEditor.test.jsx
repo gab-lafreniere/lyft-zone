@@ -83,6 +83,19 @@ describe("ManualWorkoutEditor exercise search", () => {
     fetchUserExercisePoolResponse.mockReset();
     fetchUserExercisePoolResponse.mockResolvedValue({ items: [] });
     mockNavigate.mockReset();
+    mockEditableProgram.updateSet.mockReset();
+    mockEditableProgram.programDraft.workouts[0].blocks = [
+      {
+        id: "block_1",
+        type: "single",
+        exerciseId: "ex_saved",
+        exercise: "Saved Incline Press",
+        tempo: "3010",
+        rest: "120s",
+        sets: [],
+        notes: "",
+      },
+    ];
   });
 
   test("requests user exercise pool for selection search", async () => {
@@ -213,5 +226,32 @@ describe("ManualWorkoutEditor exercise search", () => {
 
     expect(screen.getByText("Saved Incline Press")).toBeTruthy();
     await waitFor(() => expect(fetchUserExercisePoolResponse).toHaveBeenCalled());
+  });
+
+  test("does not classify a derived reps value as edited until the value actually changes", async () => {
+    mockEditableProgram.programDraft.workouts[0].blocks[0].sets = [
+      { id: "set_1", reps: 12, rpe: 2 },
+    ];
+
+    render(<ManualWorkoutEditor />);
+    await waitFor(() => expect(fetchUserExercisePoolResponse).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "expand_more" }));
+
+    const repsInput = screen.getByRole("spinbutton");
+    fireEvent.focus(repsInput);
+    fireEvent.blur(repsInput);
+    expect(mockEditableProgram.updateSet).not.toHaveBeenCalled();
+
+    fireEvent.focus(repsInput);
+    fireEvent.change(repsInput, { target: { value: "9" } });
+    fireEvent.blur(repsInput);
+
+    expect(mockEditableProgram.updateSet).toHaveBeenCalledWith(
+      "workout_1",
+      "block_1",
+      0,
+      { reps: 9 },
+      null
+    );
   });
 });

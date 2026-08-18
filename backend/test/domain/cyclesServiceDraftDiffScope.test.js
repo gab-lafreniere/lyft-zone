@@ -307,16 +307,18 @@ test('adding one set writes only the touched workout, not the whole plan', async
     'a set edit must not wipe the plan weeks'
   );
 
-  // Only the edited workout's blocks may be replaced.
+  // The changed workout is patched at row level; its existing block tree is
+  // never rebuilt.
   const blockDeletes = writes.filter(
     (call) => call.model === 'workoutBlock' && call.op === 'deleteMany'
   );
-  assert.equal(blockDeletes.length, 1, 'exactly one workout may be rebuilt');
-  assert.equal(
-    blockDeletes[0].where?.workoutId,
-    targetWorkout.id,
-    'the rebuilt workout must be the edited one'
+  assert.equal(blockDeletes.length, 0, 'a set addition must not rebuild any block');
+
+  const setCreates = writes.filter(
+    (call) => call.model === 'exerciseSetTemplate' && call.op === 'createMany'
   );
+  assert.equal(setCreates.length, 1, 'new sets must use one batched create');
+  assert.equal(setCreates[0].count, 1);
 
   const touchedWorkoutIds = new Set(
     writes
@@ -325,8 +327,8 @@ test('adding one set writes only the touched workout, not the whole plan', async
   );
   assert.deepEqual(
     [...touchedWorkoutIds],
-    [targetWorkout.id],
-    'no untouched workout may be written'
+    [],
+    'a nested set addition must not write the workout row'
   );
 });
 

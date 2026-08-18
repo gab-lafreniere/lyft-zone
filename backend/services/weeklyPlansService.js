@@ -1,4 +1,5 @@
 const { randomUUID } = require('node:crypto');
+const { Prisma } = require('@prisma/client');
 const { getPrisma } = require('../lib/prisma');
 const { ApiError } = require('./usersService');
 const { validateAndNormalizeCardioBlocks } = require('./cardioPrescription');
@@ -12,6 +13,14 @@ const {
   diffWorkoutList,
   applyWorkoutFinalState,
 } = require('./draftDocumentDiff');
+const {
+  toBlockPersistence,
+  toExercisePersistence,
+  toOpaqueBlockPersistence,
+  toSetPersistence,
+  toWorkoutPersistence,
+} = require('./draftBuilderPersistence');
+const { patchWorkoutBlockTree } = require('./workoutTreePersistence');
 
 const WEEKLY_PLAN_SOURCE_TYPES = new Set(['MANUAL', 'AI']);
 const WEEKLY_PLAN_VERSION_STATUSES = new Set([
@@ -514,6 +523,53 @@ function buildWeeklyPlanSetTemplateCreateInput(setTemplate) {
   };
 }
 
+function buildWeeklyPlanSetTemplatePersistenceInput(setTemplate) {
+  return {
+    setIndex: setTemplate.setIndex,
+    setType: setTemplate.setType || 'WORKING',
+    targetReps: setTemplate.targetReps ?? null,
+    minReps: setTemplate.minReps ?? null,
+    maxReps: setTemplate.maxReps ?? null,
+    targetSeconds: setTemplate.targetSeconds ?? null,
+    targetRir: setTemplate.targetRir ?? null,
+    targetRpe: setTemplate.targetRpe ?? null,
+    tempo: setTemplate.tempo ?? null,
+    restSeconds: setTemplate.restSeconds ?? null,
+    notes: setTemplate.notes ?? null,
+  };
+}
+
+function buildWeeklyPlanExercisePersistenceInput(exercise) {
+  return {
+    exerciseId: exercise.exerciseId ?? null,
+    exerciseName: exercise.exerciseName,
+    bodyParts: exercise.bodyParts,
+    muscleFocus: exercise.muscleFocus,
+    orderIndex: exercise.orderIndex,
+    executionNotes: exercise.executionNotes ?? null,
+    defaultTempo: exercise.defaultTempo ?? null,
+    defaultRestSeconds: exercise.defaultRestSeconds ?? null,
+    defaultTargetRir: exercise.defaultTargetRir ?? null,
+    defaultTargetRpe: exercise.defaultTargetRpe ?? null,
+    intensificationMethod: exercise.intensificationMethod || null,
+    cardioPrescription:
+      exercise.cardioPrescription == null ? Prisma.DbNull : exercise.cardioPrescription,
+    notes: exercise.notes ?? null,
+  };
+}
+
+function buildWeeklyPlanBlockPersistenceInput(block) {
+  return {
+    orderIndex: block.orderIndex,
+    blockType: block.blockType,
+    label: block.label ?? null,
+    roundCount: block.roundCount ?? null,
+    restStrategy: block.restStrategy ?? null,
+    restSeconds: block.restSeconds ?? null,
+    notes: block.notes ?? null,
+  };
+}
+
 // Extracted so both toWorkoutCreateInput (whole-document create, e.g.
 // createWeeklyPlan) and the scoped-diff apply adapter's replaceBlocks
 // (updateWeeklyPlanDraft, a single workout's blocks only) can share it --
@@ -638,6 +694,10 @@ function mapVersionToBuilderPayload(parent, version) {
       workouts: version.workouts.map((workout) => ({
         id: workout.id,
         name: workout.name,
+        orderIndex: workout.orderIndex,
+        estimatedDurationMinutes: workout.estimatedDurationMinutes,
+        notes: workout.notes,
+        persistence: toWorkoutPersistence(workout),
         blocks: workout.blocks.map((block) => {
           if (block.blockType === 'CARDIO') {
             const exercise = block.exercises[0];
@@ -647,8 +707,11 @@ function mapVersionToBuilderPayload(parent, version) {
               type: 'cardio',
               exercise: exercise?.exerciseName || '',
               exerciseId: exercise?.exerciseId || null,
+              exerciseRowId: exercise?.id,
               cardioPrescription: exercise?.cardioPrescription || null,
               notes: block.notes || exercise?.notes || '',
+              exercisePersistence: toExercisePersistence(exercise),
+              persistence: toBlockPersistence(block),
             };
           }
 
@@ -661,6 +724,7 @@ function mapVersionToBuilderPayload(parent, version) {
               type: 'single',
               exercise: exercise?.exerciseName || '',
               exerciseId: exercise?.exerciseId || null,
+              exerciseRowId: exercise?.id,
               bodyParts: normalizeStringArray(
                 exercise?.bodyParts ?? exercise?.exercise?.bodyParts ?? []
               ),
@@ -672,6 +736,7 @@ function mapVersionToBuilderPayload(parent, version) {
                 block.restSeconds ?? exercise?.defaultRestSeconds ?? setTemplates[0]?.restSeconds ?? 120
               ) || '120s',
               sets: setTemplates.map((setTemplate) => ({
+                id: setTemplate.id,
                 reps:
                   setTemplate.targetSeconds == null
                     ? getSetReps(setTemplate)
@@ -680,12 +745,26 @@ function mapVersionToBuilderPayload(parent, version) {
                 minReps: setTemplate.minReps ?? null,
                 maxReps: setTemplate.maxReps ?? null,
                 rpe: getSetRir(setTemplate),
+                persistence: toSetPersistence(setTemplate),
               })),
               notes: block.notes || exercise?.notes || '',
+              exercisePersistence: toExercisePersistence(exercise),
+              persistence: toBlockPersistence(block),
+            };
+          }
+
+          if (block.blockType !== 'SUPERSET') {
+            return {
+              id: block.id,
+              type: 'unsupported',
+              persistence: {
+                opaqueBlock: toOpaqueBlockPersistence(block),
+              },
             };
           }
 
           const exercises = block.exercises.map((exercise, index) => ({
+            id: exercise.id,
             label: `A${index + 1}`,
             name: exercise.exerciseName || '',
             exerciseId: exercise.exerciseId || null,
@@ -701,6 +780,7 @@ function mapVersionToBuilderPayload(parent, version) {
               '3010'
             ).replace(/\D/g, '').slice(0, 4),
             sets: exercise.setTemplates.map((setTemplate) => ({
+              id: setTemplate.id,
               reps:
                 setTemplate.targetSeconds == null
                   ? getSetReps(setTemplate)
@@ -709,8 +789,10 @@ function mapVersionToBuilderPayload(parent, version) {
               minReps: setTemplate.minReps ?? null,
               maxReps: setTemplate.maxReps ?? null,
               rpe: getSetRir(setTemplate),
+              persistence: toSetPersistence(setTemplate),
             })),
             notes: exercise.notes || '',
+            persistence: toExercisePersistence(exercise),
           }));
 
           return {
@@ -719,6 +801,8 @@ function mapVersionToBuilderPayload(parent, version) {
             sets: block.roundCount || Math.max(1, exercises[0]?.sets?.length || 1),
             rest: formatRestLabel(block.restSeconds) || '120s',
             exercises,
+            notes: block.notes || '',
+            persistence: toBlockPersistence(block),
           };
         }),
       })),
@@ -1242,22 +1326,20 @@ function buildWeeklyPlanWorkoutAdapter(tx) {
         where: { id: { in: workoutIds } },
       });
     },
-    async replaceBlocks(workoutId, blocks) {
-      await tx.weeklyPlanWorkoutBlock.deleteMany({
-        where: { weeklyPlanWorkoutId: workoutId },
-      });
-
-      if (!blocks.length) {
-        return;
-      }
-
-      await tx.weeklyPlanWorkout.update({
-        where: { id: workoutId },
-        data: {
-          blocks: {
-            create: buildWeeklyPlanBlocksCreateInput(blocks),
-          },
-        },
+    async replaceBlocks(workoutId, blocks, existingBlocks) {
+      await patchWorkoutBlockTree({
+        workoutId,
+        existingBlocks,
+        incomingBlocks: blocks,
+        blockModel: tx.weeklyPlanWorkoutBlock,
+        exerciseModel: tx.weeklyPlanBlockExercise,
+        setModel: tx.weeklyPlanExerciseSetTemplate,
+        blockParentField: 'weeklyPlanWorkoutId',
+        exerciseParentField: 'weeklyPlanWorkoutBlockId',
+        setParentField: 'weeklyPlanBlockExerciseId',
+        buildBlockScalarData: buildWeeklyPlanBlockPersistenceInput,
+        buildExerciseScalarData: buildWeeklyPlanExercisePersistenceInput,
+        buildSetScalarData: buildWeeklyPlanSetTemplatePersistenceInput,
       });
     },
   };
