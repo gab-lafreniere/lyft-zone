@@ -1076,6 +1076,53 @@ export function useCycleWorkoutAutosaveCoordinator({
     waitForStructuralPauseRelease,
   ]);
 
+  const getPersistenceSummary = useCallback(() => {
+    if (!enabled) {
+      return {
+        blockedWorkoutIds: [],
+        pendingStructuralWorkoutIds: [],
+        pendingWorkoutIds: [],
+        structuralPauseActive: false,
+      };
+    }
+
+    const blockedWorkoutIds = [];
+    const pendingStructuralWorkoutIds = [];
+    const pendingWorkoutIds = [];
+
+    stateRef.current.forEach((state, workoutId) => {
+      if (state.status === "conflict" || state.status === "error") {
+        blockedWorkoutIds.push(workoutId);
+      }
+
+      if (
+        state.createdLocallyPendingStructuralSave ||
+        state.removedPendingStructuralSave
+      ) {
+        pendingStructuralWorkoutIds.push(workoutId);
+      }
+
+      if (
+        state.status === "dirty" ||
+        state.status === "debounced" ||
+        state.status === "saving" ||
+        state.pendingFollowUp ||
+        state.inFlightPromise ||
+        state.createdLocallyPendingStructuralSave ||
+        state.removedPendingStructuralSave
+      ) {
+        pendingWorkoutIds.push(workoutId);
+      }
+    });
+
+    return {
+      blockedWorkoutIds,
+      pendingStructuralWorkoutIds,
+      pendingWorkoutIds,
+      structuralPauseActive: workoutDispatchPausedRef.current,
+    };
+  }, [enabled]);
+
   const flushAllWorkouts = useCallback(async () => {
     if (!enabled) {
       return { blockedWorkoutIds: [] };
@@ -1299,6 +1346,7 @@ export function useCycleWorkoutAutosaveCoordinator({
     finishStructuralSave,
     flushAllWorkouts,
     flushWorkout,
+    getPersistenceSummary,
     notifyStructuralMutation,
     persistWorkoutNow,
     prepareStructuralSave,

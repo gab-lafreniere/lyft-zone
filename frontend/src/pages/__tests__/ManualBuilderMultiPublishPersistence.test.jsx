@@ -68,12 +68,17 @@ function createProgramDraft(overrides = {}) {
 }
 
 function createContextValue(persistDraftNow) {
+  const draftMetadata = createDraftMetadata();
   return {
     programDraft: createProgramDraft(),
-    draftMetadata: createDraftMetadata(),
+    draftMetadata,
     hydrateProgramDraft: jest.fn(),
     handleDraftExpired: jest.fn(),
     persistDraftNow,
+    prepareCycleDraftForPublish: jest.fn(async () => {
+      await persistDraftNow();
+      return { status: "ready", metadata: draftMetadata };
+    }),
     flushAllWorkouts: jest.fn(),
     workoutScopedAutosaveEnabled: false,
     setSelectedWeek: jest.fn(),
@@ -121,6 +126,7 @@ describe("ManualBuilderMulti publish persistence (Phase 1B)", () => {
     expect(persistDraftNow.mock.invocationCallOrder[0]).toBeLessThan(
       publishCycleDraft.mock.invocationCallOrder[0]
     );
+    expect(contextValue.prepareCycleDraftForPublish).toHaveBeenCalledTimes(1);
     expect(contextValue.flushAllWorkouts).not.toHaveBeenCalled();
   });
 });

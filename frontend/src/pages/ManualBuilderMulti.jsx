@@ -257,7 +257,7 @@ export default function ManualBuilderMulti() {
     hydrateProgramDraft,
     beginHydrationTarget,
     handleDraftExpired,
-    persistDraftNow,
+    prepareCycleDraftForPublish,
     flushAllWorkouts,
     workoutScopedAutosaveEnabled,
     setSelectedWeek,
@@ -1008,26 +1008,13 @@ export default function ManualBuilderMulti() {
     setPublishError(null);
 
     try {
-      if (workoutScopedAutosaveEnabled) {
-        const {
-          blockedWorkoutIds = [],
-          blockedReason = null,
-        } = await flushAllWorkouts();
-        if (blockedReason || blockedWorkoutIds.length > 0) {
-          throw buildWorkoutAutosaveBlockedError(
-            "publishing",
-            blockedWorkoutIds,
-            blockedReason
-          );
-        }
+      const preparation = await prepareCycleDraftForPublish();
+      if (preparation?.status !== "ready") {
+        return;
       }
 
-      // All current local edits must be durably persisted before publish
-      // begins -- this is a no-op cheaply when nothing is dirty, and closes
-      // the asymmetry with the Weekly Plan builder's publish flow.
-      await persistDraftNow();
       const response = await publishCycleDraft(cycleId, {
-        allowCrossDayDraft: draftMetadata.allowCrossDayDraft,
+        allowCrossDayDraft: preparation.metadata.allowCrossDayDraft,
       });
       hydrateProgramDraft(response, { force: true });
       navigate(getCycleDetailsPath(cycleId), { replace: true });

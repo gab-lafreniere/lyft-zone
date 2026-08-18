@@ -443,6 +443,33 @@ function getCycleSaveErrorPatch(error) {
   };
 }
 
+function buildCyclePublishWorkoutBlockedError(workoutIds, blockedReason = null) {
+  const error = new Error(
+    "Resolve workout autosave conflicts or errors before publishing."
+  );
+  error.code = "WORKOUT_AUTOSAVE_BLOCKED";
+  error.workoutIds = workoutIds;
+  error.blockedReason = blockedReason;
+  return error;
+}
+
+function buildCyclePublishDocumentBlockedError(metadata, fallbackCode) {
+  const error = new Error(
+    metadata?.lastSaveErrorMessage ||
+    "Resolve draft autosave conflicts or errors before publishing."
+  );
+  error.code = metadata?.lastSaveErrorCode || fallbackCode;
+  return error;
+}
+
+function buildCyclePublishNoProgressError() {
+  const error = new Error(
+    "Cycle persistence could not reach a stable state for publishing."
+  );
+  error.code = "CYCLE_PUBLISH_PERSISTENCE_BLOCKED";
+  return error;
+}
+
 function isLockedActiveCycleWorkoutOccurrence({
   draft,
   metadata,
@@ -470,12 +497,22 @@ export function MultiWeekProgramProvider({ children }) {
   const [draftMetadata, setDraftMetadata] = useState(createInitialDraftMetadata);
   const [structuralMutationVersion, setStructuralMutationVersion] = useState(0);
   const draftRecoveryPromiseRef = useRef(null);
+  const draftRecoveryGenerationRef = useRef(0);
   const structuralMutationVersionRef = useRef(0);
   const lastPersistedStructuralMutationVersionRef = useRef(0);
   const workoutCoordinatorRef = useRef(null);
   const workoutScopedAutosaveEnabled = isWorkoutScopedAutosaveEnabled();
   const cycleDocumentMetadataRef = useRef(draftMetadata);
   cycleDocumentMetadataRef.current = draftMetadata;
+
+  const setCoordinatorDraftMetadata = useCallback((updater) => {
+    const currentMetadata = cycleDocumentMetadataRef.current;
+    const nextMetadata = typeof updater === "function"
+      ? updater(currentMetadata)
+      : updater;
+    cycleDocumentMetadataRef.current = nextMetadata;
+    setDraftMetadata(nextMetadata);
+  }, []);
 
   const selectedWeek = useMemo(
     () => multiWeekDraft.weeks.find((week) => week.weekNumber === multiWeekDraft.selectedWeek) || multiWeekDraft.weeks[0] || null,
@@ -511,11 +548,11 @@ export function MultiWeekProgramProvider({ children }) {
     });
     lastPersistedStructuralMutationVersionRef.current =
       structuralMutationVersionRef.current;
-    setDraftMetadata({
+    setCoordinatorDraftMetadata({
       ...createInitialDraftMetadata(),
       ...nextState.metadata,
     });
-  }, []);
+  }, [setCoordinatorDraftMetadata]);
 
   const applyCanonicalCycleResponse = useCallback((response) => {
     const activePlanId = response?.planId || null;
@@ -538,7 +575,7 @@ export function MultiWeekProgramProvider({ children }) {
     });
     lastPersistedStructuralMutationVersionRef.current =
       structuralMutationVersionRef.current;
-    setDraftMetadata((prev) => ({
+    setCoordinatorDraftMetadata((prev) => ({
       ...prev,
       ...nextState.metadata,
       cycleId: nextState.metadata.cycleId,
@@ -548,7 +585,7 @@ export function MultiWeekProgramProvider({ children }) {
       lastSaveErrorMessage: null,
       lastSaveErrorCode: null,
     }));
-  }, []);
+  }, [setCoordinatorDraftMetadata]);
 
   const recoverExpiredDraft = useCallback(async (
     error,
@@ -559,6 +596,8 @@ export function MultiWeekProgramProvider({ children }) {
     if (error?.code !== "DRAFT_EXPIRED") {
       return false;
     }
+
+    draftRecoveryGenerationRef.current += 1;
 
     if (draftRecoveryPromiseRef.current) {
       await draftRecoveryPromiseRef.current;
@@ -743,7 +782,7 @@ export function MultiWeekProgramProvider({ children }) {
   } = useDraftAutosaveCoordinator({
     draft: multiWeekDraft,
     metadata: draftMetadata,
-    setMetadata: setDraftMetadata,
+    setMetadata: setCoordinatorDraftMetadata,
     serializeDraft: mapMultiWeekDraftToApi,
     getCurrentIdentity: getCycleIdentity,
     getResponseIdentity: getCycleResponseIdentity,
@@ -770,6 +809,7 @@ export function MultiWeekProgramProvider({ children }) {
     autosaveTrigger: workoutScopedAutosaveEnabled
       ? structuralMutationVersion
       : multiWeekDraft,
+    cancelDebouncedAutosaveOnPersist: true,
   });
 
   const beginDocumentHydrationTarget = useCallback((identity) => {
@@ -810,6 +850,7 @@ export function MultiWeekProgramProvider({ children }) {
   const {
     flushAllWorkouts,
     flushWorkout,
+    getPersistenceSummary,
     persistWorkoutNow,
     workoutSaveState,
   } = workoutCoordinator;
@@ -819,6 +860,178 @@ export function MultiWeekProgramProvider({ children }) {
     structuralMutationVersionRef.current += 1;
     setStructuralMutationVersion(structuralMutationVersionRef.current);
   }, []);
+
+  const prepareCycleDraftForPublish = useCallback(async () => {
+    const recoveryGenerationAtStart = draftRecoveryGenerationRef.current;
+    let documentPassRequired = !workoutScopedAutosaveEnabled;
+    let genericDocumentRetryAttempted = false;
+
+    const didRecoverDraft = () => (
+      draftRecoveryGenerationRef.current !== recoveryGenerationAtStart
+    );
+    const readState = () => {
+      const metadata = cycleDocumentMetadataRef.current;
+      const workoutSummary = workoutCoordinatorRef.current
+        ?.getPersistenceSummary() || getPersistenceSummary();
+      const hasPendingStructuralMutation = workoutScopedAutosaveEnabled && (
+        structuralMutationVersionRef.current >
+        lastPersistedStructuralMutationVersionRef.current
+      );
+      const hasLegacyDocumentChanges = !workoutScopedAutosaveEnabled && (
+        JSON.stringify(mapMultiWeekDraftToApi(multiWeekDraftRef.current)) !==
+        metadata.lastPersistedSignature
+      );
+
+      return {
+        hasPendingStructuralMutation,
+        hasLegacyDocumentChanges,
+        metadata,
+        workoutSummary,
+      };
+    };
+    const progressKey = (state) => JSON.stringify({
+      documentRevision: state.metadata.revision,
+      documentSaveState: state.metadata.saveState,
+      lastPersistedSignature: state.metadata.lastPersistedSignature,
+      lastPersistedStructuralMutationVersion:
+        lastPersistedStructuralMutationVersionRef.current,
+      pendingStructuralWorkoutIds:
+        state.workoutSummary.pendingStructuralWorkoutIds,
+      pendingWorkoutIds: state.workoutSummary.pendingWorkoutIds,
+      structuralMutationVersion: structuralMutationVersionRef.current,
+      structuralPauseActive: state.workoutSummary.structuralPauseActive,
+    });
+
+    while (true) {
+      const flushResult = await flushAllWorkouts();
+      if (didRecoverDraft()) {
+        return { status: "aborted", reason: "DRAFT_EXPIRED" };
+      }
+
+      if (flushResult.blockedReason === "DOCUMENT_CONFLICT") {
+        throw buildCyclePublishDocumentBlockedError(
+          cycleDocumentMetadataRef.current,
+          "DRAFT_REVISION_CONFLICT"
+        );
+      }
+      if (flushResult.blockedReason || flushResult.blockedWorkoutIds.length > 0) {
+        throw buildCyclePublishWorkoutBlockedError(
+          flushResult.blockedWorkoutIds,
+          flushResult.blockedReason || null
+        );
+      }
+
+      let currentState = readState();
+      if (currentState.workoutSummary.blockedWorkoutIds.length > 0) {
+        throw buildCyclePublishWorkoutBlockedError(
+          currentState.workoutSummary.blockedWorkoutIds
+        );
+      }
+      if (currentState.metadata.saveState === "conflict") {
+        throw buildCyclePublishDocumentBlockedError(
+          currentState.metadata,
+          "DRAFT_REVISION_CONFLICT"
+        );
+      }
+      if (
+        currentState.metadata.saveState === "error" &&
+        genericDocumentRetryAttempted
+      ) {
+        throw buildCyclePublishDocumentBlockedError(
+          currentState.metadata,
+          "CYCLE_DRAFT_SAVE_FAILED"
+        );
+      }
+
+      const documentNeedsPersistence =
+        documentPassRequired ||
+        currentState.hasPendingStructuralMutation ||
+        currentState.hasLegacyDocumentChanges ||
+        currentState.metadata.saveState === "dirty" ||
+        currentState.metadata.saveState === "saving" ||
+        currentState.metadata.saveState === "error" ||
+        currentState.workoutSummary.pendingStructuralWorkoutIds.length > 0 ||
+        currentState.workoutSummary.structuralPauseActive;
+
+      if (documentNeedsPersistence) {
+        if (currentState.metadata.saveState === "error") {
+          genericDocumentRetryAttempted = true;
+        }
+
+        const beforeProgressKey = progressKey(currentState);
+        try {
+          await persistDraftNow();
+        } catch (error) {
+          if (didRecoverDraft()) {
+            return { status: "aborted", reason: "DRAFT_EXPIRED" };
+          }
+          throw error;
+        }
+        documentPassRequired = false;
+
+        if (didRecoverDraft()) {
+          return { status: "aborted", reason: "DRAFT_EXPIRED" };
+        }
+
+        currentState = readState();
+        const documentStillNeedsPersistence =
+          currentState.hasPendingStructuralMutation ||
+          currentState.hasLegacyDocumentChanges ||
+          currentState.metadata.saveState === "dirty" ||
+          currentState.metadata.saveState === "saving" ||
+          currentState.workoutSummary.pendingStructuralWorkoutIds.length > 0 ||
+          currentState.workoutSummary.structuralPauseActive;
+        if (
+          documentStillNeedsPersistence &&
+          progressKey(currentState) === beforeProgressKey
+        ) {
+          throw buildCyclePublishNoProgressError();
+        }
+        continue;
+      }
+
+      currentState = readState();
+      if (currentState.metadata.saveState === "conflict") {
+        throw buildCyclePublishDocumentBlockedError(
+          currentState.metadata,
+          "DRAFT_REVISION_CONFLICT"
+        );
+      }
+      if (currentState.metadata.saveState === "error") {
+        throw buildCyclePublishDocumentBlockedError(
+          currentState.metadata,
+          "CYCLE_DRAFT_SAVE_FAILED"
+        );
+      }
+      if (currentState.workoutSummary.blockedWorkoutIds.length > 0) {
+        throw buildCyclePublishWorkoutBlockedError(
+          currentState.workoutSummary.blockedWorkoutIds
+        );
+      }
+      if (
+        currentState.hasPendingStructuralMutation ||
+        currentState.hasLegacyDocumentChanges ||
+        currentState.metadata.saveState === "dirty" ||
+        currentState.metadata.saveState === "saving" ||
+        currentState.workoutSummary.pendingWorkoutIds.length > 0 ||
+        currentState.workoutSummary.structuralPauseActive
+      ) {
+        throw buildCyclePublishNoProgressError();
+      }
+
+      return {
+        status: "ready",
+        draft: multiWeekDraftRef.current,
+        metadata: currentState.metadata,
+      };
+    }
+  }, [
+    flushAllWorkouts,
+    getPersistenceSummary,
+    multiWeekDraftRef,
+    persistDraftNow,
+    workoutScopedAutosaveEnabled,
+  ]);
 
   const beginHydrationTarget = useCallback((identity) => {
     const currentMetadata = draftMetadataRef.current;
@@ -1821,6 +2034,7 @@ export function MultiWeekProgramProvider({ children }) {
       beginHydrationTarget,
       handleDraftExpired,
       persistDraftNow,
+      prepareCycleDraftForPublish,
       persistWorkoutNow,
       flushWorkout,
       flushAllWorkouts,
@@ -1863,6 +2077,7 @@ export function MultiWeekProgramProvider({ children }) {
       beginHydrationTarget,
       handleDraftExpired,
       persistDraftNow,
+      prepareCycleDraftForPublish,
       persistWorkoutNow,
       flushWorkout,
       flushAllWorkouts,

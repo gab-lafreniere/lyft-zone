@@ -48,6 +48,7 @@ export function useDraftAutosaveCoordinator({
   onPersistenceSettled,
   shouldAutosave,
   autosaveTrigger = draft,
+  cancelDebouncedAutosaveOnPersist = false,
 }) {
   const draftRef = useRef(draft);
   const metadataRef = useRef(metadata);
@@ -55,6 +56,7 @@ export function useDraftAutosaveCoordinator({
   const latestAppliedSaveRequestIdRef = useRef(0);
   const saveInFlightPromiseRef = useRef(null);
   const pendingSaveRequestedRef = useRef(false);
+  const autosaveTimerRef = useRef(null);
   const loadedIdentityRef = useRef(null);
   const targetIdentityRef = useRef(null);
 
@@ -65,6 +67,13 @@ export function useDraftAutosaveCoordinator({
   useEffect(() => {
     metadataRef.current = metadata;
   }, [metadata]);
+
+  const clearAutosaveTimer = useCallback(() => {
+    if (autosaveTimerRef.current != null) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+  }, []);
 
   const beginHydrationTarget = useCallback((identity) => {
     targetIdentityRef.current = identity;
@@ -118,6 +127,9 @@ export function useDraftAutosaveCoordinator({
     overrideDraft = null,
     overrideIdentity = null
   ) => {
+    if (cancelDebouncedAutosaveOnPersist) {
+      clearAutosaveTimer();
+    }
     const initialMetadata = metadataRef.current;
     const resolvedIdentity = getCurrentIdentity(initialMetadata);
 
@@ -314,6 +326,8 @@ export function useDraftAutosaveCoordinator({
     saveInFlightPromiseRef.current = savePromise;
     return savePromise;
   }, [
+    cancelDebouncedAutosaveOnPersist,
+    clearAutosaveTimer,
     getCurrentIdentity,
     getResponseIdentity,
     getSaveErrorPatch,
@@ -375,12 +389,19 @@ export function useDraftAutosaveCoordinator({
       versionId: currentVersionId,
     };
     const timeoutId = window.setTimeout(() => {
+      autosaveTimerRef.current = null;
       persistDraftNow(draftSnapshot, identitySnapshot).catch((error) => {
         onAutosaveError?.(error, metadataRef.current);
       });
     }, AUTOSAVE_DEBOUNCE_MS);
+    autosaveTimerRef.current = timeoutId;
 
-    return () => window.clearTimeout(timeoutId);
+    return () => {
+      if (autosaveTimerRef.current === timeoutId) {
+        autosaveTimerRef.current = null;
+      }
+      window.clearTimeout(timeoutId);
+    };
   }, [
     currentDocumentId,
     currentVersionId,
@@ -394,6 +415,8 @@ export function useDraftAutosaveCoordinator({
     setMetadata,
     shouldAutosave,
   ]);
+
+  useEffect(() => clearAutosaveTimer, [clearAutosaveTimer]);
 
   return {
     beginHydrationTarget,
