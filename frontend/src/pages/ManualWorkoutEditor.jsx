@@ -1429,12 +1429,12 @@ export default function ManualWorkoutEditor() {
     <div className="-mx-6 min-h-full bg-background-light text-slate-900">
       <header className="sticky top-0 z-40 border-b border-primary/10 bg-background-light/85 backdrop-blur-md">
         <div className="mx-auto max-w-2xl px-4 py-3">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex flex-1 items-center gap-3">
+          <div className="flex min-w-0 items-center justify-between gap-4">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
               <button
                 type="button"
                 onClick={handleBack}
-                className="flex items-center justify-center rounded-full p-2 transition-colors hover:bg-primary/10 select-none"
+                className="flex shrink-0 items-center justify-center rounded-full p-2 transition-colors hover:bg-primary/10 select-none"
                 aria-label="Back"
               >
                 <span className="material-symbols-outlined text-slate-700">
@@ -1442,7 +1442,7 @@ export default function ManualWorkoutEditor() {
                 </span>
               </button>
 
-              <div className="flex-1">
+              <div className="min-w-0 flex-1">
                 {isWorkoutTitleEditing ? (
                   <input
                     ref={workoutTitleInputRef}
@@ -1453,18 +1453,18 @@ export default function ManualWorkoutEditor() {
                     onBlur={() => setIsWorkoutTitleEditing(false)}
                     onKeyDown={handleWorkoutTitleKeyDown}
                     placeholder="Workout Name"
-                    className="w-full border-none bg-transparent p-0 text-lg font-bold text-slate-900 focus:ring-0"
+                    className="min-w-0 w-full border-none bg-transparent p-0 text-lg font-bold text-slate-900 focus:ring-0"
                   />
                 ) : (
-                  <div className="flex items-center gap-2">
-                    <p className="truncate text-lg font-bold text-slate-900">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="min-w-0 flex-1 truncate text-lg font-bold text-slate-900">
                       {workout.name}
                     </p>
                     <button
                       type="button"
                       disabled={isPastWorkoutOccurrenceLocked}
                       onClick={() => setIsWorkoutTitleEditing(true)}
-                      className="rounded-full p-1 text-slate-400 transition-colors hover:bg-primary/10 hover:text-primary select-none disabled:cursor-not-allowed disabled:opacity-40"
+                      className="shrink-0 rounded-full p-1 text-slate-400 transition-colors hover:bg-primary/10 hover:text-primary select-none disabled:cursor-not-allowed disabled:opacity-40"
                       aria-label="Edit workout title"
                     >
                       <span className="material-symbols-outlined text-lg">edit</span>

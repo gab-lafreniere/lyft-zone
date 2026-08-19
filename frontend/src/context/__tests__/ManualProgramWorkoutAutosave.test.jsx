@@ -234,6 +234,31 @@ describe("ManualProgramProvider workout-scoped autosave", () => {
     jest.useRealTimers();
   });
 
+  test("flag ON Settings mutation persists once and adopts the returned revision", async () => {
+    updateWeeklyPlanDraft.mockImplementation(async (_parentId, _versionId, payload) =>
+      buildStructuralResponse(payload, { revision: 11 })
+    );
+    renderProvider(buildResponse({ revision: 10, workoutCount: 2 }));
+
+    act(() => currentContext.updateProgramSettings({
+      programName: "Updated Weekly Settings",
+      sessionsPerWeek: 3,
+    }));
+    await act(async () => currentContext.persistDraftNow());
+
+    expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+    expect(updateWeeklyPlanDraft.mock.calls[0][2]).toEqual(
+      expect.objectContaining({
+        name: "Updated Weekly Settings",
+        sessionsPerWeek: 3,
+        revision: 10,
+      })
+    );
+    expect(currentContext.programDraft.sessionsPerWeek).toBe(3);
+    expect(currentContext.draftMetadata.revision).toBe(11);
+    expect(currentContext.draftMetadata.saveState).toBe("saved");
+  });
+
   test("post-Publish re-entry targets the new Weekly draft for workout and structural saves", async () => {
     const reopened = buildResponse({
       versionId: "weekly_draft_2",

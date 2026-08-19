@@ -23,6 +23,7 @@ function buildResponse({
   cycleId = "cycle_1",
   planId = "plan_1",
   reps = 8,
+  revision = 10,
   updatedAt = "2026-08-16T12:00:00.000Z",
   blocks = null,
 } = {}) {
@@ -30,6 +31,7 @@ function buildResponse({
     cycleId,
     planId,
     status: "DRAFT",
+    revision,
     updatedAt,
     cycle: {
       id: cycleId,
@@ -264,16 +266,25 @@ describe("MultiWeekProgramProvider navigation/hydration guard (Phase 1B)", () =>
     // persistDraftNow() call above must not resolve until that follow-up
     // (which is what's actually still in flight) also settles.
     await act(async () => {
-      firstAttempt.resolve(buildResponse({ reps: 10, updatedAt: "2026-08-16T12:01:00.000Z" }));
+      firstAttempt.resolve(buildResponse({
+        reps: 10,
+        revision: 11,
+        updatedAt: "2026-08-16T12:01:00.000Z",
+      }));
       await Promise.resolve();
       await Promise.resolve();
     });
 
     expect(awaitedResolved).toBe(false);
     expect(updateCycleDraft).toHaveBeenCalledTimes(2);
+    expect(updateCycleDraft.mock.calls[1][2].revision).toBe(11);
 
     await act(async () => {
-      secondAttempt.resolve(buildResponse({ reps: 11, updatedAt: "2026-08-16T12:02:00.000Z" }));
+      secondAttempt.resolve(buildResponse({
+        reps: 11,
+        revision: 12,
+        updatedAt: "2026-08-16T12:02:00.000Z",
+      }));
       await awaitedPromise;
     });
 

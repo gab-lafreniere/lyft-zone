@@ -394,9 +394,8 @@ describe("Cycle workout-scoped autosave (Phases 4 and 5)", () => {
     jest.useRealTimers();
   });
 
-  test("post-Publish re-entry targets the new draft for workout and structural saves", async () => {
+  test("ManualConvert published response re-entry targets the new draft for workout and structural saves", async () => {
     const published = buildResponse({ planId: "published_plan" });
-    delete published.planId;
     published.publishedPlanId = "published_plan";
     published.status = "PUBLISHED";
     const reopened = buildResponse({ planId: "new_draft_plan", revision: 20 });
@@ -443,10 +442,9 @@ describe("Cycle workout-scoped autosave (Phases 4 and 5)", () => {
       .toBe(false);
   });
 
-  test("flag OFF post-Publish re-entry sends legacy persistence only to the new draft", async () => {
+  test("flag OFF ManualConvert response sends legacy persistence only to the new draft", async () => {
     process.env[FLAG] = "false";
     const published = buildResponse({ planId: "published_plan" });
-    delete published.planId;
     published.publishedPlanId = "published_plan";
     published.status = "PUBLISHED";
     const reopened = buildResponse({ planId: "new_legacy_draft", revision: 30 });

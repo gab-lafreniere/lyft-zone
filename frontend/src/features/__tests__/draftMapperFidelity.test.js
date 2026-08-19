@@ -1,4 +1,7 @@
-import { mapMultiWeekDraftToApi } from "../multiWeek/mappers";
+import {
+  mapCycleBuilderPayload,
+  mapMultiWeekDraftToApi,
+} from "../multiWeek/mappers";
 import { mapProgramDraftToWeeklyPlanUpdate } from "../weeklyPlans/mappers";
 
 function createSet(id, overrides = {}) {
@@ -25,6 +28,21 @@ function createSet(id, overrides = {}) {
     persistence,
   };
 }
+
+test("published ManualConvert response cannot claim editable Cycle identity", () => {
+  const mapped = mapCycleBuilderPayload({
+    cycleId: "cycle_new",
+    planId: "published_plan",
+    publishedPlanId: "published_plan",
+    status: "PUBLISHED",
+    builderPayload: { weeks: [] },
+  });
+
+  expect(mapped.programDraft.planId).toBe("published_plan");
+  expect(mapped.metadata.status).toBe("published");
+  expect(mapped.metadata.planId).toBeNull();
+  expect(mapped.metadata.cyclePlanId).toBeNull();
+});
 
 function createExercise(id, setTemplates, overrides = {}) {
   return {

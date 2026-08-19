@@ -11,6 +11,8 @@ jest.mock("../../services/api", () => ({
   updateWeeklyPlanDraft: jest.fn(),
 }));
 
+const WEEKLY_FLAG = "REACT_APP_ENABLE_WEEKLY_WORKOUT_SCOPED_AUTOSAVE";
+
 // Phase 1A regression coverage: the Weekly Plan builder's autosave used to
 // have no in-flight guard at all, so two edits made close together could
 // dispatch two overlapping PATCH requests, and whichever transaction
@@ -23,6 +25,9 @@ function buildResponse({
   weeklyPlanParentId = "weekly_parent_1",
   weeklyPlanVersionId = "weekly_version_1",
   reps = 8,
+  revision = 10,
+  programName = "Weekly Plan",
+  sessionsPerWeek = 1,
   updatedAt = "2026-07-21T12:00:00.000Z",
 } = {}) {
   return {
@@ -30,10 +35,11 @@ function buildResponse({
     weeklyPlanVersionId,
     status: "DRAFT",
     source: "MANUAL",
+    revision,
     updatedAt,
     builderPayload: {
-      programName: "Weekly Plan",
-      sessionsPerWeek: 1,
+      programName,
+      sessionsPerWeek,
       programLength: 8,
       startDate: null,
       endDate: null,
@@ -74,6 +80,8 @@ function ContextProbe() {
       <div data-testid="save-state">{currentContext.draftMetadata.saveState}</div>
       <div data-testid="reps">{String(reps)}</div>
       <div data-testid="program-name">{currentContext.programDraft.programName}</div>
+      <div data-testid="sessions-per-week">{currentContext.programDraft.sessionsPerWeek}</div>
+      <div data-testid="revision">{String(currentContext.draftMetadata.revision)}</div>
       <div data-testid="parent-id">{String(currentContext.draftMetadata.weeklyPlanParentId)}</div>
     </>
   );
@@ -169,7 +177,11 @@ describe("ManualProgramProvider autosave race (Phase 1A)", () => {
     // Settle save A. This should trigger the coalesced follow-up (save B),
     // built from the freshest local snapshot (reps=12), automatically.
     await act(async () => {
-      tracked.deferreds[0].resolve(buildResponse({ reps: 10, updatedAt: "2026-07-21T12:01:00.000Z" }));
+      tracked.deferreds[0].resolve(buildResponse({
+        reps: 10,
+        revision: 11,
+        updatedAt: "2026-07-21T12:01:00.000Z",
+      }));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -180,10 +192,15 @@ describe("ManualProgramProvider autosave race (Phase 1A)", () => {
     expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(2);
     const secondCallPayload = updateWeeklyPlanDraft.mock.calls[1][2];
     expect(secondCallPayload.workouts[0].blocks[0].exercises[0].setTemplates[0].targetReps).toBe(12);
+    expect(secondCallPayload.revision).toBe(11);
 
     // Settle save B.
     await act(async () => {
-      tracked.deferreds[1].resolve(buildResponse({ reps: 12, updatedAt: "2026-07-21T12:02:00.000Z" }));
+      tracked.deferreds[1].resolve(buildResponse({
+        reps: 12,
+        revision: 12,
+        updatedAt: "2026-07-21T12:02:00.000Z",
+      }));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -237,6 +254,93 @@ describe("ManualProgramProvider autosave race (Phase 1A)", () => {
 
     expect(screen.getByTestId("reps")).toHaveTextContent("11");
     expect(screen.getByTestId("save-state")).toHaveTextContent("saved");
+  });
+
+  test("flag-OFF queued follow-up adopts the successful response revision synchronously", async () => {
+    process.env[WEEKLY_FLAG] = "false";
+    const tracked = createTrackedSaveMock();
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(buildResponse({
+      revision: 10,
+      sessionsPerWeek: 2,
+    })));
+
+    act(() => {
+      currentContext.updateProgramSettings({
+        programName: "Updated settings",
+        sessionsPerWeek: 3,
+      });
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(700);
+      await Promise.resolve();
+    });
+    expect(updateWeeklyPlanDraft.mock.calls[0][2].revision).toBe(10);
+
+    act(() => {
+      currentContext.persistDraftNow();
+    });
+
+    await act(async () => {
+      tracked.deferreds[0].resolve(buildResponse({
+        revision: 11,
+        programName: "Updated settings",
+        sessionsPerWeek: 3,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+    expect(currentContext.draftMetadata.revision).toBe(11);
+    expect(screen.getByTestId("program-name")).toHaveTextContent("Updated settings");
+    expect(screen.getByTestId("sessions-per-week")).toHaveTextContent("3");
+    expect(screen.getByTestId("revision")).toHaveTextContent("11");
+
+    act(() => currentContext.updateSet("workout_1", "block_1", 0, { reps: 12 }));
+    await act(async () => {
+      jest.advanceTimersByTime(700);
+      await Promise.resolve();
+    });
+    expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(2);
+    expect(updateWeeklyPlanDraft.mock.calls[1][2].revision).toBe(11);
+
+    await act(async () => {
+      tracked.deferreds[1].resolve(buildResponse({
+        revision: 12,
+        reps: 12,
+        programName: "Updated settings",
+        sessionsPerWeek: 3,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(currentContext.draftMetadata.revision).toBe(12);
+
+    act(() => currentContext.updateProgramSettings({
+      programName: "Renamed settings",
+      sessionsPerWeek: 3,
+    }));
+    await act(async () => {
+      jest.advanceTimersByTime(700);
+      await Promise.resolve();
+    });
+    expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(3);
+    expect(updateWeeklyPlanDraft.mock.calls[2][2].revision).toBe(12);
+
+    await act(async () => {
+      tracked.deferreds[2].resolve(buildResponse({
+        revision: 13,
+        reps: 12,
+        programName: "Renamed settings",
+        sessionsPerWeek: 3,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(currentContext.draftMetadata.saveState).toBe("saved");
+    expect(currentContext.draftMetadata.revision).toBe(13);
   });
 
   test("(c) a hydrate for the same identity while local state is dirty is dropped", async () => {

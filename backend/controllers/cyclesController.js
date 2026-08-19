@@ -95,7 +95,11 @@ async function getOnboardingCycleConflictsHandler(req, res) {
   try {
     const response = await getOnboardingCycleConflicts(
       req.query.userId,
-      req.query.timezone
+      req.query.timezone,
+      {
+        candidateStartDates: req.query.candidateStartDates,
+        durationWeeks: req.query.durationWeeks,
+      }
     );
     return res.status(200).json(response);
   } catch (error) {

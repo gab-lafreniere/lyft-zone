@@ -83,8 +83,7 @@ export default function ManualBuilder() {
     duplicateWorkouts,
     prepareWeeklyPlanDraftForPublish,
     removeWorkouts,
-    updateProgramMeta,
-    updateSessionsPerWeek,
+    updateProgramSettings,
     resetProgramDraft,
     reloadLatestAfterConflict,
     updateDraftMetadata,
@@ -377,8 +376,10 @@ export default function ManualBuilder() {
       return;
     }
 
-    updateProgramMeta({ programName: settingsProgramNameDraft.trim() });
-    updateSessionsPerWeek(settingsSessionsPerWeek);
+    updateProgramSettings({
+      programName: settingsProgramNameDraft.trim(),
+      sessionsPerWeek: settingsSessionsPerWeek,
+    });
     closeSettingsPanel();
   };
 

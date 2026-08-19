@@ -31,6 +31,7 @@ function sameRequestedDocument(a, b) {
 export function useDraftAutosaveCoordinator({
   draft,
   metadata,
+  metadataSourceRef = null,
   setMetadata,
   serializeDraft,
   getCurrentIdentity,
@@ -51,7 +52,8 @@ export function useDraftAutosaveCoordinator({
   cancelDebouncedAutosaveOnPersist = false,
 }) {
   const draftRef = useRef(draft);
-  const metadataRef = useRef(metadata);
+  const internalMetadataRef = useRef(metadata);
+  const metadataRef = metadataSourceRef || internalMetadataRef;
   const saveRequestIdRef = useRef(0);
   const latestAppliedSaveRequestIdRef = useRef(0);
   const saveInFlightPromiseRef = useRef(null);
@@ -66,7 +68,7 @@ export function useDraftAutosaveCoordinator({
 
   useEffect(() => {
     metadataRef.current = metadata;
-  }, [metadata]);
+  }, [metadata, metadataRef]);
 
   const clearAutosaveTimer = useCallback(() => {
     if (autosaveTimerRef.current != null) {
@@ -121,7 +123,7 @@ export function useDraftAutosaveCoordinator({
     loadedIdentityRef.current = responseIdentity;
     targetIdentityRef.current = responseIdentity;
     return true;
-  }, [getResponseIdentity, onHydrate]);
+  }, [getResponseIdentity, metadataRef, onHydrate]);
 
   const persistDraftNow = useCallback(async (
     overrideDraft = null,
@@ -334,6 +336,7 @@ export function useDraftAutosaveCoordinator({
     handleSaveError,
     hydrate,
     isTransientlyPaused,
+    metadataRef,
     onCanonicalSaveResponse,
     onPersistenceSettled,
     onQueuedSaveError,
@@ -409,6 +412,7 @@ export function useDraftAutosaveCoordinator({
     isTransientlyPaused,
     metadata.lastPersistedSignature,
     metadata.loadedFromBackend,
+    metadataRef,
     onAutosaveError,
     persistDraftNow,
     serializeDraft,

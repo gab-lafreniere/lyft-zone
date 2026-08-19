@@ -498,6 +498,23 @@ export async function getOnboardingCycleConflicts() {
   return readJsonResponse(response);
 }
 
+export async function getCycleStartAvailability({
+  candidateStartDates,
+  durationWeeks,
+}) {
+  const userId = await ensureCurrentUserId();
+  const response = await fetch(
+    `${BACKEND_URL}/api/cycles/conflicts?${new URLSearchParams({
+      userId,
+      timezone: getLocalTimezone(),
+      candidateStartDates: (candidateStartDates || []).join(','),
+      durationWeeks: String(durationWeeks),
+    }).toString()}`
+  );
+
+  return readJsonResponse(response);
+}
+
 export async function getProgramsOverview() {
   const userId = await ensureCurrentUserId();
   const response = await fetch(

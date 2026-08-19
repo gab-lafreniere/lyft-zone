@@ -67,6 +67,7 @@ function createContextValue(persistDraftNow, preparedDraft) {
     removeWorkouts: jest.fn(),
     updateProgramMeta: jest.fn(),
     updateSessionsPerWeek: jest.fn(),
+    updateProgramSettings: jest.fn(),
     updateDraftMetadata: jest.fn(),
     resetProgramDraft: jest.fn(),
   };
@@ -150,4 +151,25 @@ describe("ManualBuilder explicit persistence", () => {
       ).toBeEnabled();
     }
   );
+
+  test("Settings Save applies name and sessions as one coherent structural mutation", () => {
+    const contextValue = createContextValue(jest.fn().mockResolvedValue({}));
+    useManualProgram.mockReturnValue(contextValue);
+    renderBuilder();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open plan settings" }));
+    fireEvent.change(screen.getByDisplayValue("Complete Plan"), {
+      target: { value: "Updated Plan" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Increase sessions per week" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(contextValue.updateProgramSettings).toHaveBeenCalledTimes(1);
+    expect(contextValue.updateProgramSettings).toHaveBeenCalledWith({
+      programName: "Updated Plan",
+      sessionsPerWeek: 2,
+    });
+    expect(contextValue.updateProgramMeta).not.toHaveBeenCalled();
+    expect(contextValue.updateSessionsPerWeek).not.toHaveBeenCalled();
+  });
 });

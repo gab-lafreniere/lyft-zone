@@ -609,7 +609,7 @@ export function MultiWeekProgramProvider({ children }) {
     const recoveryFailureMessage = "Unable to recover draft. Please refresh the page.";
 
     if (!resolvedCycleId) {
-      setDraftMetadata((prev) => ({
+      setCoordinatorDraftMetadata((prev) => ({
         ...prev,
         isRecoveringDraft: false,
         recoveryMessage: recoveryFailureMessage,
@@ -621,7 +621,7 @@ export function MultiWeekProgramProvider({ children }) {
     }
 
     const recoveryPromise = (async () => {
-      setDraftMetadata((prev) => ({
+      setCoordinatorDraftMetadata((prev) => ({
         ...prev,
         isRecoveringDraft: true,
         recoveryMessage: "Your draft expired. Reloading latest version...",
@@ -641,7 +641,7 @@ export function MultiWeekProgramProvider({ children }) {
         hydrateRecoveredDraft(response, { force: true });
         return response;
       } catch (recoveryError) {
-        setDraftMetadata((prev) => ({
+        setCoordinatorDraftMetadata((prev) => ({
           ...prev,
           isRecoveringDraft: false,
           recoveryMessage: recoveryFailureMessage,
@@ -658,7 +658,7 @@ export function MultiWeekProgramProvider({ children }) {
     draftRecoveryPromiseRef.current = recoveryPromise;
     await recoveryPromise;
     return true;
-  }, []);
+  }, [setCoordinatorDraftMetadata]);
 
   const persistCycleDocument = useCallback(({ identity, payload, metadata }) => (
     updateCycleDraft(identity.documentId, identity.versionId, {
@@ -712,7 +712,21 @@ export function MultiWeekProgramProvider({ children }) {
 
   const handleSuccessfulCycleDocumentSave = useCallback((response, context) => {
     if (!workoutScopedAutosaveEnabled) {
-      return false;
+      if (!context.hasNewerLocalEdits || context.isOlderThanAppliedResponse) {
+        return false;
+      }
+
+      const nextState = mapCycleBuilderPayload(response);
+      setCoordinatorDraftMetadata((prev) => ({
+        ...prev,
+        ...nextState.metadata,
+        cyclePlanId: response?.planId || nextState.metadata.cyclePlanId,
+        lastSavedAt: response.updatedAt || new Date().toISOString(),
+        saveState: "dirty",
+        lastSaveErrorMessage: null,
+        lastSaveErrorCode: null,
+      }));
+      return true;
     }
 
     const nextState = mapCycleBuilderPayload(response);
@@ -738,10 +752,9 @@ export function MultiWeekProgramProvider({ children }) {
       lastSaveErrorMessage: null,
       lastSaveErrorCode: null,
     };
-    cycleDocumentMetadataRef.current = nextMetadata;
-    setDraftMetadata(nextMetadata);
+    setCoordinatorDraftMetadata(nextMetadata);
     return true;
-  }, [workoutScopedAutosaveEnabled, cycleDocumentMetadataRef]);
+  }, [setCoordinatorDraftMetadata, workoutScopedAutosaveEnabled]);
 
   const handleCycleDocumentPersistenceSettled = useCallback((context) => {
     if (!workoutScopedAutosaveEnabled) {
@@ -782,6 +795,7 @@ export function MultiWeekProgramProvider({ children }) {
   } = useDraftAutosaveCoordinator({
     draft: multiWeekDraft,
     metadata: draftMetadata,
+    metadataSourceRef: cycleDocumentMetadataRef,
     setMetadata: setCoordinatorDraftMetadata,
     serializeDraft: mapMultiWeekDraftToApi,
     getCurrentIdentity: getCycleIdentity,
@@ -797,9 +811,7 @@ export function MultiWeekProgramProvider({ children }) {
     preparePersistence: workoutScopedAutosaveEnabled
       ? prepareCycleDocumentPersistence
       : undefined,
-    onSuccessfulSaveResponse: workoutScopedAutosaveEnabled
-      ? handleSuccessfulCycleDocumentSave
-      : undefined,
+    onSuccessfulSaveResponse: handleSuccessfulCycleDocumentSave,
     onPersistenceSettled: workoutScopedAutosaveEnabled
       ? handleCycleDocumentPersistenceSettled
       : undefined,
@@ -1099,7 +1111,7 @@ export function MultiWeekProgramProvider({ children }) {
       hydrateProgramDraft(response, { force: true });
       return response;
     } catch (reloadError) {
-      setDraftMetadata((prev) => ({
+      setCoordinatorDraftMetadata((prev) => ({
         ...prev,
         saveState: "error",
         lastSaveErrorMessage: reloadError?.message || "Unable to reload draft. Please refresh the page.",
@@ -1107,7 +1119,7 @@ export function MultiWeekProgramProvider({ children }) {
       }));
       return null;
     }
-  }, [draftMetadataRef, hydrateProgramDraft]);
+  }, [draftMetadataRef, hydrateProgramDraft, setCoordinatorDraftMetadata]);
 
   const updateProgramMeta = useCallback((updates = {}) => {
     markStructuralMutation();
@@ -2021,8 +2033,8 @@ export function MultiWeekProgramProvider({ children }) {
   }, [selectedWeek]);
 
   const updateDraftMetadata = useCallback((updates = {}) => {
-    setDraftMetadata((prev) => ({ ...prev, ...updates }));
-  }, []);
+    setCoordinatorDraftMetadata((prev) => ({ ...prev, ...updates }));
+  }, [setCoordinatorDraftMetadata]);
 
   const value = useMemo(
     () => ({

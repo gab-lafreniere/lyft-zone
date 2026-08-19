@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import "@testing-library/jest-dom";
 import ManualWorkoutEditor from "../ManualWorkoutEditor";
 import {
   ensureCurrentUserId,
@@ -84,6 +85,7 @@ describe("ManualWorkoutEditor exercise search", () => {
     fetchUserExercisePoolResponse.mockResolvedValue({ items: [] });
     mockNavigate.mockReset();
     mockEditableProgram.updateSet.mockReset();
+    mockEditableProgram.programDraft.workouts[0].name = "Workout A";
     mockEditableProgram.programDraft.workouts[0].blocks = [
       {
         id: "block_1",
@@ -116,6 +118,22 @@ describe("ManualWorkoutEditor exercise search", () => {
       })
     );
     expect(fetchExercises).not.toHaveBeenCalled();
+  });
+
+  test("long workout title shrinks inside the header while Back and Edit stay usable", async () => {
+    const longTitle =
+      "Upper Body Strength and Conditioning With An Intentionally Very Long Mobile Header Title";
+    mockEditableProgram.programDraft.workouts[0].name = longTitle;
+
+    render(<ManualWorkoutEditor />);
+    await waitFor(() => expect(fetchUserExercisePoolResponse).toHaveBeenCalled());
+
+    const title = screen.getByText(longTitle);
+    expect(title).toHaveClass("min-w-0", "flex-1", "truncate");
+    expect(screen.getByRole("button", { name: "Back" })).toHaveClass("shrink-0");
+    expect(screen.getByRole("button", { name: "Edit workout title" })).toHaveClass(
+      "shrink-0"
+    );
   });
 
   test("passes query and structured filters to user exercise pool search", async () => {

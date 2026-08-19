@@ -527,7 +527,21 @@ export function ManualProgramProvider({ children }) {
 
   const handleSuccessfulWeeklyDocumentSave = useCallback((response, context) => {
     if (!weeklyWorkoutScopedAutosaveEnabled) {
-      return false;
+      if (!context.hasNewerLocalEdits || context.isOlderThanAppliedResponse) {
+        return false;
+      }
+
+      const nextState = mapBuilderPayloadToProgramDraft(response);
+      setCoordinatorDraftMetadata((prev) => ({
+        ...prev,
+        ...nextState.metadata,
+        originRoute: prev.originRoute,
+        lastSavedAt: response.updatedAt || new Date().toISOString(),
+        saveState: "dirty",
+        lastSaveErrorMessage: null,
+        lastSaveErrorCode: null,
+      }));
+      return true;
     }
 
     const nextState = mapBuilderPayloadToProgramDraft(response);
@@ -600,6 +614,7 @@ export function ManualProgramProvider({ children }) {
   } = useDraftAutosaveCoordinator({
     draft: programDraft,
     metadata: draftMetadata,
+    metadataSourceRef: weeklyDocumentMetadataRef,
     setMetadata: setCoordinatorDraftMetadata,
     serializeDraft: mapProgramDraftToWeeklyPlanUpdate,
     getCurrentIdentity: getWeeklyPlanIdentity,
@@ -610,9 +625,7 @@ export function ManualProgramProvider({ children }) {
     preparePersistence: weeklyWorkoutScopedAutosaveEnabled
       ? prepareWeeklyDocumentPersistence
       : undefined,
-    onSuccessfulSaveResponse: weeklyWorkoutScopedAutosaveEnabled
-      ? handleSuccessfulWeeklyDocumentSave
-      : undefined,
+    onSuccessfulSaveResponse: handleSuccessfulWeeklyDocumentSave,
     onPersistenceSettled: weeklyWorkoutScopedAutosaveEnabled
       ? handleWeeklyDocumentPersistenceSettled
       : undefined,
@@ -913,6 +926,36 @@ export function ManualProgramProvider({ children }) {
       return {
         ...prev,
         sessionsPerWeek: safeValue,
+      };
+    });
+  }, [markStructuralMutation]);
+
+  const updateProgramSettings = useCallback((updates = {}) => {
+    markStructuralMutation();
+    setProgramDraft((prev) => {
+      const hasSessionsPerWeek = Object.prototype.hasOwnProperty.call(
+        updates,
+        "sessionsPerWeek"
+      );
+      const safeSessionsPerWeek = clampNumber(
+        Number(hasSessionsPerWeek ? updates.sessionsPerWeek : prev.sessionsPerWeek) || 1,
+        1,
+        7
+      );
+      const nextDraft = {
+        ...prev,
+        ...(Object.prototype.hasOwnProperty.call(updates, "programName")
+          ? { programName: updates.programName }
+          : {}),
+      };
+
+      if (!hasSessionsPerWeek || safeSessionsPerWeek < prev.workouts.length) {
+        return nextDraft;
+      }
+
+      return {
+        ...nextDraft,
+        sessionsPerWeek: safeSessionsPerWeek,
       };
     });
   }, [markStructuralMutation]);
@@ -1481,6 +1524,7 @@ export function ManualProgramProvider({ children }) {
       createProgramDraft,
       updateProgramMeta,
       updateSessionsPerWeek,
+      updateProgramSettings,
       resetProgramDraft,
       addWorkout,
       updateWorkoutName,
@@ -1521,6 +1565,7 @@ export function ManualProgramProvider({ children }) {
       createProgramDraft,
       updateProgramMeta,
       updateSessionsPerWeek,
+      updateProgramSettings,
       resetProgramDraft,
       addWorkout,
       updateWorkoutName,

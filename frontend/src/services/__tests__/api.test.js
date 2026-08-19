@@ -6,6 +6,7 @@ import {
   fetchUserExercisePoolResponse,
   getAIWeeklyPlanGenerationProgress,
   getOnboardingCycleConflicts,
+  getCycleStartAvailability,
   saveCycleWorkoutContent,
   saveWeeklyPlanWorkoutContent,
   updateCycleDraft,
@@ -291,6 +292,27 @@ describe("onboarding cycle APIs", () => {
     expect(url.searchParams.get("userId")).toEqual(expect.any(String));
     expect(url.searchParams.get("timezone")).toBeTruthy();
     expect(result).toBe(responseBody);
+  });
+
+  test("requests batched duration-aware Cycle start availability", async () => {
+    window.localStorage.setItem("lyftZoneUserId", "user_123");
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ durationWeeks: 6, candidates: [] }),
+    });
+
+    await getCycleStartAvailability({
+      candidateStartDates: ["2026-08-24", "2026-10-05"],
+      durationWeeks: 6,
+    });
+
+    const url = new URL(fetch.mock.calls[0][0]);
+    expect(url.pathname).toBe("/api/cycles/conflicts");
+    expect(url.searchParams.get("userId")).toEqual(expect.any(String));
+    expect(url.searchParams.get("candidateStartDates")).toBe(
+      "2026-08-24,2026-10-05"
+    );
+    expect(url.searchParams.get("durationWeeks")).toBe("6");
   });
 
   test("passes the confirmed conflict snapshot to canonical conversion", async () => {

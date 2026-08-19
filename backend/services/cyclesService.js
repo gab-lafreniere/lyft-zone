@@ -49,6 +49,7 @@ const PLAN_SOURCE_TYPES = new Set(['SYSTEM', 'USER', 'AI']);
 const PLAN_STATUSES = new Set(['DRAFT', 'PUBLISHED', 'SUPERSEDED']);
 const MAX_CYCLE_DURATION_WEEKS = 8;
 const ONBOARDING_CYCLE_DURATION_WEEKS = 6;
+const MAX_CONFLICT_CANDIDATE_STARTS = 12;
 const DEFAULT_WORKOUT_DAYS = [
   'MONDAY',
   'TUESDAY',
@@ -2043,10 +2044,115 @@ function buildOnboardingCycleWindow(timezone, now = new Date()) {
   };
 }
 
+function normalizeConflictCandidateStartDates(value) {
+  const candidates = (Array.isArray(value) ? value : [value])
+    .flatMap((entry) => String(entry || '').split(','))
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const uniqueCandidates = [...new Set(candidates)];
+
+  if (uniqueCandidates.length === 0) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'candidateStartDates must include at least one date'
+    );
+  }
+
+  if (uniqueCandidates.length > MAX_CONFLICT_CANDIDATE_STARTS) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      `candidateStartDates cannot include more than ${MAX_CONFLICT_CANDIDATE_STARTS} dates`
+    );
+  }
+
+  return uniqueCandidates;
+}
+
+function buildCycleConflictCandidateWindows(candidateStartDates, durationWeeksInput) {
+  const durationWeeks = normalizeInt(durationWeeksInput, null);
+  if (
+    durationWeeks == null ||
+    durationWeeks < 1 ||
+    durationWeeks > MAX_CYCLE_DURATION_WEEKS
+  ) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      `durationWeeks must be between 1 and ${MAX_CYCLE_DURATION_WEEKS}`
+    );
+  }
+
+  return normalizeConflictCandidateStartDates(candidateStartDates).map((startDate) => {
+    const range = normalizeCanonicalMultiWeekDateRange(startDate, durationWeeks);
+    return {
+      startDate: range.startDateKey,
+      endDate: range.endDateKey,
+      durationWeeks: range.durationWeeks,
+    };
+  });
+}
+
 async function getOnboardingCycleConflicts(userId, requestedTimezone, options = {}) {
   const prisma = options.prisma || getPrisma();
   await assertUserExists(userId, prisma);
   const timezone = String(requestedTimezone || '').trim();
+
+  const hasCandidateQuery =
+    options.candidateStartDates != null || options.durationWeeks != null;
+  if (hasCandidateQuery) {
+    if (!isValidTimeZone(timezone)) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'timezone must be a valid IANA timezone');
+    }
+
+    if (options.candidateStartDates == null || options.durationWeeks == null) {
+      throw new ApiError(
+        400,
+        'VALIDATION_ERROR',
+        'candidateStartDates and durationWeeks must be provided together'
+      );
+    }
+
+    const candidates = buildCycleConflictCandidateWindows(
+      options.candidateStartDates,
+      options.durationWeeks
+    );
+    const spanStartDate = candidates
+      .map((candidate) => candidate.startDate)
+      .sort()[0];
+    const spanEndDate = candidates
+      .map((candidate) => candidate.endDate)
+      .sort()
+      .at(-1);
+    const conflicts = await loadOverlappingCycles(
+      prisma,
+      userId,
+      spanStartDate,
+      spanEndDate
+    );
+
+    return {
+      timezone,
+      durationWeeks: candidates[0].durationWeeks,
+      candidates: candidates.map((candidate) => {
+        const candidateConflicts = findOverlappingCycles(
+          conflicts,
+          candidate.startDate,
+          candidate.endDate
+        );
+        return {
+          startDate: candidate.startDate,
+          endDate: candidate.endDate,
+          hasConflict: candidateConflicts.length > 0,
+          conflicts: candidateConflicts.map((cycle) =>
+            serializeCycleConflict(cycle, timezone)
+          ),
+        };
+      }),
+    };
+  }
+
   const window = buildOnboardingCycleWindow(timezone, options.now || new Date());
   const conflicts = await loadOverlappingCycles(
     prisma,
@@ -4929,6 +5035,7 @@ module.exports = {
     appendPlanWeeks,
     archiveConflictingCycles,
     buildDocumentFromWeeklyVersion,
+    buildCycleConflictCandidateWindows,
     buildOnboardingCycleWindow,
     conflictSnapshotsMatch,
     findOverlappingCycles,

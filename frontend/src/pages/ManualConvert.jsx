@@ -1,9 +1,12 @@
 import { useNavigate } from "react-router-dom";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useManualProgram } from "../context/ManualProgramContext";
 import { useMultiWeekProgram } from "../context/MultiWeekProgramContext";
 import { getCycleBuilderPath } from "../features/multiWeek/routes";
-import { createCycleFromWeeklyPlan } from "../services/api";
+import {
+  createCycleFromWeeklyPlan,
+  getCycleStartAvailability,
+} from "../services/api";
 
 const WEEKDAY_ROWS = [
   { day: "MONDAY", shortLabel: "M", fullLabel: "Monday" },
@@ -257,6 +260,10 @@ export default function ManualConvert() {
   );
   const [submitError, setSubmitError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [availabilityByStartDate, setAvailabilityByStartDate] = useState({});
+  const [availabilityStatus, setAvailabilityStatus] = useState("loading");
+  const [availabilityError, setAvailabilityError] = useState("");
+  const [availabilityRefreshToken, setAvailabilityRefreshToken] = useState(0);
 
   const previewText = useMemo(() => {
     return `This ${programLength}-week program will duplicate your ${sessionsPerWeek}-session weekly template across all weeks.`;
@@ -314,7 +321,70 @@ export default function ManualConvert() {
     [weekPickerMonth]
   );
 
+  useEffect(() => {
+    const candidateStartDates = visibleWeekOptions.map((option) => option.value);
+    if (candidateStartDates.length === 0) {
+      setAvailabilityByStartDate({});
+      setAvailabilityStatus("success");
+      setAvailabilityError("");
+      return undefined;
+    }
+
+    let cancelled = false;
+    setAvailabilityStatus("loading");
+    setAvailabilityError("");
+
+    getCycleStartAvailability({
+      candidateStartDates,
+      durationWeeks: programLength,
+    })
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+
+        const nextAvailability = Object.fromEntries(
+          (response?.candidates || []).map((candidate) => [
+            candidate.startDate,
+            candidate,
+          ])
+        );
+        setAvailabilityByStartDate(nextAvailability);
+        setAvailabilityStatus("success");
+
+        if (startDate && nextAvailability[startDate]?.hasConflict) {
+          setStartDate("");
+          setSubmitError(
+            "Your selected start week overlaps an existing Cycle. Choose another week."
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAvailabilityByStartDate({});
+          setAvailabilityStatus("error");
+          setAvailabilityError(
+            "Unable to check Cycle availability. Retry before choosing a start week."
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [availabilityRefreshToken, programLength, startDate, visibleWeekOptions]);
+
+  const selectedStartAvailability = startDate
+    ? availabilityByStartDate[startDate]
+    : null;
+  const isSelectedStartAvailable = Boolean(
+    startDate &&
+    availabilityStatus === "success" &&
+    selectedStartAvailability?.hasConflict === false
+  );
+
   const handleLengthChange = (weeks) => {
+    setAvailabilityStatus("loading");
     setProgramLength(weeks);
     setSubmitError("");
   };
@@ -325,7 +395,13 @@ export default function ManualConvert() {
   };
 
   const openWeekPicker = () => {
-    setWeekPickerMonth(getStartOfMonthDate(startDate || minStartDate));
+    const targetMonth = getStartOfMonthDate(startDate || minStartDate);
+    setWeekPickerMonth((currentMonth) => (
+      currentMonth.getFullYear() === targetMonth.getFullYear() &&
+      currentMonth.getMonth() === targetMonth.getMonth()
+        ? currentMonth
+        : targetMonth
+    ));
     setIsWeekPickerOpen(true);
   };
 
@@ -334,6 +410,12 @@ export default function ManualConvert() {
   };
 
   const handleSelectWeek = (value) => {
+    if (
+      availabilityStatus !== "success" ||
+      availabilityByStartDate[value]?.hasConflict !== false
+    ) {
+      return;
+    }
     handleStartDateChange(value);
     closeWeekPicker();
   };
@@ -357,6 +439,12 @@ export default function ManualConvert() {
     try {
       if (!startDate) {
         throw new Error("Please choose a valid start date.");
+      }
+
+      if (!isSelectedStartAvailable) {
+        throw new Error(
+          "Choose a start week after Cycle availability has been confirmed."
+        );
       }
 
       if (!isMondayDateInput(startDate)) {
@@ -462,6 +550,25 @@ export default function ManualConvert() {
               <p className="text-xs text-slate-400">
                 Choose a start week. The selected start date remains the Monday of that week.
               </p>
+              {availabilityStatus === "loading" && (
+                <p className="text-xs font-medium text-slate-500" role="status">
+                  Checking Cycle availability...
+                </p>
+              )}
+              {availabilityStatus === "error" && (
+                <div className="flex items-center justify-between gap-3" role="alert">
+                  <p className="text-xs font-medium text-red-500">
+                    {availabilityError}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setAvailabilityRefreshToken((value) => value + 1)}
+                    className="shrink-0 text-xs font-bold text-primary"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col gap-1.5 pt-1">
@@ -614,7 +721,12 @@ export default function ManualConvert() {
           <button
             type="button"
             onClick={handleConvert}
-            disabled={isSubmitting || !draftMetadata.weeklyPlanParentId || Boolean(weekdayAssignmentError)}
+            disabled={
+              isSubmitting ||
+              !draftMetadata.weeklyPlanParentId ||
+              Boolean(weekdayAssignmentError) ||
+              !isSelectedStartAvailable
+            }
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-4 text-lg font-bold text-slate-900 shadow-lg shadow-primary/20 transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSubmitting ? "Creating..." : "Convert to Multi week"}
@@ -679,15 +791,23 @@ export default function ManualConvert() {
               <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-2">
                 {visibleWeekOptions.map((option) => {
                   const isSelected = option.value === startDate;
+                  const optionAvailability = availabilityByStartDate[option.value];
+                  const isUnavailable =
+                    availabilityStatus !== "success" ||
+                    optionAvailability?.hasConflict !== false;
 
                   return (
                     <button
                       key={option.value}
                       type="button"
                       onClick={() => handleSelectWeek(option.value)}
+                      disabled={isUnavailable}
+                      aria-disabled={isUnavailable}
                       className={[
                         "flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition-all",
-                        isSelected
+                        isUnavailable
+                          ? "cursor-not-allowed border-slate-100 bg-slate-50 opacity-60"
+                          : isSelected
                           ? "border-primary bg-primary/5 shadow-sm"
                           : "border-slate-200 bg-white hover:border-slate-300",
                       ].join(" ")}
@@ -697,6 +817,10 @@ export default function ManualConvert() {
                         <p className="mt-1 text-xs text-slate-500">
                           {option.isSelectedOutsideMonth
                             ? "Selected week"
+                            : optionAvailability?.hasConflict
+                              ? "Overlaps an existing Cycle"
+                              : availabilityStatus !== "success"
+                                ? "Checking availability"
                             : option.isCurrentWeek
                               ? "Current week"
                               : option.monthLabel}
