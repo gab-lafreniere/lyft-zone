@@ -259,7 +259,7 @@ describe("ManualProgramProvider workout-scoped autosave", () => {
     expect(currentContext.draftMetadata.saveState).toBe("saved");
   });
 
-  test("post-Publish re-entry targets the new Weekly draft for workout and structural saves", async () => {
+  test("ManualConvert Back re-entry targets the new Weekly draft for workout and structural saves", async () => {
     const reopened = buildResponse({
       versionId: "weekly_draft_2",
       revision: 20,
@@ -294,6 +294,7 @@ describe("ManualProgramProvider workout-scoped autosave", () => {
       weeklyPlanVersionId: null,
     }));
     act(() => currentContext.hydrateProgramDraft(reopened));
+    expect(currentContext.draftMetadata.status).toBe("draft");
     expect(currentContext.draftMetadata.weeklyPlanVersionId).toBe("weekly_draft_2");
 
     act(() => currentContext.updateSet("workout_1", "workout_1_block_1", 0, { reps: 43 }));
@@ -318,7 +319,7 @@ describe("ManualProgramProvider workout-scoped autosave", () => {
       .toBe(false);
   });
 
-  test("flag OFF post-Publish re-entry sends legacy persistence only to the new Weekly draft", async () => {
+  test("flag OFF ManualConvert Back re-entry sends all persistence only to the new Weekly draft", async () => {
     process.env[FLAG] = "false";
     const reopened = buildResponse({
       versionId: "weekly_legacy_draft_2",
@@ -335,7 +336,13 @@ describe("ManualProgramProvider workout-scoped autosave", () => {
       status: "published",
       weeklyPlanVersionId: null,
     }));
-    act(() => currentContext.hydrateProgramDraft(reopened, { force: true }));
+    act(() => currentContext.beginHydrationTarget({
+      weeklyPlanParentId: "weekly_parent_1",
+      weeklyPlanVersionId: null,
+    }));
+    act(() => currentContext.hydrateProgramDraft(reopened));
+    expect(currentContext.draftMetadata.status).toBe("draft");
+    expect(currentContext.draftMetadata.weeklyPlanVersionId).toBe("weekly_legacy_draft_2");
 
     act(() => currentContext.updateSet("workout_1", "workout_1_block_1", 0, { reps: 44 }));
     await advanceAutosave();
@@ -346,6 +353,11 @@ describe("ManualProgramProvider workout-scoped autosave", () => {
       "weekly_legacy_draft_2",
       expect.any(Object)
     );
+
+    act(() => currentContext.updateProgramMeta({ programName: "Legacy reopened draft" }));
+    await advanceAutosave();
+    expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(2);
+    expect(updateWeeklyPlanDraft.mock.calls[1][1]).toBe("weekly_legacy_draft_2");
     expect(updateWeeklyPlanDraft.mock.calls.some((call) => call[1] === "weekly_version_1"))
       .toBe(false);
   });

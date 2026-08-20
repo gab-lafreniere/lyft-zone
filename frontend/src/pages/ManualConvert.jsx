@@ -1,12 +1,21 @@
 import { useNavigate } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useManualProgram } from "../context/ManualProgramContext";
 import { useMultiWeekProgram } from "../context/MultiWeekProgramContext";
 import { getCycleBuilderPath } from "../features/multiWeek/routes";
+import { getManualBuilderPath } from "../features/weeklyPlans/routes";
 import {
   createCycleFromWeeklyPlan,
   getCycleStartAvailability,
+  openOrCreateWeeklyPlanEditDraft,
 } from "../services/api";
+
+const AVAILABILITY_SEARCH_BATCH_SIZE = 12;
+// No shorter scheduling horizon exists in the product. Ten years keeps the
+// search finite while covering 520 consecutive weekly start candidates.
+const MAX_AVAILABILITY_SEARCH_WEEKS = 520;
+const AVAILABILITY_FAILURE_MESSAGE =
+  "Unable to check Cycle availability. Retry before choosing a start week.";
 
 const WEEKDAY_ROWS = [
   { day: "MONDAY", shortLabel: "M", fullLabel: "Monday" },
@@ -172,6 +181,105 @@ function isMondayDateInput(value) {
   return new Date(`${value}T00:00:00`).getDay() === 1;
 }
 
+function buildConsecutiveMondayCandidates(startDateValue, offset, count) {
+  const startDate = parseDateInput(startDateValue);
+  return Array.from({ length: count }, (_, index) =>
+    formatDateInput(addDays(startDate, (offset + index) * 7))
+  );
+}
+
+function mapVerifiedAvailability(response, requestedStartDates) {
+  const availability = Object.fromEntries(
+    (response?.candidates || []).map((candidate) => [
+      candidate.startDate,
+      candidate,
+    ])
+  );
+  const hasCompleteResponse = requestedStartDates.every(
+    (startDate) => typeof availability[startDate]?.hasConflict === "boolean"
+  );
+
+  if (!hasCompleteResponse) {
+    throw new Error("Cycle availability response was incomplete.");
+  }
+
+  return availability;
+}
+
+async function findAvailableCycleStart({
+  durationWeeks,
+  minStartDate,
+  preferredStartDate,
+  isCancelled,
+}) {
+  const accumulatedAvailability = {};
+  const normalizedPreferredStartDate =
+    isMondayDateInput(preferredStartDate) && preferredStartDate >= minStartDate
+      ? preferredStartDate
+      : null;
+  let offset = 0;
+
+  while (offset < MAX_AVAILABILITY_SEARCH_WEEKS) {
+    const remainingCandidates = MAX_AVAILABILITY_SEARCH_WEEKS - offset;
+    const batchCount = Math.min(AVAILABILITY_SEARCH_BATCH_SIZE, remainingCandidates);
+    const consecutiveCandidates = buildConsecutiveMondayCandidates(
+      minStartDate,
+      offset,
+      batchCount
+    );
+    const requestedStartDates = [...consecutiveCandidates];
+
+    if (
+      offset === 0 &&
+      normalizedPreferredStartDate &&
+      !requestedStartDates.includes(normalizedPreferredStartDate)
+    ) {
+      consecutiveCandidates.pop();
+      requestedStartDates.pop();
+      requestedStartDates.push(normalizedPreferredStartDate);
+    }
+
+    const response = await getCycleStartAvailability({
+      candidateStartDates: requestedStartDates,
+      durationWeeks,
+    });
+    if (isCancelled()) {
+      return null;
+    }
+
+    const batchAvailability = mapVerifiedAvailability(response, requestedStartDates);
+    Object.assign(accumulatedAvailability, batchAvailability);
+
+    if (
+      normalizedPreferredStartDate &&
+      batchAvailability[normalizedPreferredStartDate]?.hasConflict === false
+    ) {
+      return {
+        availability: accumulatedAvailability,
+        startDate: normalizedPreferredStartDate,
+      };
+    }
+
+    const firstAvailableStartDate = consecutiveCandidates.find(
+      (startDate) => batchAvailability[startDate]?.hasConflict === false
+    );
+    if (firstAvailableStartDate) {
+      return {
+        availability: accumulatedAvailability,
+        startDate: firstAvailableStartDate,
+      };
+    }
+
+    offset += consecutiveCandidates.length;
+  }
+
+  const error = new Error(
+    "No available Cycle start was found in the next 10 years. Review scheduled Cycles and retry."
+  );
+  error.code = "AVAILABILITY_SEARCH_EXHAUSTED";
+  throw error;
+}
+
 function buildInitialWeekdaySlots(workouts = []) {
   const orderedWorkouts = [...workouts].map((workout, index) => ({
     ...workout,
@@ -229,15 +337,22 @@ function moveWorkoutWithDownwardPush(slots, sourceIndex, direction) {
 
 export default function ManualConvert() {
   const navigate = useNavigate();
-  const { programDraft, draftMetadata } = useManualProgram();
+  const {
+    programDraft,
+    draftMetadata,
+    beginHydrationTarget: beginWeeklyHydrationTarget,
+    hydrateProgramDraft: hydrateWeeklyProgramDraft,
+  } = useManualProgram();
   const { beginHydrationTarget, hydrateProgramDraft } = useMultiWeekProgram();
 
   const programName = programDraft.programName || "New Program";
   const sessionsPerWeek = programDraft.sessionsPerWeek || 4;
   const todayDate = getTodayDateInput();
-  const initialStartDate = isMondayDateInput(programDraft.startDate)
+  const initialPreferredStartDate = isMondayDateInput(programDraft.startDate)
     ? programDraft.startDate
-    : getNextMondayDateInput(programDraft.startDate || todayDate);
+    : null;
+  const initialCalendarStartDate =
+    initialPreferredStartDate || getNextMondayDateInput(programDraft.startDate || todayDate);
   const initialProgramLength = programDraft.programLength || 8;
   const minStartDate = useMemo(() => getCurrentWeekMondayDateInput(todayDate), [todayDate]);
   const templateWorkouts = useMemo(
@@ -249,14 +364,14 @@ export default function ManualConvert() {
     [programDraft.workouts]
   );
 
-  const [startDate, setStartDate] = useState(initialStartDate);
+  const [startDate, setStartDate] = useState("");
   const [programLength, setProgramLength] = useState(initialProgramLength);
   const [weekdaySlots, setWeekdaySlots] = useState(() =>
     buildInitialWeekdaySlots(programDraft.workouts || [])
   );
   const [isWeekPickerOpen, setIsWeekPickerOpen] = useState(false);
   const [weekPickerMonth, setWeekPickerMonth] = useState(() =>
-    getStartOfMonthDate(initialStartDate)
+    getStartOfMonthDate(initialCalendarStartDate)
   );
   const [submitError, setSubmitError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -264,6 +379,13 @@ export default function ManualConvert() {
   const [availabilityStatus, setAvailabilityStatus] = useState("loading");
   const [availabilityError, setAvailabilityError] = useState("");
   const [availabilityRefreshToken, setAvailabilityRefreshToken] = useState(0);
+  const [isVisibleAvailabilityLoading, setIsVisibleAvailabilityLoading] = useState(false);
+  const [isReturningToBuilder, setIsReturningToBuilder] = useState(false);
+  const [backError, setBackError] = useState("");
+  const startDateRef = useRef("");
+  const initialPreferredStartDateRef = useRef(initialPreferredStartDate);
+  const availabilityByStartDateRef = useRef({});
+  const isReturningToBuilderRef = useRef(false);
 
   const previewText = useMemo(() => {
     return `This ${programLength}-week program will duplicate your ${sessionsPerWeek}-session weekly template across all weeks.`;
@@ -320,51 +442,50 @@ export default function ManualConvert() {
     () => formatMonthHeading(weekPickerMonth),
     [weekPickerMonth]
   );
+  const visibleCandidateStartDates = useMemo(
+    () => visibleWeekOptions.map((option) => option.value),
+    [visibleWeekOptions]
+  );
+  const visibleCandidateKey = visibleCandidateStartDates.join(",");
 
   useEffect(() => {
-    const candidateStartDates = visibleWeekOptions.map((option) => option.value);
-    if (candidateStartDates.length === 0) {
-      setAvailabilityByStartDate({});
-      setAvailabilityStatus("success");
-      setAvailabilityError("");
-      return undefined;
-    }
-
     let cancelled = false;
+    const preferredStartDate =
+      startDateRef.current || initialPreferredStartDateRef.current;
+    availabilityByStartDateRef.current = {};
+    setAvailabilityByStartDate({});
     setAvailabilityStatus("loading");
     setAvailabilityError("");
+    setIsVisibleAvailabilityLoading(false);
 
-    getCycleStartAvailability({
-      candidateStartDates,
+    findAvailableCycleStart({
       durationWeeks: programLength,
+      minStartDate,
+      preferredStartDate,
+      isCancelled: () => cancelled,
     })
-      .then((response) => {
-        if (cancelled) {
+      .then((result) => {
+        if (cancelled || !result) {
           return;
         }
 
-        const nextAvailability = Object.fromEntries(
-          (response?.candidates || []).map((candidate) => [
-            candidate.startDate,
-            candidate,
-          ])
-        );
-        setAvailabilityByStartDate(nextAvailability);
+        availabilityByStartDateRef.current = result.availability;
+        setAvailabilityByStartDate(result.availability);
         setAvailabilityStatus("success");
-
-        if (startDate && nextAvailability[startDate]?.hasConflict) {
-          setStartDate("");
-          setSubmitError(
-            "Your selected start week overlaps an existing Cycle. Choose another week."
-          );
-        }
+        startDateRef.current = result.startDate;
+        initialPreferredStartDateRef.current = result.startDate;
+        setStartDate(result.startDate);
+        setSubmitError("");
       })
-      .catch(() => {
+      .catch((error) => {
         if (!cancelled) {
+          availabilityByStartDateRef.current = {};
           setAvailabilityByStartDate({});
           setAvailabilityStatus("error");
           setAvailabilityError(
-            "Unable to check Cycle availability. Retry before choosing a start week."
+            error?.code === "AVAILABILITY_SEARCH_EXHAUSTED"
+              ? error.message
+              : AVAILABILITY_FAILURE_MESSAGE
           );
         }
       });
@@ -372,7 +493,59 @@ export default function ManualConvert() {
     return () => {
       cancelled = true;
     };
-  }, [availabilityRefreshToken, programLength, startDate, visibleWeekOptions]);
+  }, [availabilityRefreshToken, minStartDate, programLength]);
+
+  useEffect(() => {
+    if (availabilityStatus !== "success" || !visibleCandidateStartDates.length) {
+      return undefined;
+    }
+
+    const missingStartDates = visibleCandidateStartDates.filter(
+      (startDateValue) => !Object.prototype.hasOwnProperty.call(
+        availabilityByStartDateRef.current,
+        startDateValue
+      )
+    );
+    if (!missingStartDates.length) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    setIsVisibleAvailabilityLoading(true);
+    getCycleStartAvailability({
+      candidateStartDates: missingStartDates,
+      durationWeeks: programLength,
+    })
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+
+        const nextAvailability = mapVerifiedAvailability(response, missingStartDates);
+        const mergedAvailability = {
+          ...availabilityByStartDateRef.current,
+          ...nextAvailability,
+        };
+        availabilityByStartDateRef.current = mergedAvailability;
+        setAvailabilityByStartDate(mergedAvailability);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setIsVisibleAvailabilityLoading(false);
+          setAvailabilityStatus("error");
+          setAvailabilityError(AVAILABILITY_FAILURE_MESSAGE);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsVisibleAvailabilityLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [availabilityStatus, programLength, visibleCandidateKey, visibleCandidateStartDates]);
 
   const selectedStartAvailability = startDate
     ? availabilityByStartDate[startDate]
@@ -390,6 +563,7 @@ export default function ManualConvert() {
   };
 
   const handleStartDateChange = (value) => {
+    startDateRef.current = value;
     setStartDate(value);
     setSubmitError("");
   };
@@ -428,8 +602,50 @@ export default function ManualConvert() {
     setSubmitError("");
   };
 
+  const handleBack = async () => {
+    if (isReturningToBuilderRef.current) {
+      return;
+    }
+
+    const weeklyPlanParentId = draftMetadata.weeklyPlanParentId;
+    if (!weeklyPlanParentId) {
+      setBackError("Unable to reopen this Weekly draft. Retry from the published plan.");
+      return;
+    }
+
+    isReturningToBuilderRef.current = true;
+    setIsReturningToBuilder(true);
+    setBackError("");
+
+    try {
+      await beginWeeklyHydrationTarget({
+        weeklyPlanParentId,
+        weeklyPlanVersionId: null,
+      });
+      const response = await openOrCreateWeeklyPlanEditDraft(weeklyPlanParentId);
+      const isEditableDraft =
+        response?.weeklyPlanParentId === weeklyPlanParentId &&
+        Boolean(response?.weeklyPlanVersionId) &&
+        String(response?.status || "").toUpperCase() === "DRAFT";
+
+      if (!isEditableDraft) {
+        throw new Error("The Weekly draft response was not editable.");
+      }
+
+      hydrateWeeklyProgramDraft(response);
+      navigate(getManualBuilderPath());
+    } catch {
+      setBackError(
+        "Unable to reopen an editable Weekly draft. Retry to return safely."
+      );
+    } finally {
+      isReturningToBuilderRef.current = false;
+      setIsReturningToBuilder(false);
+    }
+  };
+
   const handleConvert = async () => {
-    if (!draftMetadata.weeklyPlanParentId || isSubmitting) {
+    if (!draftMetadata.weeklyPlanParentId || isSubmitting || isReturningToBuilder) {
       return;
     }
 
@@ -492,11 +708,15 @@ export default function ManualConvert() {
           <div className="flex items-center justify-between p-4">
             <button
               type="button"
-              onClick={() => navigate("/program/manual-builder")}
+              onClick={handleBack}
+              disabled={isReturningToBuilder}
+              aria-busy={isReturningToBuilder}
               className="flex size-10 shrink-0 items-center justify-center rounded-full text-slate-900 transition-colors hover:bg-slate-200/50"
               aria-label="Back"
             >
-              <span className="material-symbols-outlined">arrow_back</span>
+              <span className={`material-symbols-outlined ${isReturningToBuilder ? "animate-spin" : ""}`}>
+                {isReturningToBuilder ? "progress_activity" : "arrow_back"}
+              </span>
             </button>
 
             <h1 className="flex-1 pr-10 text-center text-lg font-bold leading-tight tracking-tight">
@@ -506,6 +726,24 @@ export default function ManualConvert() {
         </header>
 
         <main className="flex flex-col gap-5 px-4 pt-5">
+          {isReturningToBuilder && (
+            <p className="text-center text-sm font-medium text-slate-500" role="status">
+              Opening editable Weekly draft...
+            </p>
+          )}
+          {backError && (
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-3" role="alert">
+              <p className="text-sm font-medium text-red-600">{backError}</p>
+              <button
+                type="button"
+                onClick={handleBack}
+                disabled={isReturningToBuilder}
+                className="shrink-0 text-sm font-bold text-red-600 disabled:opacity-60"
+              >
+                Retry
+              </button>
+            </div>
+          )}
           <div className="rounded-xl border border-slate-100 bg-white px-4 py-4 shadow-sm">
             <div className="flex items-center gap-3">
               <div className="rounded-lg bg-primary/15 p-2 text-primary">
@@ -550,7 +788,7 @@ export default function ManualConvert() {
               <p className="text-xs text-slate-400">
                 Choose a start week. The selected start date remains the Monday of that week.
               </p>
-              {availabilityStatus === "loading" && (
+              {(availabilityStatus === "loading" || isVisibleAvailabilityLoading) && (
                 <p className="text-xs font-medium text-slate-500" role="status">
                   Checking Cycle availability...
                 </p>
@@ -723,6 +961,7 @@ export default function ManualConvert() {
             onClick={handleConvert}
             disabled={
               isSubmitting ||
+              isReturningToBuilder ||
               !draftMetadata.weeklyPlanParentId ||
               Boolean(weekdayAssignmentError) ||
               !isSelectedStartAvailable
