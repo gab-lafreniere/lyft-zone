@@ -144,7 +144,6 @@ export function reconcileStructuralWeeklyPlanDraft(
 }
 
 export function useWeeklyPlanWorkoutAutosaveCoordinator({
-  enabled,
   programDraft,
   setProgramDraft,
   draftMetadata,
@@ -179,7 +178,6 @@ export function useWeeklyPlanWorkoutAutosaveCoordinator({
   }), []);
 
   return useWorkoutAutosaveCoordinator({
-    enabled,
     draft: programDraft,
     setDraft: setProgramDraft,
     draftMetadata,

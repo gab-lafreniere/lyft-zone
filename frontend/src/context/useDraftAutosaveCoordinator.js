@@ -48,8 +48,7 @@ export function useDraftAutosaveCoordinator({
   onSuccessfulSaveResponse,
   onPersistenceSettled,
   shouldAutosave,
-  autosaveTrigger = draft,
-  cancelDebouncedAutosaveOnPersist = false,
+  autosaveTrigger,
 }) {
   const draftRef = useRef(draft);
   const internalMetadataRef = useRef(metadata);
@@ -129,9 +128,7 @@ export function useDraftAutosaveCoordinator({
     overrideDraft = null,
     overrideIdentity = null
   ) => {
-    if (cancelDebouncedAutosaveOnPersist) {
-      clearAutosaveTimer();
-    }
+    clearAutosaveTimer();
     const initialMetadata = metadataRef.current;
     const resolvedIdentity = getCurrentIdentity(initialMetadata);
 
@@ -163,15 +160,12 @@ export function useDraftAutosaveCoordinator({
       let outcome = "skipped";
 
       try {
-        let prepared = null;
-        if (preparePersistence) {
-          prepared = await preparePersistence({
-            draft: draftRef.current,
-            identity,
-            metadata: metadataRef.current,
-            requestId,
-          });
-        }
+        const prepared = await preparePersistence({
+          draft: draftRef.current,
+          identity,
+          metadata: metadataRef.current,
+          requestId,
+        });
 
         if (prepared) {
           currentMetadata = prepared.metadata || metadataRef.current;
@@ -276,7 +270,7 @@ export function useDraftAutosaveCoordinator({
           }
         }
       } finally {
-        await onPersistenceSettled?.({
+        await onPersistenceSettled({
           error: saveError,
           outcome,
           preparationContext,
@@ -328,7 +322,6 @@ export function useDraftAutosaveCoordinator({
     saveInFlightPromiseRef.current = savePromise;
     return savePromise;
   }, [
-    cancelDebouncedAutosaveOnPersist,
     clearAutosaveTimer,
     getCurrentIdentity,
     getResponseIdentity,
@@ -352,10 +345,10 @@ export function useDraftAutosaveCoordinator({
     versionId: currentVersionId,
   } = getCurrentIdentity(metadata) || {};
 
-  // Keep dirty detection document-level in Phase 3; serializers remain an
-  // adapter boundary so later phases can replace that policy independently.
+  // Document autosave is driven only by structural mutation state. The
+  // serialized signature still suppresses no-op document writes.
   useEffect(() => {
-    const autosaveDecision = shouldAutosave?.({
+    const autosaveDecision = shouldAutosave({
       draft: draftRef.current,
       metadata: metadataRef.current,
     });

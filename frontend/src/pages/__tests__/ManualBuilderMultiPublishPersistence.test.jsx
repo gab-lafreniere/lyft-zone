@@ -80,7 +80,6 @@ function createContextValue(persistDraftNow) {
       return { status: "ready", metadata: draftMetadata };
     }),
     flushAllWorkouts: jest.fn(),
-    workoutScopedAutosaveEnabled: false,
     setSelectedWeek: jest.fn(),
     updateDraftMetadata: jest.fn(),
     moveSelectedWeekWorkoutToScheduledDay: jest.fn(),

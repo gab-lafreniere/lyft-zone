@@ -195,7 +195,6 @@ function publicWorkoutState(entry) {
 }
 
 export function useWorkoutAutosaveCoordinator({
-  enabled,
   draft,
   setDraft,
   draftMetadata,
@@ -340,10 +339,6 @@ export function useWorkoutAutosaveCoordinator({
   }, [findWorkoutEntry, serializeContentSnapshot]);
 
   const notifyStructuralMutation = useCallback(() => {
-    if (!enabled) {
-      return;
-    }
-
     acquireStructuralPause();
     timerRef.current.forEach((timer, workoutId) => {
       window.clearTimeout(timer);
@@ -354,7 +349,7 @@ export function useWorkoutAutosaveCoordinator({
     });
     timerRef.current.clear();
     publishState();
-  }, [acquireStructuralPause, enabled, publishState]);
+  }, [acquireStructuralPause, publishState]);
 
   const rebaseStructuralMutation = useCallback((draft) => {
     const entries = getWorkoutEntries(draft);
@@ -494,10 +489,6 @@ export function useWorkoutAutosaveCoordinator({
     workoutId,
     overrideWorkout = null
   ) {
-    if (!enabled) {
-      return null;
-    }
-
     clearWorkoutTimer(workoutId);
     const existingState = stateRef.current.get(workoutId);
     if (!existingState) {
@@ -725,7 +716,6 @@ export function useWorkoutAutosaveCoordinator({
     applyWorkoutResponse,
     clearWorkoutTimer,
     documentMetadataRef,
-    enabled,
     getResponseDocumentRevision,
     handleSpecialSaveError,
     isDocumentReady,
@@ -739,10 +729,6 @@ export function useWorkoutAutosaveCoordinator({
   ]);
 
   const scheduleAutosave = useCallback((workoutId) => {
-    if (!enabled) {
-      return;
-    }
-
     const state = stateRef.current.get(workoutId);
     if (
       !state ||
@@ -787,7 +773,7 @@ export function useWorkoutAutosaveCoordinator({
       timerRef.current.delete(workoutId);
       persistWorkoutNow(workoutId);
     }, WORKOUT_AUTOSAVE_DEBOUNCE_MS));
-  }, [clearWorkoutTimer, enabled, persistWorkoutNow, setWorkoutEntry]);
+  }, [clearWorkoutTimer, persistWorkoutNow, setWorkoutEntry]);
 
   const markWorkoutDirty = useCallback((workoutId, workout, workoutIndex) => {
     const existing = stateRef.current.get(workoutId) ||
@@ -808,20 +794,6 @@ export function useWorkoutAutosaveCoordinator({
   }, [scheduleAutosave, serializeSnapshot, setWorkoutEntry]);
 
   useEffect(() => {
-    if (!enabled) {
-      baselineRef.current = new Map(
-        getWorkoutEntries(draft).map(({ workout, workoutIndex }) => [
-          workout.id,
-          {
-            contentSnapshot: serializeContentSnapshot(workout),
-            workoutRef: workout,
-            workoutIndex,
-          },
-        ])
-      );
-      return;
-    }
-
     if (lastStructuralMutationVersionRef.current !== structuralMutationVersion) {
       lastStructuralMutationVersionRef.current = structuralMutationVersion;
       rebaseStructuralMutation(draft);
@@ -861,7 +833,6 @@ export function useWorkoutAutosaveCoordinator({
     baselineRef.current = nextBaseline;
     publishState();
   }, [
-    enabled,
     getWorkoutEntries,
     markWorkoutDirty,
     draft,
@@ -874,10 +845,6 @@ export function useWorkoutAutosaveCoordinator({
   ]);
 
   const flushWorkout = useCallback(async (workoutId) => {
-    if (!enabled) {
-      return null;
-    }
-
     while (true) {
       const state = stateRef.current.get(workoutId);
       if (!state) {
@@ -922,21 +889,11 @@ export function useWorkoutAutosaveCoordinator({
     }
   }, [
     clearWorkoutTimer,
-    enabled,
     persistWorkoutNow,
     waitForStructuralPauseRelease,
   ]);
 
   const getPersistenceSummary = useCallback(() => {
-    if (!enabled) {
-      return {
-        blockedWorkoutIds: [],
-        pendingStructuralWorkoutIds: [],
-        pendingWorkoutIds: [],
-        structuralPauseActive: false,
-      };
-    }
-
     const blockedWorkoutIds = [];
     const pendingStructuralWorkoutIds = [];
     const pendingWorkoutIds = [];
@@ -972,13 +929,9 @@ export function useWorkoutAutosaveCoordinator({
       pendingWorkoutIds,
       structuralPauseActive: workoutDispatchPausedRef.current,
     };
-  }, [enabled]);
+  }, []);
 
   const flushAllWorkouts = useCallback(async () => {
-    if (!enabled) {
-      return { blockedWorkoutIds: [] };
-    }
-
     while (true) {
       if (workoutDispatchPausedRef.current) {
         await waitForStructuralPauseRelease();
@@ -1037,16 +990,9 @@ export function useWorkoutAutosaveCoordinator({
         };
       }
     }
-  }, [enabled, flushWorkout, waitForStructuralPauseRelease]);
+  }, [flushWorkout, waitForStructuralPauseRelease]);
 
   const prepareStructuralSave = useCallback(async () => {
-    if (!enabled) {
-      return {
-        draft: draftRef.current,
-        metadata: documentMetadataRef?.current || metadataRef.current,
-      };
-    }
-
     notifyStructuralMutation();
 
     while (true) {
@@ -1091,7 +1037,6 @@ export function useWorkoutAutosaveCoordinator({
     };
   }, [
     documentMetadataRef,
-    enabled,
     getWorkoutEntries,
     notifyStructuralMutation,
     publishState,
@@ -1167,10 +1112,6 @@ export function useWorkoutAutosaveCoordinator({
     releasePause,
     resumeDirtySaves,
   }) => {
-    if (!enabled) {
-      return;
-    }
-
     if (releasePause) {
       releaseStructuralPause();
     }
@@ -1195,7 +1136,6 @@ export function useWorkoutAutosaveCoordinator({
     });
     publishState();
   }, [
-    enabled,
     publishState,
     releaseStructuralPause,
     scheduleAutosave,

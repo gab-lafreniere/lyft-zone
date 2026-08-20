@@ -259,7 +259,6 @@ export default function ManualBuilderMulti() {
     handleDraftExpired,
     prepareCycleDraftForPublish,
     flushAllWorkouts,
-    workoutScopedAutosaveEnabled,
     setSelectedWeek,
     updateDraftMetadata,
     moveSelectedWeekWorkoutToScheduledDay,
@@ -363,8 +362,7 @@ export default function ManualBuilderMulti() {
       setLoadError(null);
 
       try {
-        // Flag-off remains synchronous. With workout-scoped autosave enabled,
-        // a genuine document switch first reaches the terminal workout flush
+        // A genuine document switch reaches the terminal workout flush
         // barrier before this target is declared and fetched.
         await beginHydrationTarget({ cycleId, planId: null });
         const response = await openOrCreateCycleEditDraft(cycleId);
@@ -946,18 +944,16 @@ export default function ManualBuilderMulti() {
     setPublishError(null);
 
     try {
-      if (workoutScopedAutosaveEnabled) {
-        const {
-          blockedWorkoutIds = [],
-          blockedReason = null,
-        } = await flushAllWorkouts();
-        if (blockedReason || blockedWorkoutIds.length > 0) {
-          throw buildWorkoutAutosaveBlockedError(
-            "saving cycle settings",
-            blockedWorkoutIds,
-            blockedReason
-          );
-        }
+      const {
+        blockedWorkoutIds = [],
+        blockedReason = null,
+      } = await flushAllWorkouts();
+      if (blockedReason || blockedWorkoutIds.length > 0) {
+        throw buildWorkoutAutosaveBlockedError(
+          "saving cycle settings",
+          blockedWorkoutIds,
+          blockedReason
+        );
       }
 
       if (draftMetadata.saveState === "error") {

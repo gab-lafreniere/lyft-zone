@@ -23,8 +23,6 @@ jest.mock("../../services/api", () => ({
   updateUpcomingDraftTimeline: jest.fn(),
 }));
 
-const FLAG = "REACT_APP_ENABLE_WORKOUT_SCOPED_AUTOSAVE";
-
 function formatDateInput(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -329,17 +327,12 @@ function editWorkoutReps(
 
 describe("ManualBuilderMulti workout terminal-action barrier", () => {
   beforeEach(() => {
-    process.env[FLAG] = "true";
     currentContext = null;
     openOrCreateCycleEditDraft.mockReset();
     publishCycleDraft.mockReset();
     saveCycleWorkoutContent.mockReset();
     updateCycleDraft.mockReset();
     updateUpcomingDraftTimeline.mockReset();
-  });
-
-  afterEach(() => {
-    delete process.env[FLAG];
   });
 
   test("Publish remains pending until the terminal workout flush completes", async () => {
@@ -827,23 +820,4 @@ describe("ManualBuilderMulti workout terminal-action barrier", () => {
     expect(screen.getByRole("button", { name: "Publish Cycle" })).not.toBeDisabled();
   });
 
-  test("flag OFF uses only the legacy document persistence barrier before Publish", async () => {
-    process.env[FLAG] = "false";
-    const response = buildCycleResponse();
-    updateCycleDraft.mockImplementation(async (_cycleId, _planId, payload) =>
-      buildStructuralResponseFromPayload(response, payload, { revision: 11 })
-    );
-    publishCycleDraft.mockResolvedValue({ ...response, status: "PUBLISHED", revision: 12 });
-    await renderBuilder(response);
-    editWorkoutReps(64);
-
-    fireEvent.click(screen.getByRole("button", { name: "Publish Cycle" }));
-
-    await waitFor(() => expect(publishCycleDraft).toHaveBeenCalledTimes(1));
-    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
-    expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
-    expect(updateCycleDraft.mock.invocationCallOrder[0]).toBeLessThan(
-      publishCycleDraft.mock.invocationCallOrder[0]
-    );
-  });
 });

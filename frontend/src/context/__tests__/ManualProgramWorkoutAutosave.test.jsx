@@ -16,8 +16,6 @@ jest.mock("../../services/api", () => ({
   updateWeeklyPlanDraft: jest.fn(),
 }));
 
-const FLAG = "REACT_APP_ENABLE_WEEKLY_WORKOUT_SCOPED_AUTOSAVE";
-
 function createDeferred() {
   let resolve;
   let reject;
@@ -220,7 +218,6 @@ async function advanceAutosave() {
 
 describe("ManualProgramProvider workout-scoped autosave", () => {
   beforeEach(() => {
-    process.env[FLAG] = "true";
     jest.useFakeTimers();
     currentContext = null;
     openOrCreateWeeklyPlanEditDraft.mockReset();
@@ -229,12 +226,11 @@ describe("ManualProgramProvider workout-scoped autosave", () => {
   });
 
   afterEach(() => {
-    delete process.env[FLAG];
     jest.clearAllTimers();
     jest.useRealTimers();
   });
 
-  test("flag ON Settings mutation persists once and adopts the returned revision", async () => {
+  test("Settings mutation persists once and adopts the returned revision", async () => {
     updateWeeklyPlanDraft.mockImplementation(async (_parentId, _versionId, payload) =>
       buildStructuralResponse(payload, { revision: 11 })
     );
@@ -315,49 +311,6 @@ describe("ManualProgramProvider workout-scoped autosave", () => {
     );
     expect(saveWeeklyPlanWorkoutContent.mock.calls.some((call) => call[1] === "weekly_version_1"))
       .toBe(false);
-    expect(updateWeeklyPlanDraft.mock.calls.some((call) => call[1] === "weekly_version_1"))
-      .toBe(false);
-  });
-
-  test("flag OFF ManualConvert Back re-entry sends all persistence only to the new Weekly draft", async () => {
-    process.env[FLAG] = "false";
-    const reopened = buildResponse({
-      versionId: "weekly_legacy_draft_2",
-      revision: 30,
-      workoutCount: 1,
-      repsByIndex: [8],
-    });
-    updateWeeklyPlanDraft.mockImplementation(async (_parentId, _versionId, payload) => ({
-      ...buildStructuralResponse(payload, { revision: 31 }),
-      weeklyPlanVersionId: "weekly_legacy_draft_2",
-    }));
-    renderProvider(buildResponse({ workoutCount: 1, repsByIndex: [8] }));
-    act(() => currentContext.updateDraftMetadata({
-      status: "published",
-      weeklyPlanVersionId: null,
-    }));
-    act(() => currentContext.beginHydrationTarget({
-      weeklyPlanParentId: "weekly_parent_1",
-      weeklyPlanVersionId: null,
-    }));
-    act(() => currentContext.hydrateProgramDraft(reopened));
-    expect(currentContext.draftMetadata.status).toBe("draft");
-    expect(currentContext.draftMetadata.weeklyPlanVersionId).toBe("weekly_legacy_draft_2");
-
-    act(() => currentContext.updateSet("workout_1", "workout_1_block_1", 0, { reps: 44 }));
-    await advanceAutosave();
-
-    expect(saveWeeklyPlanWorkoutContent).not.toHaveBeenCalled();
-    expect(updateWeeklyPlanDraft).toHaveBeenCalledWith(
-      "weekly_parent_1",
-      "weekly_legacy_draft_2",
-      expect.any(Object)
-    );
-
-    act(() => currentContext.updateProgramMeta({ programName: "Legacy reopened draft" }));
-    await advanceAutosave();
-    expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(2);
-    expect(updateWeeklyPlanDraft.mock.calls[1][1]).toBe("weekly_legacy_draft_2");
     expect(updateWeeklyPlanDraft.mock.calls.some((call) => call[1] === "weekly_version_1"))
       .toBe(false);
   });
@@ -567,17 +520,6 @@ describe("ManualProgramProvider workout-scoped autosave", () => {
     await advanceAutosave();
     expect(saveWeeklyPlanWorkoutContent).not.toHaveBeenCalled();
     expect(updateWeeklyPlanDraft).not.toHaveBeenCalled();
-  });
-
-  test("flag OFF preserves whole-document autosave and never calls workout PATCH", async () => {
-    process.env[FLAG] = "false";
-    const response = buildResponse();
-    updateWeeklyPlanDraft.mockResolvedValue(response);
-    renderProvider(response);
-    act(() => currentContext.updateSet("workout_1", "workout_1_block_1", 0, { reps: 40 }));
-    await advanceAutosave();
-    expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(1);
-    expect(saveWeeklyPlanWorkoutContent).not.toHaveBeenCalled();
   });
 
   test("deleting a debounced workout cancels its PATCH and persists structurally", async () => {

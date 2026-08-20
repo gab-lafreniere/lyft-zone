@@ -197,7 +197,6 @@ export function reconcileStructuralCycleDraft(currentDraft, sentDraft, canonical
 }
 
 export function useCycleWorkoutAutosaveCoordinator({
-  enabled,
   multiWeekDraft,
   setMultiWeekDraft,
   draftMetadata,
@@ -244,7 +243,6 @@ export function useCycleWorkoutAutosaveCoordinator({
   }), [handleDraftExpired]);
 
   return useWorkoutAutosaveCoordinator({
-    enabled,
     draft: multiWeekDraft,
     setDraft: setMultiWeekDraft,
     draftMetadata,

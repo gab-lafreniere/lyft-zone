@@ -20,8 +20,6 @@ jest.mock("../../services/api", () => ({
   updateWeeklyPlanDraft: jest.fn(),
 }));
 
-const FLAG = "REACT_APP_ENABLE_WEEKLY_WORKOUT_SCOPED_AUTOSAVE";
-
 function deferred() {
   let resolve;
   let reject;
@@ -150,7 +148,6 @@ async function tickDebounce() {
 
 describe("ManualBuilder Weekly terminal publish barrier", () => {
   beforeEach(() => {
-    process.env[FLAG] = "true";
     jest.useFakeTimers();
     context = null;
     publishWeeklyPlanDraft.mockReset().mockResolvedValue({ status: "PUBLISHED" });
@@ -159,7 +156,6 @@ describe("ManualBuilder Weekly terminal publish barrier", () => {
   });
 
   afterEach(() => {
-    delete process.env[FLAG];
     jest.clearAllTimers();
     jest.useRealTimers();
   });
@@ -315,20 +311,6 @@ describe("ManualBuilder Weekly terminal publish barrier", () => {
       await save.promise;
     });
     await waitFor(() => expect(publishWeeklyPlanDraft).toHaveBeenCalledTimes(1));
-  });
-
-  test("flag OFF uses only the legacy document barrier", async () => {
-    process.env[FLAG] = "false";
-    const initial = response({ workoutCount: 1, reps: [8] });
-    updateWeeklyPlanDraft.mockImplementation(async (_parent, _version, payload) =>
-      structuralResponse(payload)
-    );
-    renderBuilder(initial);
-    act(() => context.updateSet("workout_1", "workout_1_block", 0, { reps: 70 }));
-    fireEvent.click(screen.getByRole("button", { name: "Publish Program" }));
-    await waitFor(() => expect(publishWeeklyPlanDraft).toHaveBeenCalledTimes(1));
-    expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(1);
-    expect(saveWeeklyPlanWorkoutContent).not.toHaveBeenCalled();
   });
 
   test("incomplete render state disables both publish actions", () => {

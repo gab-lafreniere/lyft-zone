@@ -16,8 +16,6 @@ jest.mock("../../services/api", () => ({
   updateCycleDraft: jest.fn(),
 }));
 
-const FLAG = "REACT_APP_ENABLE_WORKOUT_SCOPED_AUTOSAVE";
-
 function buildSet(id, reps) {
   return {
     id,
@@ -380,7 +378,6 @@ async function advanceAutosave() {
 
 describe("Cycle workout-scoped autosave (Phases 4 and 5)", () => {
   beforeEach(() => {
-    process.env[FLAG] = "true";
     jest.useFakeTimers();
     currentContext = null;
     openOrCreateCycleEditDraft.mockReset();
@@ -389,9 +386,76 @@ describe("Cycle workout-scoped autosave (Phases 4 and 5)", () => {
   });
 
   afterEach(() => {
-    delete process.env[FLAG];
     jest.clearAllTimers();
     jest.useRealTimers();
+  });
+
+  test("a clamped no-op superset count does not add round-count edit intent", () => {
+    const createSuperset = (id, count) => ({
+      id,
+      type: "superset",
+      sets: count,
+      rest: "120s",
+      exercises: ["A1", "A2"].map((label) => ({
+        label,
+        name: label === "A1" ? "Incline Press" : "Cable Row",
+        exerciseId: label === "A1" ? "exercise_1" : "exercise_2",
+        tempo: "3010",
+        sets: Array.from({ length: count }, () => ({ reps: 10, rpe: 2 })),
+        notes: "",
+      })),
+    });
+    const response = buildResponse({ workoutCount: 1 });
+    response.builderPayload.weeks[0].workouts[0].blocks = [
+      createSuperset("superset_floor", 1),
+      createSuperset("superset_ceiling", 10),
+    ];
+
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(response));
+    act(() => {
+      currentContext.updateSupersetSetCount("workout_1", "superset_floor", 0);
+      currentContext.updateSupersetSetCount("workout_1", "superset_ceiling", 11);
+    });
+
+    const [floorBlock, ceilingBlock] = currentContext.programDraft.workouts[0].blocks;
+    expect(floorBlock.sets).toBe(1);
+    expect(floorBlock.editIntent).toBeUndefined();
+    expect(ceilingBlock.sets).toBe(10);
+    expect(ceilingBlock.editIntent).toBeUndefined();
+  });
+
+  test("a late hydration response cannot replace a newer declared document target", async () => {
+    const cycleA = buildResponse({ cycleId: "cycle_a", planId: "plan_a" });
+    const cycleB = buildResponse({
+      cycleId: "cycle_b",
+      planId: "plan_b",
+      repsByIndex: [31, 32],
+    });
+    const cycleC = buildResponse({
+      cycleId: "cycle_c",
+      planId: "plan_c",
+      repsByIndex: [41, 42],
+    });
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(cycleA));
+
+    await act(async () => {
+      await currentContext.beginHydrationTarget({ cycleId: "cycle_b", planId: null });
+      await currentContext.beginHydrationTarget({ cycleId: "cycle_c", planId: null });
+    });
+
+    const draftBeforeLateResponse = currentContext.programDraft;
+    const metadataBeforeLateResponse = currentContext.draftMetadata;
+    act(() => currentContext.hydrateProgramDraft(cycleB));
+
+    expect(currentContext.programDraft).toBe(draftBeforeLateResponse);
+    expect(currentContext.draftMetadata).toBe(metadataBeforeLateResponse);
+    expect(currentContext.draftMetadata.cycleId).toBe("cycle_a");
+
+    act(() => currentContext.hydrateProgramDraft(cycleC));
+    expect(currentContext.draftMetadata.cycleId).toBe("cycle_c");
+    expect(currentContext.programDraft.workouts[0].blocks[0].sets[0].reps).toBe(41);
   });
 
   test("ManualConvert published response re-entry targets the new draft for workout and structural saves", async () => {
@@ -438,32 +502,6 @@ describe("Cycle workout-scoped autosave (Phases 4 and 5)", () => {
     );
     expect(saveCycleWorkoutContent.mock.calls.some((call) => call[1] === "published_plan"))
       .toBe(false);
-    expect(updateCycleDraft.mock.calls.some((call) => call[1] === "published_plan"))
-      .toBe(false);
-  });
-
-  test("flag OFF ManualConvert response sends legacy persistence only to the new draft", async () => {
-    process.env[FLAG] = "false";
-    const published = buildResponse({ planId: "published_plan" });
-    published.publishedPlanId = "published_plan";
-    published.status = "PUBLISHED";
-    const reopened = buildResponse({ planId: "new_legacy_draft", revision: 30 });
-    updateCycleDraft.mockImplementation(async (_cycleId, _planId, payload) =>
-      buildStructuralResponseFromPayload(reopened, payload, { revision: 31 })
-    );
-    renderProvider();
-    act(() => currentContext.hydrateProgramDraft(published, { force: true }));
-    act(() => currentContext.hydrateProgramDraft(reopened, { force: true }));
-
-    act(() => currentContext.updateSet("workout_1", "workout_1_block", 0, { reps: 42 }));
-    await advanceAutosave();
-
-    expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
-    expect(updateCycleDraft).toHaveBeenCalledWith(
-      "cycle_1",
-      "new_legacy_draft",
-      expect.any(Object)
-    );
     expect(updateCycleDraft.mock.calls.some((call) => call[1] === "published_plan"))
       .toBe(false);
   });
@@ -932,21 +970,7 @@ describe("Cycle workout-scoped autosave (Phases 4 and 5)", () => {
     expect(updateCycleDraft.mock.calls[0][2].revision).toBe(24);
   });
 
-  test("flag OFF preserves legacy whole-document autosave and never calls the workout endpoint", async () => {
-    process.env[FLAG] = "false";
-    const response = buildResponse();
-    updateCycleDraft.mockResolvedValue(response);
-    renderProvider();
-    act(() => currentContext.hydrateProgramDraft(response));
-    act(() => currentContext.updateSet("workout_1", "workout_1_block", 0, { reps: 70 }));
-
-    await advanceAutosave();
-
-    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
-    expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
-  });
-
-  test("flag ON structural changes remain on the whole-document path and new workouts never call the workout endpoint", async () => {
+  test("structural changes remain on the whole-document path and new workouts never call the workout endpoint", async () => {
     const response = buildResponse({ workoutCount: 1 });
     updateCycleDraft.mockResolvedValue(response);
     renderProvider();

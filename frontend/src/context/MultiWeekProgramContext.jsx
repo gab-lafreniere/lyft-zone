@@ -10,7 +10,6 @@ import {
   getDateKeyInTimeZone,
   resolveOccurrenceTemporalState,
 } from "../features/multiWeek/occurrence";
-import { isWorkoutScopedAutosaveEnabled } from "../features/multiWeek/featureFlags";
 import { mapCycleBuilderPayload, mapMultiWeekDraftToApi } from "../features/multiWeek/mappers";
 import { openOrCreateCycleEditDraft, updateCycleDraft } from "../services/api";
 import { attachBlockUiKeys, createBlockUiKey } from "../utils/blockUiKeys";
@@ -501,7 +500,6 @@ export function MultiWeekProgramProvider({ children }) {
   const structuralMutationVersionRef = useRef(0);
   const lastPersistedStructuralMutationVersionRef = useRef(0);
   const workoutCoordinatorRef = useRef(null);
-  const workoutScopedAutosaveEnabled = isWorkoutScopedAutosaveEnabled();
   const cycleDocumentMetadataRef = useRef(draftMetadata);
   cycleDocumentMetadataRef.current = draftMetadata;
 
@@ -696,10 +694,6 @@ export function MultiWeekProgramProvider({ children }) {
   }, []);
 
   const prepareCycleDocumentPersistence = useCallback(async () => {
-    if (!workoutScopedAutosaveEnabled) {
-      return null;
-    }
-
     const prepared = await workoutCoordinatorRef.current?.prepareStructuralSave();
     return {
       draft: prepared?.draft,
@@ -708,27 +702,9 @@ export function MultiWeekProgramProvider({ children }) {
         structuralMutationVersion: structuralMutationVersionRef.current,
       },
     };
-  }, [workoutScopedAutosaveEnabled]);
+  }, []);
 
   const handleSuccessfulCycleDocumentSave = useCallback((response, context) => {
-    if (!workoutScopedAutosaveEnabled) {
-      if (!context.hasNewerLocalEdits || context.isOlderThanAppliedResponse) {
-        return false;
-      }
-
-      const nextState = mapCycleBuilderPayload(response);
-      setCoordinatorDraftMetadata((prev) => ({
-        ...prev,
-        ...nextState.metadata,
-        cyclePlanId: response?.planId || nextState.metadata.cyclePlanId,
-        lastSavedAt: response.updatedAt || new Date().toISOString(),
-        saveState: "dirty",
-        lastSaveErrorMessage: null,
-        lastSaveErrorCode: null,
-      }));
-      return true;
-    }
-
     const nextState = mapCycleBuilderPayload(response);
     workoutCoordinatorRef.current?.reconcileStructuralSave(
       context.requestDraft,
@@ -754,13 +730,9 @@ export function MultiWeekProgramProvider({ children }) {
     };
     setCoordinatorDraftMetadata(nextMetadata);
     return true;
-  }, [setCoordinatorDraftMetadata, workoutScopedAutosaveEnabled]);
+  }, [setCoordinatorDraftMetadata]);
 
   const handleCycleDocumentPersistenceSettled = useCallback((context) => {
-    if (!workoutScopedAutosaveEnabled) {
-      return;
-    }
-
     const persistedStructuralVersion =
       context.preparationContext?.structuralMutationVersion ?? null;
     const succeeded = context.outcome === "succeeded" || context.outcome === "skipped";
@@ -777,14 +749,12 @@ export function MultiWeekProgramProvider({ children }) {
       releasePause: context.outcome === "failed" || ownsLatestStructuralPause,
       resumeDirtySaves: succeeded && ownsLatestStructuralPause,
     });
-  }, [workoutScopedAutosaveEnabled]);
+  }, []);
 
   const shouldAutosaveCycleDocument = useCallback(() => (
-    workoutScopedAutosaveEnabled
-      ? structuralMutationVersionRef.current >
-        lastPersistedStructuralMutationVersionRef.current
-      : undefined
-  ), [workoutScopedAutosaveEnabled]);
+    structuralMutationVersionRef.current >
+    lastPersistedStructuralMutationVersionRef.current
+  ), []);
 
   const {
     beginHydrationTarget: beginCoordinatorHydrationTarget,
@@ -808,20 +778,11 @@ export function MultiWeekProgramProvider({ children }) {
     isTransientlyPaused: isCycleAutosavePaused,
     onAutosaveError: logCycleAutosaveError,
     onQueuedSaveError: logQueuedCycleAutosaveError,
-    preparePersistence: workoutScopedAutosaveEnabled
-      ? prepareCycleDocumentPersistence
-      : undefined,
+    preparePersistence: prepareCycleDocumentPersistence,
     onSuccessfulSaveResponse: handleSuccessfulCycleDocumentSave,
-    onPersistenceSettled: workoutScopedAutosaveEnabled
-      ? handleCycleDocumentPersistenceSettled
-      : undefined,
-    shouldAutosave: workoutScopedAutosaveEnabled
-      ? shouldAutosaveCycleDocument
-      : undefined,
-    autosaveTrigger: workoutScopedAutosaveEnabled
-      ? structuralMutationVersion
-      : multiWeekDraft,
-    cancelDebouncedAutosaveOnPersist: true,
+    onPersistenceSettled: handleCycleDocumentPersistenceSettled,
+    shouldAutosave: shouldAutosaveCycleDocument,
+    autosaveTrigger: structuralMutationVersion,
   });
 
   const beginDocumentHydrationTarget = useCallback((identity) => {
@@ -849,7 +810,6 @@ export function MultiWeekProgramProvider({ children }) {
   ), [draftMetadataRef, hydrateProgramDraft, recoverExpiredDraft]);
 
   const workoutCoordinator = useCycleWorkoutAutosaveCoordinator({
-    enabled: workoutScopedAutosaveEnabled,
     multiWeekDraft,
     setMultiWeekDraft,
     draftMetadata,
@@ -875,7 +835,6 @@ export function MultiWeekProgramProvider({ children }) {
 
   const prepareCycleDraftForPublish = useCallback(async () => {
     const recoveryGenerationAtStart = draftRecoveryGenerationRef.current;
-    let documentPassRequired = !workoutScopedAutosaveEnabled;
     let genericDocumentRetryAttempted = false;
 
     const didRecoverDraft = () => (
@@ -885,18 +844,13 @@ export function MultiWeekProgramProvider({ children }) {
       const metadata = cycleDocumentMetadataRef.current;
       const workoutSummary = workoutCoordinatorRef.current
         ?.getPersistenceSummary() || getPersistenceSummary();
-      const hasPendingStructuralMutation = workoutScopedAutosaveEnabled && (
+      const hasPendingStructuralMutation = (
         structuralMutationVersionRef.current >
         lastPersistedStructuralMutationVersionRef.current
-      );
-      const hasLegacyDocumentChanges = !workoutScopedAutosaveEnabled && (
-        JSON.stringify(mapMultiWeekDraftToApi(multiWeekDraftRef.current)) !==
-        metadata.lastPersistedSignature
       );
 
       return {
         hasPendingStructuralMutation,
-        hasLegacyDocumentChanges,
         metadata,
         workoutSummary,
       };
@@ -956,9 +910,7 @@ export function MultiWeekProgramProvider({ children }) {
       }
 
       const documentNeedsPersistence =
-        documentPassRequired ||
         currentState.hasPendingStructuralMutation ||
-        currentState.hasLegacyDocumentChanges ||
         currentState.metadata.saveState === "dirty" ||
         currentState.metadata.saveState === "saving" ||
         currentState.metadata.saveState === "error" ||
@@ -979,7 +931,6 @@ export function MultiWeekProgramProvider({ children }) {
           }
           throw error;
         }
-        documentPassRequired = false;
 
         if (didRecoverDraft()) {
           return { status: "aborted", reason: "DRAFT_EXPIRED" };
@@ -988,7 +939,6 @@ export function MultiWeekProgramProvider({ children }) {
         currentState = readState();
         const documentStillNeedsPersistence =
           currentState.hasPendingStructuralMutation ||
-          currentState.hasLegacyDocumentChanges ||
           currentState.metadata.saveState === "dirty" ||
           currentState.metadata.saveState === "saving" ||
           currentState.workoutSummary.pendingStructuralWorkoutIds.length > 0 ||
@@ -1022,7 +972,6 @@ export function MultiWeekProgramProvider({ children }) {
       }
       if (
         currentState.hasPendingStructuralMutation ||
-        currentState.hasLegacyDocumentChanges ||
         currentState.metadata.saveState === "dirty" ||
         currentState.metadata.saveState === "saving" ||
         currentState.workoutSummary.pendingWorkoutIds.length > 0 ||
@@ -1042,7 +991,6 @@ export function MultiWeekProgramProvider({ children }) {
     getPersistenceSummary,
     multiWeekDraftRef,
     persistDraftNow,
-    workoutScopedAutosaveEnabled,
   ]);
 
   const beginHydrationTarget = useCallback((identity) => {
@@ -1054,7 +1002,7 @@ export function MultiWeekProgramProvider({ children }) {
       currentMetadata.cycleId !== identity.cycleId
     );
 
-    if (!workoutScopedAutosaveEnabled || !isDifferentDocument) {
+    if (!isDifferentDocument) {
       beginDocumentHydrationTarget(identity);
       return null;
     }
@@ -1086,7 +1034,6 @@ export function MultiWeekProgramProvider({ children }) {
     draftMetadataRef,
     flushAllWorkouts,
     persistDraftNow,
-    workoutScopedAutosaveEnabled,
   ]);
 
   // The only path back from `saveState === "conflict"`. Explicitly
@@ -2041,7 +1988,6 @@ export function MultiWeekProgramProvider({ children }) {
       programDraft,
       draftMetadata,
       workoutSaveState,
-      workoutScopedAutosaveEnabled,
       hydrateProgramDraft,
       beginHydrationTarget,
       handleDraftExpired,
@@ -2082,7 +2028,6 @@ export function MultiWeekProgramProvider({ children }) {
       programDraft,
       draftMetadata,
       workoutSaveState,
-      workoutScopedAutosaveEnabled,
       draftMetadataRef,
       multiWeekDraftRef,
       hydrateProgramDraft,
