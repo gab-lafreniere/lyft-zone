@@ -252,6 +252,10 @@ function createHarness({
   }
 
   const tx = {
+    $queryRaw: async (query, ...values) => {
+      calls.push({ model: 'trainingCycle', op: 'lock', query, values });
+      return [{ id: CYCLE_ID }];
+    },
     plan: {
       findFirst: async ({ where }) => {
         calls.push({ model: 'plan', op: 'findFirst' });

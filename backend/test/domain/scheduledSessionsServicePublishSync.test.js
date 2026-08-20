@@ -33,6 +33,10 @@ function createDb({ workouts, existingSessions = [] }) {
   const calls = [];
   const cycle = buildCycle(workouts);
   const db = {
+    $queryRaw: async (query, ...values) => {
+      calls.push({ model: 'trainingCycle', op: 'lock', query, values });
+      return [{ id: CYCLE_ID }];
+    },
     trainingCycle: {
       findFirst: async (query) => {
         calls.push({ model: 'trainingCycle', op: 'findFirst', query });
@@ -96,6 +100,17 @@ test('canonical publish sync pins the exact published Plan and uses only its Wor
   const cycleRead = calls.find(
     (call) => call.model === 'trainingCycle' && call.op === 'findFirst'
   );
+  const cycleLockIndex = calls.findIndex(
+    (call) => call.model === 'trainingCycle' && call.op === 'lock'
+  );
+  const cycleReadIndex = calls.findIndex(
+    (call) => call.model === 'trainingCycle' && call.op === 'findFirst'
+  );
+  const cycleLock = calls[cycleLockIndex];
+  assert.ok(cycleLockIndex >= 0);
+  assert.ok(cycleLockIndex < cycleReadIndex);
+  assert.equal(cycleLock.values[0], CYCLE_ID);
+  assert.match(cycleLock.query.join(''), /training_cycles[\s\S]*FOR UPDATE/);
   assert.deepEqual(cycleRead.query.where, {
     id: CYCLE_ID,
     userId: USER_ID,

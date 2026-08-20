@@ -278,11 +278,28 @@ async function listScheduledSessions(query) {
   }));
 }
 
+async function lockTrainingCycleForScheduledSessionSync(db, cycleId) {
+  await db.$queryRaw`
+    SELECT "id"
+    FROM "training_cycles"
+    WHERE "id" = ${cycleId}
+    FOR UPDATE
+  `;
+}
+
 async function synchronizeScheduledSessionsForPublishedCycle(db, cycleId, options = {}) {
   const userId = options.userId ? String(options.userId).trim() : null;
   const publishedPlanId = options.publishedPlanId
     ? String(options.publishedPlanId).trim()
     : null;
+
+  // Regeneration is a delete/recreate operation. Lock the owning Cycle row in
+  // this same transaction before deriving or reading the replaceable session
+  // set so concurrent regenerations for one Cycle serialize. The publication
+  // lookup below intentionally happens after the lock and therefore rejects a
+  // requested Plan that became stale while this transaction was waiting.
+  await lockTrainingCycleForScheduledSessionSync(db, cycleId);
+
   const cycle = await db.trainingCycle.findFirst({
     where: {
       id: cycleId,
