@@ -774,6 +774,61 @@ describe("ManualProgramProvider workout-scoped autosave", () => {
     expect(saveWeeklyPlanWorkoutContent).toHaveBeenCalledTimes(1);
   });
 
+  test("C2: reloadLatestAfterConflict is the only Weekly document-conflict recovery path", async () => {
+    const initial = buildResponse({ revision: 10 });
+    const latest = buildResponse({
+      versionId: "weekly_version_latest",
+      revision: 30,
+      repsByIndex: [18, 19],
+    });
+    latest.builderPayload.programName = "Canonical latest Weekly Plan";
+    updateWeeklyPlanDraft.mockRejectedValueOnce(Object.assign(
+      new Error("This draft was updated elsewhere."),
+      { code: "DRAFT_REVISION_CONFLICT", status: 409 }
+    ));
+    openOrCreateWeeklyPlanEditDraft.mockResolvedValueOnce(latest);
+    renderProvider(initial);
+
+    act(() => currentContext.updateProgramMeta({
+      programName: "First conflicting local name",
+    }));
+    await act(async () => {
+      await expect(currentContext.persistDraftNow()).rejects.toMatchObject({
+        code: "DRAFT_REVISION_CONFLICT",
+      });
+    });
+
+    expect(currentContext.draftMetadata.saveState).toBe("conflict");
+    expect(currentContext.draftMetadata.revision).toBe(10);
+    expect(currentContext.programDraft.programName).toBe("First conflicting local name");
+
+    act(() => currentContext.updateProgramMeta({
+      programName: "Newest protected conflicting name",
+    }));
+    await advanceAutosave();
+    expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+    expect(currentContext.programDraft.programName)
+      .toBe("Newest protected conflicting name");
+
+    await act(async () => {
+      await currentContext.reloadLatestAfterConflict();
+    });
+
+    expect(openOrCreateWeeklyPlanEditDraft).toHaveBeenCalledWith("weekly_parent_1");
+    expect(currentContext.programDraft.programName).toBe("Canonical latest Weekly Plan");
+    expect(currentContext.draftMetadata).toEqual(expect.objectContaining({
+      weeklyPlanParentId: "weekly_parent_1",
+      weeklyPlanVersionId: "weekly_version_latest",
+      revision: 30,
+      saveState: "saved",
+      lastSaveErrorCode: null,
+    }));
+
+    await advanceAutosave(5000);
+    expect(updateWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+    expect(currentContext.programDraft.programName).toBe("Canonical latest Weekly Plan");
+  });
+
   test("different-document navigation flushes while the same document remains immediate", async () => {
     const save = createDeferred();
     saveWeeklyPlanWorkoutContent.mockReturnValue(save.promise);

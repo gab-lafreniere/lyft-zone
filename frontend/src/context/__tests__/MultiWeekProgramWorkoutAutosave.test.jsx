@@ -1366,6 +1366,65 @@ describe("Cycle workout-scoped autosave (Phases 4 and 5)", () => {
     expect(screen.getByTestId("reps-a")).toHaveTextContent("77");
   });
 
+  test("C2: reloadLatestAfterConflict is the only Cycle document-conflict recovery path", async () => {
+    const initial = buildResponse({ revision: 10 });
+    const latest = buildResponse({
+      planId: "plan_latest",
+      revision: 30,
+      repsByIndex: [28, 29],
+      contentRevisions: [12, 13],
+    });
+    latest.builderPayload.programName = "Canonical latest Cycle";
+    updateCycleDraft.mockRejectedValueOnce(Object.assign(
+      new Error("This draft was updated elsewhere."),
+      { code: "DRAFT_REVISION_CONFLICT", status: 409 }
+    ));
+    openOrCreateCycleEditDraft.mockResolvedValueOnce(latest);
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(initial));
+
+    act(() => currentContext.updateProgramMeta({
+      programName: "First conflicting Cycle name",
+    }));
+    await act(async () => {
+      await expect(currentContext.persistDraftNow()).rejects.toMatchObject({
+        code: "DRAFT_REVISION_CONFLICT",
+      });
+    });
+
+    expect(currentContext.draftMetadata.saveState).toBe("conflict");
+    expect(currentContext.draftMetadata.revision).toBe(10);
+    expect(currentContext.programDraft.programName).toBe("First conflicting Cycle name");
+
+    act(() => currentContext.updateProgramMeta({
+      programName: "Newest protected Cycle name",
+    }));
+    await advanceAutosave();
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(currentContext.programDraft.programName).toBe("Newest protected Cycle name");
+
+    await act(async () => {
+      await currentContext.reloadLatestAfterConflict();
+    });
+
+    expect(openOrCreateCycleEditDraft).toHaveBeenCalledWith("cycle_1", {
+      timezone: "America/Toronto",
+      allowCrossDayDraft: false,
+    });
+    expect(currentContext.programDraft.programName).toBe("Canonical latest Cycle");
+    expect(currentContext.draftMetadata).toEqual(expect.objectContaining({
+      cycleId: "cycle_1",
+      cyclePlanId: "plan_latest",
+      revision: 30,
+      saveState: "saved",
+      lastSaveErrorCode: null,
+    }));
+
+    await advanceAutosave(5000);
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(currentContext.programDraft.programName).toBe("Canonical latest Cycle");
+  });
+
   test("a generic structural failure releases the barrier so a healthy workout can flush", async () => {
     const response = buildResponse();
     updateCycleDraft.mockRejectedValueOnce(new Error("network unavailable"));
@@ -1406,6 +1465,48 @@ describe("Cycle workout-scoped autosave (Phases 4 and 5)", () => {
     expect(flushResult).toEqual({ blockedWorkoutIds: [] });
     expect(currentContext.programDraft.workouts[0].scheduledDay).toBe("TUESDAY");
     expect(screen.getByTestId("reps-b")).toHaveTextContent("79");
+  });
+
+  test("C5: document DRAFT_EXPIRED recovery installs a clean baseline without a save loop", async () => {
+    const initial = buildResponse({ revision: 10 });
+    const recovered = buildResponse({
+      planId: "plan_recovered",
+      revision: 40,
+      repsByIndex: [38, 39],
+      contentRevisions: [20, 21],
+    });
+    recovered.builderPayload.programName = "Recovered canonical Cycle";
+    updateCycleDraft.mockRejectedValueOnce(Object.assign(
+      new Error("draft expired"),
+      { code: "DRAFT_EXPIRED", status: 409 }
+    ));
+    openOrCreateCycleEditDraft.mockResolvedValueOnce(recovered);
+    renderProvider();
+    act(() => currentContext.hydrateProgramDraft(initial));
+
+    act(() => currentContext.updateProgramMeta({
+      programName: "Expired local Cycle name",
+    }));
+    await act(async () => {
+      await currentContext.persistDraftNow();
+    });
+
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(openOrCreateCycleEditDraft).toHaveBeenCalledTimes(1);
+    expect(saveCycleWorkoutContent).not.toHaveBeenCalled();
+    expect(currentContext.programDraft.programName).toBe("Recovered canonical Cycle");
+    expect(currentContext.draftMetadata).toEqual(expect.objectContaining({
+      cyclePlanId: "plan_recovered",
+      revision: 40,
+      saveState: "saved",
+      isRecoveringDraft: false,
+      lastSaveErrorCode: null,
+    }));
+
+    await advanceAutosave(5000);
+    expect(updateCycleDraft).toHaveBeenCalledTimes(1);
+    expect(openOrCreateCycleEditDraft).toHaveBeenCalledTimes(1);
+    expect(currentContext.programDraft.programName).toBe("Recovered canonical Cycle");
   });
 
   test("workout DRAFT_EXPIRED during structural preparation recovers instead of PATCHing the expired Plan", async () => {

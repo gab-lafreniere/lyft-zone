@@ -200,13 +200,14 @@ GÉNÉRATION INITIALE (EN COURS)
   - ouvrir un edit draft dans le Manual Builder
   - republier le plan modifié
   - convertir le weekly plan publié en cycle
-- Le futur onboarding remplacera l’ancien Wizard supprimé et sera développé séparément
+- L’onboarding V2 a remplacé l’ancien Wizard et est maintenant implémenté séparément du AI Builder UI
+- À la fin de l’onboarding, le profil est sauvegardé puis le même pipeline AI Weekly Plan est déclenché avant conversion en cycle
 
 Limitation temporaire des objectifs:
 - AI Weekly Plan Builder (version actuelle) supporte uniquement HYPERTROPHY
 - STRENGTH et MIXED restent dans le modèle produit, mais sont temporairement verrouillés dans Settings
 - Les profils existants ne doivent jamais être convertis silencieusement vers HYPERTROPHY
-- Le futur onboarding devra passer par-dessus la question d’objectif et utiliser HYPERTROPHY par défaut
+- L’onboarding actuel passe par-dessus la question d’objectif et utilise HYPERTROPHY par défaut
 - Une doctrine complémentaire orientée strength sera requise avant l’activation de STRENGTH ou MIXED
 - Cette limitation appartient à la version actuelle du builder et ne constitue pas une décision produit définitive
 
@@ -264,13 +265,24 @@ NOTES IMPORTANTES
 - Les scheduled sessions deviennent la source de vérité pour la planification opérationnelle court terme
 
 ==================================================
-ENTRÉES UTILISATEUR DU FUTUR ONBOARDING
+ONBOARDING V2 ACTUEL
 ==================================================
-Le futur onboarding visera l’intention utilisateur, pas la stratégie, et devra rester court.
-Le AI Builder actuel utilise directement le Training Profile sauvegardé dans Settings.
+L’onboarding V2 est implémenté et vise l’intention utilisateur, pas la stratégie.
+Il alimente le Training Profile utilisé ensuite par le même AI Builder backend.
+
+Flow actuel:
+- parcours court en plusieurs étapes
+- sauvegarde du profil avant génération
+- loader de génération AI
+- vérification des conflits de cycles futurs
+- génération d’un Weekly Plan published via POST /api/weekly-plans/ai-drafts
+- conversion en cycle canonique de 6 semaines via POST /api/cycles/from-weekly-plan
+- onboarding marqué COMPLETED seulement après génération + conversion réussies
+- les logs passés ne sont jamais supprimés lors d’un remplacement de cycles futurs
 
 Entrées principales:
-- Objectif principal (force, masse musculaire, cardio, mobilité)
+
+- Objectif actuel: HYPERTROPHY par défaut dans l’onboarding
 - Disponibilités (séances par semaine, durée par séance)
 - Environnement et équipements disponibles
 - Contraintes et préférences (exercices à éviter, limitations, inconforts, préférences de pratique)
@@ -285,8 +297,8 @@ Champ additionnel:
 * Le sexe et l'âge servent uniquement de contexte pour le AI Builder, le coaching longitunidal et pour personnaliser l'expérience d'utilisation.
   - Important: présentation neutre et utilitaire, aucune norme de valeur
 
-Sélection future du mode:
-- Plan fixe (AI builder inclus)
+Vision future du mode:
+- Plan fixe (AI Builder inclus)
 - Coach IA longitudinal
 
 ==================================================
@@ -347,7 +359,7 @@ MODULES PRINCIPAUX (ÉTAT ACTUEL)
   - Conversion en cycles multi-week
   - Édition via drafts
   - Génération AI d’un weekly plan statique
-  - Pipeline AI actuel à trois appels
+  - Pipeline AI Bound Plan: 2 appels principaux (Creator + Binder), puis résolution déterministe et fallback étroit optionnel
   - Présentation du résultat et transition vers le Manual Builder
 
 - Base d’exercices avancée (voir section BASE D’EXERCICES)
@@ -356,7 +368,8 @@ MODULES PRINCIPAUX (ÉTAT ACTUEL)
 
 - Planification (cycle)
   - Structure multi-semaines
-  - Calendrier dérivé du cycle
+  - Scheduled sessions dérivées du cycle publié
+  - Calendrier opérationnel basé sur les scheduled sessions
 
 - Historique de structure des plans
   - Gestion draft / published
@@ -469,6 +482,22 @@ Principes clés:
 - Le backend est responsable de la cohérence des données et des contraintes
 - Les seeds et imports de données sont validés avant toute écriture en base
 
+Persistance des builders:
+
+- Weekly Plan et Training Cycle utilisent maintenant le workout-scoped autosave comme architecture canonique
+- Les modifications de contenu d’un workout sont persistées indépendamment via un endpoint workout-scoped
+- Les modifications structurelles restent persistées au niveau du document complet:
+  - settings / métadonnées
+  - création / suppression de workout
+  - déplacement / réordonnancement
+  - changements structurels du programme
+- Le frontend conserve le draft complet en mémoire pour permettre une navigation immédiate entre workouts
+- Chaque workout possède sa propre révision de contenu (contentRevision)
+- La révision du document reste distincte et protège les opérations structurelles
+- Les saves d’un même workout sont sérialisés et coalescés; différents workouts peuvent être sauvegardés concurremment
+- Le publish applique une barrière terminale qui attend la fin de toutes les persistances workout + structure avant validation
+- Les anciens fallbacks de content autosave whole-document et leurs feature flags ont été supprimés
+
 État technique actuel:
 
 - Prisma + PostgreSQL constitue la source principale de vérité
@@ -497,7 +526,8 @@ Endpoint AI actuel:
 
 POST /api/weekly-plans/ai-drafts
 
-- Déclenche uniquement le pipeline AI actuel à trois appels
+- Déclenche le pipeline AI Weekly Plan actuel
+- En mode BOUND_PLAN: 2 appels principaux (Creator + Binder), avec retries/recovery bornés et fallback étroit optionnel
 - Persiste la génération initiale comme weekly plan published
 - Ne passe par aucun ancien pipeline review ou repair
 
@@ -519,10 +549,15 @@ Endpoints principaux liés aux templates hebdomadaires:
 - Publication d’un plan
 - Récupération de la librairie de plans
 - Récupération d’un plan complet
+- Mise à jour workout-scoped du contenu:
+  PATCH /api/weekly-plans/:weeklyPlanParentId/drafts/:versionId/workouts/:workoutId
 
 Note:
 - Les weekly plans sont versionnés (draft / published)
 - Une seule version visible par plan est exposée dans la librairie
+- Les modifications de contenu d’un workout utilisent l’endpoint workout-scoped
+- Les modifications structurelles continuent d’utiliser la persistance du draft complet
+- Un workout utilise contentRevision pour son CAS; WeeklyPlanVersion.revision reste l’autorité de révision du document
 
 --------------------------------------------------
 CYCLES (MULTI-WEEK)
@@ -533,12 +568,16 @@ Endpoints principaux:
 POST /api/cycles
 POST /api/cycles/:cycleId/plans
 GET /api/cycles/:cycleId/full
+PATCH /api/cycles/:cycleId/drafts/:planId/workouts/:workoutId
 
 Fonctionnalités associées:
 - Création d’un cycle à partir d’un weekly plan
 - Gestion de draft pour édition
 - Publication d’un cycle
 - Récupération d’un cycle complet (structure + métadonnées)
+- Autosave du contenu par workout
+- Persistance whole-document réservée aux changements structurels
+- Publication avec barrière terminale de persistance avant validation
 
 --------------------------------------------------
 SCHEDULED SESSIONS
@@ -548,8 +587,14 @@ POST /api/scheduled-sessions
 GET /api/scheduled-sessions
 
 Note:
-- Les scheduled sessions existent côté backend
-- Le système actuel repose encore majoritairement sur un calendrier dérivé du cycle
+- Les scheduled sessions sont la source de vérité de la planification opérationnelle court terme
+- Elles sont générées à partir de tous les cycles publiés pertinents, incluant les cycles upcoming et active
+- Elles ne sont jamais synchronisées pendant l’autosave d’un draft
+- Elles sont régénérées uniquement lorsqu’un cycle est publié
+- Le calendrier affiche les scheduled sessions comprises dans sa fenêtre temporelle, indépendamment du fait que leur cycle soit upcoming ou active
+- La régénération cible explicitement le Plan published courant du cycle
+- Si le publish réussit mais que la synchronisation échoue, la publication reste valide et le système peut relancer uniquement la synchronisation sans republier le Plan
+- Les régénérations concurrentes d’un même cycle sont sérialisées au niveau PostgreSQL sur le TrainingCycle afin d’éviter les ScheduledSessions en double
 
 --------------------------------------------------
 EXERCISES
@@ -600,7 +645,7 @@ RÈGLES MÉTIER ET VALIDATIONS
 - Toutes les règles critiques vivent côté backend.
 - Le frontend peut refléter les règles pour l’UX, mais ne doit jamais être la source de vérité.
 - Les règles métier doivent être centralisées dans des services/domain helpers réutilisables.
-- Toute règle utilisée par les builders, le futur onboarding ou les Settings doit être validée côté backend avant persistance.
+- Toute règle utilisée par les builders, l’onboarding V2 ou les Settings doit être validée côté backend avant persistance.
 
 --------------------------------------------------
 USER EXERCISE POOL
@@ -786,8 +831,8 @@ FONCTIONNALITÉS PARTIELLES OU NON FINALISÉES
   - les éléments visuels (week tabs, volume bars) ne doivent pas être considérés comme des sources métier finales
 
 - L’ancien Wizard frontend a été supprimé
-- Le futur onboarding n’est pas encore implémenté
-- Le AI Builder actuel utilise directement le Training Profile sauvegardé dans Settings
+- L’onboarding V2 est implémenté et connecté au AI Builder + conversion en cycle
+- Le AI Builder reste également utilisable directement à partir du Training Profile sauvegardé dans Settings
 
 - Les pages Train, Progress et AI Coach sont présentes mais encore partiellement implémentées (UI principalement)
 
@@ -798,8 +843,6 @@ DONNÉES ET SYSTÈME
 - Pas d’authentification réelle:
   - utilisation d’un userId local côté frontend
   - pas de gestion multi-utilisateur complète
-
-- Le calendrier reste principalement dérivé du cycle (voir MODÈLE PRODUIT)
 
 - La recherche d’exercices est volontairement bornée:
   - limit par défaut: 25
@@ -914,7 +957,6 @@ Mettre en place une base solide côté backend, données et édition de plans.
 
 Points encore en évolution dans la phase 1:
 - multi-week builder (améliorations en cours)
-- cohérence complète du calendrier vs scheduled sessions
 - certaines validations et contraintes avancées
 
 --------------------------------------------------
@@ -922,13 +964,12 @@ PRIORITÉS COURT TERME (FOCUS ACTUEL)
 --------------------------------------------------
 
 - Finaliser et stabiliser le multi-week builder
-- Clarifier et solidifier la logique de calendrier:
-  - alignement entre structure du cycle et scheduled sessions
 
-- Concevoir le futur onboarding:
+- Stabiliser l’onboarding V2 déjà implémenté:
   - collecte initiale du profil utilisateur
-  - alimentation du Training Profile canonique
-  - lancement du AI Builder actuel
+  - génération AI
+  - gestion des conflits de cycles futurs
+  - conversion du Weekly Plan en cycle
 
 - Améliorer la cohérence globale frontend/backend:
   - éliminer les zones encore partiellement mockées
@@ -937,9 +978,10 @@ PRIORITÉS COURT TERME (FOCUS ACTUEL)
   - retirer progressivement le code legacy (Sequelize / SQLite)
 
 - Stabiliser le AI Builder actuel:
-  - conserver le pipeline à trois appels
-  - améliorer progressivement la qualité des programmes
+  - utiliser BOUND_PLAN comme nouvelle architecture candidate
   - préserver le contrat Weekly Plan et l’intégration avec le Manual Builder
+  - maintenir GEOMETRY_ONLY temporairement comme rollback legacy
+  - améliorer la fiabilité de Call #1 sur les contraintes explicites, notamment les exerciseIds du pool
   - aucun comportement Coach IA longitudinal à ce stade
 
 --------------------------------------------------
@@ -991,7 +1033,7 @@ Rendre le système adaptatif et intelligent.
 
 - AI Builder initial implémenté:
   - génère un weekly plan statique basé sur le Training Profile et le User Exercise Pool
-  - utilise un pipeline à trois appels IA
+  - utilise le pipeline Bound Plan: Creator + Binder, résolution déterministe, recovery borné et fallback étroit optionnel
   - persiste le plan généré comme published
   - permet ensuite l’édition via le Manual Builder
   - ne modifie pas automatiquement les cycles existants
@@ -1341,12 +1383,12 @@ Principes clés:
 - Une décision à la fois
 - Feedback immédiat
 
-Futur onboarding:
+Onboarding V2 (implémenté):
 - parcours court (4 à 6 étapes maximum)
 - résumé clair avant validation
 - alimentation du Training Profile canonique
-- lancement possible du AI Builder
-- développement séparé de l’ancien Wizard supprimé
+- déclenche le pipeline AI Weekly Plan puis la conversion en cycle
+- a remplacé l’ancien Wizard supprimé
 
 Navigation produit recommandée:
 - Home
@@ -1364,50 +1406,86 @@ CONTRAINTES POUR L’AGENT IA
 - Respecter la vision produit sans simplification abusive
 
 Règles AI Builder:
-- L’IA ne peut utiliser que les exercices provenant du User Exercise Pool
-- L’IA ne doit pas inventer d’exercices
-- L’IA génère une proposition de plan, pas une modification automatique
-- Le premier appel IA reçoit uniquement les informations nécessaires à la conception stratégique du programme.
-- Les informations calculables ou déjà disponibles dans le backend ne doivent pas être injectées inutilement dans le prompt.
-- Le prompt doit rester le plus compact possible afin de maximiser le contexte disponible pour le raisonnement.
-- Le backend reste responsable de valider:
-  - équipement
-  - difficulté
-  - contraintes de mouvement
-  - trainingType
-  - structure du plan
-- Les choix doivent être explicables
-- Les exercices existants d’un plan ne doivent pas être supprimés automatiquement par un changement de profil
-- Le pipeline AI actuel utilise exactement trois appels:
-  1. génération du programme textuel complet
-  2. extraction de sa structure
-  3. remplissage du squelette Weekly Plan
-- Les étapes déterministes construisent et verrouillent la géométrie, matérialisent les fills, valident le contrat final et calculent les métriques
-- Le pipeline actuel ne contient aucune passe review ou repair
-- L’ancien pipeline V4 de génération JSON directe, review, repair, analytics et audit a été supprimé
-- Les huit artefacts de diagnostic du pipeline actuel sont conservés
+- Call #1 est le CREATOR et reste le seul responsable des décisions de coaching: workouts, exercices, ordre, blocs, supersets, sets, reps, RIR/RPE, tempo, rest et cardio.
+- L’IA ne peut utiliser que les exercices provenant du User Exercise Pool et ne doit pas inventer d’exerciseId.
+- Call #2 est un BINDER fidèle: il enregistre la structure et les prescriptions présentes dans le plan de Call #1 sans coacher, compléter ou redessiner.
+- Le backend vérifie la fidélité du bind, l’appartenance exacte au pool et l’intégrité des occurrences avant de construire la géométrie.
+- L’intégrité source/bind repose sur l’égalité exacte du multiset des exerciseIds éligibles: omission ou insertion déclenche retry binder puis fail closed si non corrigé.
+- Step 05 reste l’autorité déterministe de géométrie. Aucun parser legacy de Output 02 n’est utilisé en mode BOUND_PLAN.
+- Les fills sont résolus déterministiquement; le fallback IA est limité aux block rests ambigus et ne peut pas modifier la géométrie ni d’autres champs.
+- Les valeurs non résolubles de tempo deviennent null; aucun tempo n’est inventé pour satisfaire le schema.
+- Recovery est borné: maximum 2 outputs Creator, 4 tentatives Binder au total et 1 fallback étroit. Il ne peut pas boucler.
+- En FULL, trois contraintes Call #1 peuvent déclencher un creator repair après confirmation par deux binds: mauvais nombre de workouts, sets inégaux dans un SUPERSET, exerciseId hors pool.
+- Les artefacts 01 à 08 restent le contrat de diagnostic; les tentatives supersédées sont conservées en sidecars et output8.attempts trace le recovery.
+- GEOMETRY_ONLY reste temporairement disponible comme rollback legacy; BOUND_PLAN est isolé du second parser historique.
+- L’ancien pipeline V4 de génération JSON directe, review, repair, analytics et audit reste supprimé.
 
 ==================================================
 PIPELINE AI WEEKLY PLAN ACTUEL
 ==================================================
 
-Architecture active:
-1. génération textuelle complète
-2. extraction de structure
-3. construction déterministe du squelette
-4. remplissage des variables
-5. matérialisation et validation finale
-6. calcul des métriques
-7. persistance du weekly plan comme published
-8. présentation du résultat et accès au Manual Builder
+Architecture candidate active en local: BOUND_PLAN
 
-Principes:
-- une seule architecture AI Weekly Plan runtime
-- aucun ancien pipeline V4
-- aucune passe review ou repair
-- aucun exercice hors User Exercise Pool
-- le contrat Weekly Plan final est validé côté backend
-- le prompt actif, ses modèles et ses trois appels constituent la baseline à préserver
+1. Call #1 CREATOR
+   - génère le programme textuel complet à partir du Training Profile et du User Exercise Pool
+2. Call #2 BINDER
+   - produit Bound Plan v1 en copiant fidèlement la structure et les prescriptions de Call #1
+3. Vérification backend déterministe
+   - schema + source spans
+   - exerciseIds exacts dans le pool
+   - arité/type des blocs
+   - workout count
+   - sets / rest scope / égalité des sets de supersets
+   - égalité exacte des occurrences exerciseId source vs bind
+4. Step 05
+   - construction déterministe du squelette et autorité de géométrie
+5. Résolution des fills
+   - normalisation déterministe
+   - tempo qualitatif/non supporté -> null
+   - fallback IA uniquement pour block rest réellement ambigu
+6. Output 07
+   - matérialisation du Weekly Plan canonique + geometry lock
+7. Output 08
+   - validation finale, métriques, usage/cost et ledger des attempts
+8. Persistance
+   - génération initiale persistée comme Weekly Plan published
+9. Présentation
+   - résultat consultable puis éditable via Manual Builder / convertible en cycle
+
+Recovery BOUND_PLAN:
+- OFF: aucun retry
+- BINDER_ONLY: retry Binder sans réparation de Call #1
+- FULL: retry Binder + un creator repair maximum pour les contraintes Call #1 explicitement réparables
+- Budgets maximums: 2 outputs Call #1, 4 outputs Call #2, 1 fallback étroit
+- Le pipeline termine toujours par succès ou fail closed
+
+Feature flags:
+- SIMPLE_WEEKLY_PLAN_EXTRACTION_MODE=GEOMETRY_ONLY | BOUND_PLAN
+- SIMPLE_WEEKLY_PLAN_RECOVERY_LEVEL=OFF | BINDER_ONLY | FULL
+- Toute valeur non vide inconnue est maintenant une erreur de configuration; aucun fallback silencieux vers GEOMETRY_ONLY
+- GEOMETRY_ONLY est conservé temporairement comme rollback legacy
+
+Call #2 runtime:
+- OPENAI_SIMPLE_WEEKLY_PLAN_MAX_OUTPUT_TOKENS_2=8000
+- OPENAI_SIMPLE_WEEKLY_PLAN_TIMEOUT_2_MS=90000
+
+Durcissements post mega-audit (2026-08-14):
+- omissions au début/milieu/fin et insertions Binder détectées par égalité exacte des occurrences exerciseId
+- aucune violation d’intégrité ne peut PROCEED faute de budget de retry
+- parsing rest corrigé pour durées composées et m:ss
+- tempo non numérique ou sémantiquement ambigu -> null au lieu d’une valeur numérique corrompue
+- qualifiers /side, /leg, /arm préservés
+- validation AJV interne rendue indépendante de geometryHash pour éviter l’accumulation de validateurs compilés
+- artefacts canoniques 01/02/03 suivent maintenant la dernière chaîne tentée sur les chemins de failure/recovery
+
+État de validation:
+- mega audit final: architecture jugée saine, problème historique multi-parser éliminé en BOUND_PLAN
+- isolation BOUND_PLAN vs parser legacy prouvée par poison/control test
+- creator repair exercé live pour la première fois: la boucle a fonctionné et a fail closed correctement lorsque Call #1 a réémis un exerciseId hors pool après repair
+- dernier problème qualité observé: Call #1 peut encore réinventer `exr_hip_thrust_machine` au lieu de l’ID de pool valide `exr_machine_hip_thrust`, même après directive de repair; pipeline détecte et bloque correctement
+
+Défaut connu volontairement différé:
+- M-5: Output 08 utilise encore le preflight draft alors que la persistance published exécute des validations publish supplémentaires; ce gap est hors scope de la passe Bound Plan actuelle et échoue bruyamment à la persistance plutôt que de corrompre silencieusement les données
 
 ==================================================
 RÈGLE FINALE
@@ -2433,8 +2511,10 @@ Principes:
 - les nouvelles règles de profil et de génération doivent vivre dans `domain`, pas dans les gros services legacy
 
 Persistance Training Profile:
-- Le Training Profile sauvegardé dans Settings est la source canonique
-- `onboardingSnapshot` n’est pas la source canonique
-- Le futur onboarding devra écrire dans le même contrat canonique que Settings
+- `user_profiles.onboardingSnapshot.profile` est le contrat canonique du Training Profile
+- Settings et l’onboarding V2 écrivent tous les deux dans ce même contrat canonique
+- Le pipeline AI lit ce contrat: `buildProgramGenerationContext` et `buildExercisePoolForUser` échouent si `onboardingSnapshot.profile` est absent ou invalide
 - Le AI Builder lit les valeurs sauvegardées du Training Profile
 - Les interfaces temporaires du AI Builder ne doivent modifier le backend qu’au moment explicite de la génération
+
+Le Training Profile canonique est le contrat métier éditable depuis Settings et l’Onboarding V2. Sa représentation persistée actuelle est UserProfile.onboardingSnapshot.profile. Settings et l’onboarding écrivent tous les deux dans ce même contrat; le AI Builder et le User Exercise Pool le relisent côté backend.
