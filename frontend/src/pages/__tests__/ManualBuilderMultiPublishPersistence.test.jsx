@@ -129,4 +129,60 @@ describe("ManualBuilderMulti publish persistence (Phase 1B)", () => {
     expect(contextValue.prepareCycleDraftForPublish).toHaveBeenCalledTimes(1);
     expect(contextValue.flushAllWorkouts).not.toHaveBeenCalled();
   });
+
+  test("retries only ScheduledSession sync after a post-commit publish failure", async () => {
+    const partialFailure = Object.assign(
+      new Error("Cycle was published, but scheduled sessions failed to synchronize."),
+      {
+        code: "SCHEDULE_SYNC_FAILED",
+        details: {
+          cycleId: "cycle_1",
+          publishedPlanId: "published_plan_2",
+          retryMode: "SCHEDULE_SYNC_ONLY",
+        },
+      }
+    );
+    publishCycleDraft
+      .mockRejectedValueOnce(partialFailure)
+      .mockResolvedValueOnce({
+        cycleId: "cycle_1",
+        publishedPlanId: "published_plan_2",
+        status: "PUBLISHED",
+        builderPayload: { weeks: [] },
+      });
+    const persistDraftNow = jest.fn().mockResolvedValue({});
+    const contextValue = createContextValue(persistDraftNow);
+
+    renderAtCycle("cycle_1", contextValue);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Publish Cycle/ }));
+
+    expect(
+      await screen.findByText("Cycle published; schedule sync pending")
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Cycle was published, but scheduled sessions failed to synchronize."
+      )
+    ).toBeTruthy();
+    expect(persistDraftNow).toHaveBeenCalledTimes(1);
+    expect(contextValue.prepareCycleDraftForPublish).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /Retry Schedule Sync/ }));
+
+    await waitFor(() => expect(publishCycleDraft).toHaveBeenCalledTimes(2));
+    expect(publishCycleDraft).toHaveBeenNthCalledWith(1, "cycle_1", {
+      allowCrossDayDraft: false,
+    });
+    expect(publishCycleDraft).toHaveBeenNthCalledWith(2, "cycle_1", {
+      publishedPlanId: "published_plan_2",
+    });
+    expect(persistDraftNow).toHaveBeenCalledTimes(1);
+    expect(contextValue.prepareCycleDraftForPublish).toHaveBeenCalledTimes(1);
+    expect(contextValue.hydrateProgramDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ publishedPlanId: "published_plan_2" }),
+      { force: true }
+    );
+    expect(await screen.findByText("post-publish destination")).toBeTruthy();
+  });
 });

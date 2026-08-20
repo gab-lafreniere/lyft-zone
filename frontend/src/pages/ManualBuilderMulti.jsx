@@ -274,6 +274,8 @@ export default function ManualBuilderMulti() {
   const [isDeletingCycle, setIsDeletingCycle] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [publishError, setPublishError] = useState(null);
+  const [pendingScheduleSyncPublishedPlanId, setPendingScheduleSyncPublishedPlanId] =
+    useState(null);
   const [showMuscleDistribution, setShowMuscleDistribution] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsStartDate, setSettingsStartDate] = useState("");
@@ -303,6 +305,9 @@ export default function ManualBuilderMulti() {
   const isDurationEditable = isUpcomingCycle || isActiveCycle;
   const isRecoveringDraft = draftMetadata.isRecoveringDraft;
   const activePlanId = draftMetadata.cyclePlanId || planId || null;
+  const hasPublishTarget = Boolean(
+    pendingScheduleSyncPublishedPlanId || activePlanId
+  );
   const editTodayDateKey =
     draftMetadata.draftState?.localDate ||
     getDateKeyInTimeZone(
@@ -1002,9 +1007,9 @@ export default function ManualBuilderMulti() {
   const handlePublish = async () => {
     if (
       !cycleId ||
-      !activePlanId ||
       isRecoveringDraft ||
-      draftMetadata.saveState === "conflict"
+      (!pendingScheduleSyncPublishedPlanId &&
+        (!activePlanId || draftMetadata.saveState === "conflict"))
     ) {
       return;
     }
@@ -1013,6 +1018,16 @@ export default function ManualBuilderMulti() {
     setPublishError(null);
 
     try {
+      if (pendingScheduleSyncPublishedPlanId) {
+        const response = await publishCycleDraft(cycleId, {
+          publishedPlanId: pendingScheduleSyncPublishedPlanId,
+        });
+        setPendingScheduleSyncPublishedPlanId(null);
+        hydrateProgramDraft(response, { force: true });
+        navigate(getCycleDetailsPath(cycleId), { replace: true });
+        return;
+      }
+
       const preparation = await prepareCycleDraftForPublish();
       if (preparation?.status !== "ready") {
         return;
@@ -1024,6 +1039,21 @@ export default function ManualBuilderMulti() {
       hydrateProgramDraft(response, { force: true });
       navigate(getCycleDetailsPath(cycleId), { replace: true });
     } catch (publishError) {
+      const partialPublishedPlanId =
+        publishError?.code === "SCHEDULE_SYNC_FAILED"
+          ? publishError?.details?.publishedPlanId || null
+          : null;
+      if (partialPublishedPlanId) {
+        setPendingScheduleSyncPublishedPlanId(partialPublishedPlanId);
+        setPublishError(
+          buildUiError(
+            publishError,
+            "Cycle published, but scheduled sessions still need synchronization."
+          )
+        );
+        return;
+      }
+
       const didRecoverDraft = await handleDraftExpired(publishError, cycleId);
       if (didRecoverDraft) {
         return;
@@ -1533,7 +1563,11 @@ export default function ManualBuilderMulti() {
         <div className="mx-auto max-w-md">
           {publishError && (
             <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-              <p className="font-semibold">Publish failed</p>
+              <p className="font-semibold">
+                {pendingScheduleSyncPublishedPlanId
+                  ? "Cycle published; schedule sync pending"
+                  : "Publish failed"}
+              </p>
               <p className="mt-1">{publishError.message}</p>
               {publishError.code && (
                 <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-red-400">
@@ -1548,16 +1582,18 @@ export default function ManualBuilderMulti() {
             disabled={
               isPublishing ||
               isRecoveringDraft ||
-              !activePlanId ||
-              draftMetadata.saveState === "conflict"
+              !hasPublishTarget ||
+              (!pendingScheduleSyncPublishedPlanId &&
+                draftMetadata.saveState === "conflict")
             }
             onClick={handlePublish}
             className={[
               "flex w-full items-center justify-center rounded-xl py-4 font-bold transition-colors",
               !isPublishing &&
                 !isRecoveringDraft &&
-                activePlanId &&
-                draftMetadata.saveState !== "conflict"
+                hasPublishTarget &&
+                (pendingScheduleSyncPublishedPlanId ||
+                  draftMetadata.saveState !== "conflict")
                 ? "bg-primary text-white"
                 : "cursor-not-allowed bg-slate-300 text-white/60",
             ].join(" ")}
@@ -1567,7 +1603,9 @@ export default function ManualBuilderMulti() {
                 ? "Reloading latest draft..."
                 : isPublishing
                   ? "Publishing..."
-                  : "Publish Cycle"}
+                  : pendingScheduleSyncPublishedPlanId
+                    ? "Retry Schedule Sync"
+                    : "Publish Cycle"}
             </span>
           </button>
         </div>

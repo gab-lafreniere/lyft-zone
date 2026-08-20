@@ -280,6 +280,9 @@ async function listScheduledSessions(query) {
 
 async function synchronizeScheduledSessionsForPublishedCycle(db, cycleId, options = {}) {
   const userId = options.userId ? String(options.userId).trim() : null;
+  const publishedPlanId = options.publishedPlanId
+    ? String(options.publishedPlanId).trim()
+    : null;
   const cycle = await db.trainingCycle.findFirst({
     where: {
       id: cycleId,
@@ -293,7 +296,10 @@ async function synchronizeScheduledSessionsForPublishedCycle(db, cycleId, option
       endDate: true,
       timezone: true,
       plans: {
-        where: { status: 'PUBLISHED' },
+        where: {
+          status: 'PUBLISHED',
+          ...(publishedPlanId ? { id: publishedPlanId } : {}),
+        },
         orderBy: { versionNumber: 'desc' },
         take: 1,
         select: {
@@ -327,7 +333,13 @@ async function synchronizeScheduledSessionsForPublishedCycle(db, cycleId, option
 
   const publishedPlan = cycle.plans[0] || null;
   if (!publishedPlan) {
-    throw new ApiError(400, 'VALIDATION_ERROR', 'No published plan is available for this cycle');
+    throw new ApiError(
+      publishedPlanId ? 409 : 400,
+      publishedPlanId ? 'PUBLISHED_PLAN_NOT_CURRENT' : 'VALIDATION_ERROR',
+      publishedPlanId
+        ? 'The requested published plan is not the current published version'
+        : 'No published plan is available for this cycle'
+    );
   }
 
   const effectiveTimezone = resolveEffectiveTimezone(

@@ -3919,9 +3919,29 @@ function mergePublishedAndDraftWorkouts(cycle, publishedPlan, draftPlan, timeZon
   };
 }
 
+function buildCyclePublishResult(cycle, publishedPlan, effectiveTimezone) {
+  return {
+    cycleId: cycle.id,
+    publishedPlanId: publishedPlan.id,
+    status: 'PUBLISHED',
+    temporalStatus: deriveTemporalStatus(cycle, effectiveTimezone),
+    timezone: effectiveTimezone,
+    cycle: {
+      id: cycle.id,
+      name: publishedPlan.name,
+      startDate: toDateKey(cycle.startDate),
+      endDate: toDateKey(cycle.endDate),
+      durationWeeks: cycle.durationWeeks,
+    },
+    builderPayload: buildCycleBuilderPayload(cycle, publishedPlan),
+    updatedAt: publishedPlan.updatedAt,
+  };
+}
+
 async function publishCycleDraft(cycleId, payload = {}) {
   const prisma = getPrisma();
   const userId = normalizeOptionalString(payload.userId);
+  const retryPublishedPlanId = normalizeOptionalString(payload.publishedPlanId);
   await assertUserExists(userId);
   let phase = 'start';
 
@@ -3939,6 +3959,30 @@ async function publishCycleDraft(cycleId, payload = {}) {
           temporalStatus,
           timezone: effectiveTimezone,
         });
+
+        if (retryPublishedPlanId) {
+          phase = 'resolve_schedule_sync_retry';
+          const currentPublishedPlan = pickLatestPublished(cycle.plans);
+          if (!currentPublishedPlan || currentPublishedPlan.id !== retryPublishedPlanId) {
+            throw new ApiError(
+              409,
+              'PUBLISHED_PLAN_NOT_CURRENT',
+              'The published Cycle version awaiting synchronization is no longer current'
+            );
+          }
+
+          logCycleServiceEvent('publish_cycle_draft', phase, {
+            cycleId,
+            userId,
+            publishedPlanId: currentPublishedPlan.id,
+            retryMode: 'schedule_sync_only',
+          });
+          return buildCyclePublishResult(
+            cycle,
+            currentPublishedPlan,
+            effectiveTimezone
+          );
+        }
 
         if (temporalStatus === 'past') {
           throw new ApiError(400, 'VALIDATION_ERROR', 'Past cycles cannot be published');
@@ -4034,22 +4078,11 @@ async function publishCycleDraft(cycleId, payload = {}) {
           publishedPlanId: newPublishedPlan.id,
         });
 
-        return {
-          cycleId: cycle.id,
-          publishedPlanId: newPublishedPlan.id,
-          status: 'PUBLISHED',
-          temporalStatus: deriveTemporalStatus(updatedCycle, effectiveTimezone),
-          timezone: effectiveTimezone,
-          cycle: {
-            id: updatedCycle.id,
-            name: sourceDocument.name,
-            startDate: toDateKey(updatedCycle.startDate),
-            endDate: toDateKey(updatedCycle.endDate),
-            durationWeeks: updatedCycle.durationWeeks,
-          },
-          builderPayload: buildCycleBuilderPayload(updatedCycle, newPublishedPlan),
-          updatedAt: newPublishedPlan.updatedAt,
-        };
+        return buildCyclePublishResult(
+          updatedCycle,
+          newPublishedPlan,
+          effectiveTimezone
+        );
       },
       {
         timeout: 15000,
@@ -4061,6 +4094,7 @@ async function publishCycleDraft(cycleId, payload = {}) {
       await regenerateScheduledSessionsForPublishedCycle(cycleId, {
         userId,
         timezone: publishResult.timezone,
+        publishedPlanId: publishResult.publishedPlanId,
       });
     } catch (error) {
       logCycleServiceError(
@@ -4077,7 +4111,12 @@ async function publishCycleDraft(cycleId, payload = {}) {
       throw new ApiError(
         500,
         'SCHEDULE_SYNC_FAILED',
-        'Cycle was published, but scheduled sessions failed to synchronize.'
+        'Cycle was published, but scheduled sessions failed to synchronize.',
+        {
+          cycleId,
+          publishedPlanId: publishResult.publishedPlanId,
+          retryMode: 'SCHEDULE_SYNC_ONLY',
+        }
       );
     }
 

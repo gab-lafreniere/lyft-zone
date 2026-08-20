@@ -187,8 +187,14 @@ function countRows(plan) {
 
 // ---------------------------------------------------------------- prisma harness
 
-function createHarness({ plans, existingDraft = null, planCreateError = null }) {
+function createHarness({
+  plans,
+  existingDraft = null,
+  planCreateError = null,
+  scheduleSyncFailures = 0,
+}) {
   const calls = [];
+  let remainingScheduleSyncFailures = scheduleSyncFailures;
   let idCounter = 0;
   const nextId = (prefix) => {
     idCounter += 1;
@@ -339,22 +345,38 @@ function createHarness({ plans, existingDraft = null, planCreateError = null }) 
     trainingCycle: {
       // Scheduled-session sync re-reads the cycle after publish, so freshly written
       // plans have to be visible alongside the fixture ones.
-      findFirst: async () => ({
-        ...cycle,
-        plans: [
-          ...written.plans
-            .map((plan) => hydratePlan(plan.id))
-            .filter(Boolean),
-          ...plans,
-        ],
-      }),
+      findFirst: async (query) => {
+        calls.push({ model: 'trainingCycle', op: 'findFirst', query });
+        return {
+          ...cycle,
+          plans: [
+            ...written.plans
+              .map((plan) => hydratePlan(plan.id))
+              .filter(Boolean),
+            ...plans,
+          ],
+        };
+      },
       findUnique: async () => cycle,
       update: async ({ data }) => ({ ...cycle, ...data }),
     },
     scheduledSession: {
-      findMany: async () => [],
-      deleteMany: async () => ({ count: 0 }),
-      createMany: async () => ({ count: 0 }),
+      findMany: async (query) => {
+        calls.push({ model: 'scheduledSession', op: 'findMany', query });
+        if (remainingScheduleSyncFailures > 0) {
+          remainingScheduleSyncFailures -= 1;
+          throw new Error('simulated scheduled-session synchronization failure');
+        }
+        return [];
+      },
+      deleteMany: async (query) => {
+        calls.push({ model: 'scheduledSession', op: 'deleteMany', query });
+        return { count: 0 };
+      },
+      createMany: async ({ data }) => {
+        calls.push({ model: 'scheduledSession', op: 'createMany', data });
+        return { count: data.length };
+      },
     },
     user: { findUnique: async () => ({ id: USER_ID }) },
   };
@@ -592,7 +614,7 @@ test('publish draft also clones through the batched path', async () => {
   // ReferenceError because regenerateScheduledSessionsForPublishedCycle was called
   // without being imported, surfacing as SCHEDULE_SYNC_FAILED after the publish had
   // already been written.
-  await publishCycleDraft(CYCLE_ID, {
+  const result = await publishCycleDraft(CYCLE_ID, {
     userId: USER_ID,
     planId: DRAFT_PLAN_ID,
     timezone: TIMEZONE,
@@ -615,4 +637,93 @@ test('publish draft also clones through the batched path', async () => {
   assert.equal(publishedShell.versionNumber, 3);
   assert.ok(publishedShell.publishedAt instanceof Date);
   assert.equal(publishedShell.weeks, undefined);
+
+  const publishedWorkoutIds = new Set(harness.written.workouts.map((workout) => workout.id));
+  const sourceWorkoutIds = new Set(
+    [published, draft].flatMap((plan) =>
+      plan.weeks.flatMap((week) => week.workouts.map((workout) => workout.id))
+    )
+  );
+  const sessionInsert = harness.calls.find(
+    (call) => call.model === 'scheduledSession' && call.op === 'createMany'
+  );
+  assert.equal(result.publishedPlanId, harness.written.plans.at(-1).id);
+  assert.equal(sessionInsert.data.length, rows.workouts);
+  assert.ok(
+    sessionInsert.data.every((session) => publishedWorkoutIds.has(session.workoutId)),
+    'every generated session must point to a workout cloned into the new publication'
+  );
+  assert.ok(
+    sessionInsert.data.every((session) => !sourceWorkoutIds.has(session.workoutId)),
+    'no generated session may point to the superseded publication or deleted draft'
+  );
+
+  const syncCycleRead = harness.calls.find(
+    (call) =>
+      call.model === 'trainingCycle' &&
+      call.op === 'findFirst' &&
+      call.query?.select?.plans
+  );
+  assert.equal(syncCycleRead.query.select.plans.where.id, result.publishedPlanId);
+});
+
+test('schedule-sync retry reuses the committed publication instead of publishing twice', async () => {
+  const published = buildPlan(PUBLISHED_PLAN_ID, 'PUBLISHED');
+  const draft = buildPlan(DRAFT_PLAN_ID, 'DRAFT');
+  const harness = createHarness({
+    plans: [published, draft],
+    existingDraft: draft,
+    scheduleSyncFailures: 1,
+  });
+
+  let partialFailure;
+  try {
+    await publishCycleDraft(CYCLE_ID, {
+      userId: USER_ID,
+      planId: DRAFT_PLAN_ID,
+      timezone: TIMEZONE,
+    });
+  } catch (error) {
+    partialFailure = error;
+  }
+
+  assert.equal(partialFailure?.code, 'SCHEDULE_SYNC_FAILED');
+  assert.equal(partialFailure?.details?.cycleId, CYCLE_ID);
+  assert.equal(partialFailure?.details?.retryMode, 'SCHEDULE_SYNC_ONLY');
+  assert.equal(partialFailure?.details?.publishedPlanId, harness.written.plans[0].id);
+  assert.equal(
+    harness.calls.filter((call) => call.model === 'plan' && call.op === 'create').length,
+    1,
+    'the partial failure occurs after exactly one publication was committed'
+  );
+
+  const retryResult = await publishCycleDraft(CYCLE_ID, {
+    userId: USER_ID,
+    publishedPlanId: partialFailure.details.publishedPlanId,
+    timezone: TIMEZONE,
+  });
+
+  assert.equal(retryResult.publishedPlanId, partialFailure.details.publishedPlanId);
+  assert.equal(
+    harness.calls.filter((call) => call.model === 'plan' && call.op === 'create').length,
+    1,
+    'sync-only retry must not create a second published Plan'
+  );
+  assert.equal(
+    harness.calls.filter((call) => call.model === 'plan' && call.op === 'delete').length,
+    1,
+    'sync-only retry must not delete another draft'
+  );
+  assert.equal(
+    harness.calls.filter(
+      (call) => call.model === 'scheduledSession' && call.op === 'findMany'
+    ).length,
+    2
+  );
+  assert.equal(
+    harness.calls.filter(
+      (call) => call.model === 'scheduledSession' && call.op === 'createMany'
+    ).length,
+    1
+  );
 });
