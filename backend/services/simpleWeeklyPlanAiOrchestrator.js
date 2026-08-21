@@ -78,6 +78,9 @@ const {
 const {
   resolveWeeklyPlanFillFallback,
 } = require('./simpleWeeklyPlanFillFallbackService');
+const {
+  normalizeWorkoutNames,
+} = require('../src/domain/simpleWeeklyPlanPipeline/workoutNameNormalization');
 
 const OUTPUT_DESCRIPTOR_BY_NUMBER = new Map(
   CANONICAL_OUTPUT_FILES.map((descriptor, index) => [
@@ -793,6 +796,7 @@ async function runSimpleWeeklyPlanAiPipeline({
     fallbackValidationOutcome: 'NOT_REQUIRED',
   };
   let blockingError = null;
+  let sourceWorkoutNames = [];
   let failureReceived;
   let prompt = null;
   let boundPlan = null;
@@ -1174,6 +1178,11 @@ async function runSimpleWeeklyPlanAiPipeline({
       throw error;
     }
     outputs.output7 = materialization.document;
+    const normalizedWorkoutNames = normalizeWorkoutNames(
+      outputs.output7.workouts
+    );
+    outputs.output7.workouts = normalizedWorkoutNames.workouts;
+    sourceWorkoutNames = normalizedWorkoutNames.sourceNames;
     failureReceived = undefined;
 
     currentOutput = 8;
@@ -1257,6 +1266,7 @@ async function runSimpleWeeklyPlanAiPipeline({
     completedDocument: isValid ? outputs.output7 : null,
     metrics: isValid ? outputs.output8.metrics : null,
     generatedPlanText: isValid ? outputs.output2 : null,
+    sourceWorkoutNames,
     error: blockingError,
   };
 }

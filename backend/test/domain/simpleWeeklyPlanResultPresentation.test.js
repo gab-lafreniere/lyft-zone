@@ -1,10 +1,22 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
   buildSimpleWeeklyPlanResultPresentation,
   buildSimpleWeeklyPlanResultPresentationFallback,
+  extractGeneralSections,
+  isUnsafePresentationLine,
 } = require('../../src/domain/simpleWeeklyPlanPipeline/resultPresentation');
+const {
+  FALLBACK_PROGRESSION,
+} = require('../../src/domain/simpleWeeklyPlanPipeline/presentationText');
+
+const REAL_PLAN = fs.readFileSync(path.join(
+  __dirname,
+  '../fixtures/simpleWeeklyPlanPipeline/bound-plan/creator-out-of-pool/02-output-ai_generated-plan.txt'
+), 'utf8');
 
 function createCompletedDocument() {
   return {
@@ -39,39 +51,26 @@ function createCompletedDocument() {
 test('builds the small deterministic public presentation contract', () => {
   const input = {
     completedDocument: createCompletedDocument(),
-    generatedPlanText: [
-      'Balanced Hypertrophy',
-      '',
-      '## Summary',
-      'Two balanced sessions distribute training stress across the week.',
-      '',
-      '## Constraints',
-      'Use only comfortable ranges of motion.',
-      '',
-      '## Progression',
-      'Add repetitions before increasing the load.',
-      '',
-      '## Practical Notes',
-      'Keep technique consistent between sessions.',
-      '',
-      'Workout 1 — Upper A',
-      '1. Incline Press (exr_press): 4 sets of 8 reps, 2 RIR, tempo 3010, rest 120 seconds.',
-    ].join('\n'),
+    generatedPlanText: REAL_PLAN,
   };
 
   const first = buildSimpleWeeklyPlanResultPresentation(input);
   const second = buildSimpleWeeklyPlanResultPresentation(input);
 
   assert.deepEqual(first, second);
-  assert.deepEqual(first, {
-    title: 'Balanced Hypertrophy',
-    summary: 'Two balanced sessions distribute training stress across the week.',
-    weeklyStructure: ['Upper A', 'Lower A'],
-    musclePriorities: ['glutes', 'hamstrings', 'upper_chest', 'back'],
-    constraintNotes: ['Use only comfortable ranges of motion.'],
-    progression: 'Add repetitions before increasing the load.',
-    coachingNotes: ['Keep technique consistent between sessions.'],
-  });
+  assert.equal(first.title, 'Balanced Hypertrophy');
+  assert.equal(first.summary, null);
+  assert.deepEqual(first.weeklyStructure, ['Upper A', 'Lower A']);
+  assert.deepEqual(first.musclePriorities, [
+    'glutes',
+    'hamstrings',
+    'upperchest',
+    'back',
+  ]);
+  assert.deepEqual(first.constraintNotes, []);
+  assert.equal(first.progression, FALLBACK_PROGRESSION);
+  assert.equal(first.coachingNotes.length, 3);
+  assert.match(first.coachingNotes[0], /those sets into shoulder/i);
   assert.doesNotMatch(
     JSON.stringify(first),
     /exr_press|Incline Press|4 sets|8 reps|RIR|tempo|rest 120/i
@@ -89,7 +88,7 @@ test('uncertain or prescription-like text is omitted instead of invented', () =>
   });
 
   assert.equal(presentation.summary, null);
-  assert.equal(presentation.progression, null);
+  assert.equal(presentation.progression, FALLBACK_PROGRESSION);
   assert.deepEqual(presentation.constraintNotes, []);
   assert.deepEqual(presentation.coachingNotes, []);
 });
@@ -103,8 +102,67 @@ test('fallback is exact and contains no generated plan text', () => {
       weeklyStructure: [],
       musclePriorities: [],
       constraintNotes: [],
-      progression: null,
+      progression: FALLBACK_PROGRESSION,
       coachingNotes: [],
     }
   );
+});
+
+test('normal coaching vocabulary is retained while prescription shapes are rejected', () => {
+  const safe =
+    'Keep reps clean, sets consistent, rest controlled, tempo steady, and RIR appropriate.';
+  assert.equal(isUnsafePresentationLine(safe), false);
+  assert.deepEqual(
+    extractGeneralSections(`## Coaching notes\n- ${safe}`).coachingNotes,
+    [safe]
+  );
+
+  for (const unsafe of [
+    'Use exr_incline_press next.',
+    'exerciseId: exr_press',
+    'Perform 4 x 8 with control.',
+    'Complete **4** sets before moving on.',
+    'Complete 4 sets before moving on.',
+    'Stop at RIR 2.',
+    'Use 3-0-1-0 tempo.',
+    '1. Incline press',
+    'A. Incline press',
+    'Workout 2 Upper focus',
+  ]) {
+    assert.equal(isUnsafePresentationLine(unsafe), true, unsafe);
+  }
+});
+
+test('unsafe lines are skipped without discarding the active section', () => {
+  const sections = extractGeneralSections([
+    '## Coaching notes',
+    '4 sets of 8 reps.',
+    'Keep the following reps controlled and repeatable.',
+  ].join('\n'));
+  assert.deepEqual(sections.coachingNotes, [
+    'Keep the following reps controlled and repeatable.',
+  ]);
+});
+
+test('real fixture heading vocabulary maps to the prescribed sections', () => {
+  const headings = new Map([
+    ['weekly structure', 'summary'],
+    ['weekly split', 'summary'],
+    ['weekly volume logic', 'summary'],
+    ['overall weekly logic', 'summary'],
+    ['notes', 'coachingNotes'],
+    ['notes on execution', 'coachingNotes'],
+    ['coaching note', 'coachingNotes'],
+    ['training note', 'coachingNotes'],
+    ['execution notes', 'coachingNotes'],
+  ]);
+
+  for (const [heading, target] of headings) {
+    const sections = extractGeneralSections(
+      `## ${heading}\nThis complete coaching sentence is long enough for extraction.`
+    );
+    assert.deepEqual(sections[target], [
+      'This complete coaching sentence is long enough for extraction.',
+    ]);
+  }
 });

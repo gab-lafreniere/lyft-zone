@@ -543,6 +543,7 @@ test('manual weekly plan list and details keep an old saved 240-minute declarati
     isBookmarked: true,
     createdAt: '2026-07-01T12:00:00.000Z',
     updatedAt: '2026-07-02T12:00:00.000Z',
+    presentation: null,
     summary: {
       frequencyPerWeek: 1,
       workoutCount: 1,

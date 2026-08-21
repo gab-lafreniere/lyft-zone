@@ -505,6 +505,18 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
     scenario.output['04-output-ai_extracted-structure.json'],
     scenario.structure
   );
+  assert.deepEqual(
+    scenario.result.sourceWorkoutNames,
+    [
+      scenario.structure.workout_1.name,
+      scenario.structure.workout_2.name,
+      scenario.structure.workout_3.name,
+    ]
+  );
+  assert.deepEqual(
+    scenario.result.completedDocument.workouts.map((workout) => workout.name),
+    scenario.result.sourceWorkoutNames
+  );
   const output4Text = JSON.stringify(
     scenario.output['04-output-ai_extracted-structure.json']
   );
@@ -522,6 +534,11 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
   assert.equal(
     scenario.output['05-output-backend_plan-skeleton.json'].geometryHash,
     call3.schema.properties.geometryHash.const
+  );
+  assert.deepEqual(
+    scenario.output['05-output-backend_plan-skeleton.json']
+      .document.workouts.map((workout) => workout.name),
+    scenario.result.sourceWorkoutNames
   );
   const output6 = scenario.output['06-output-backend_deterministic-fills.json'].modelInput;
   const output6Headings = [

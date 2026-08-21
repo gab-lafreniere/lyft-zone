@@ -202,6 +202,18 @@ async function createAIWeeklyPlanDraftHandler(req, res) {
         { generationId, operation: 'advance', stage: 'SAVING_PROGRAM' }
       );
     }
+    let presentation;
+
+    try {
+      presentation = buildSimpleWeeklyPlanResultPresentation({
+        generatedPlanText: pipelineResult.generatedPlanText,
+        completedDocument: pipelineResult.completedDocument,
+      });
+    } catch (_error) {
+      presentation = buildSimpleWeeklyPlanResultPresentationFallback(
+        pipelineResult.completedDocument
+      );
+    }
     const persistenceStartedAt = performance.now();
     let createdPlan;
     try {
@@ -210,6 +222,13 @@ async function createAIWeeklyPlanDraftHandler(req, res) {
           ...pipelineResult.completedDocument,
           userId,
           source: 'AI',
+          generationContext: {
+            schemaVersion: 1,
+            presentation,
+            sourceWorkoutNames: Array.isArray(pipelineResult.sourceWorkoutNames)
+              ? pipelineResult.sourceWorkoutNames
+              : [],
+          },
         },
         { initialStatus: 'PUBLISHED' }
       );
@@ -237,20 +256,6 @@ async function createAIWeeklyPlanDraftHandler(req, res) {
         pipelineResult.completedDocument.name ||
         ''
     );
-    let presentation;
-
-    try {
-      presentation = buildSimpleWeeklyPlanResultPresentation({
-        generatedPlanText: pipelineResult.generatedPlanText,
-        completedDocument: pipelineResult.completedDocument,
-      });
-    } catch (_error) {
-      presentation = buildSimpleWeeklyPlanResultPresentationFallback({
-        ...pipelineResult.completedDocument,
-        name,
-      });
-    }
-
     return res.status(201).json({
       weeklyPlanParentId: createdPlan.weeklyPlanParentId,
       weeklyPlanVersionId: createdPlan.weeklyPlanVersionId,

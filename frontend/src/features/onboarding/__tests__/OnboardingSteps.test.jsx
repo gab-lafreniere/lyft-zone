@@ -64,17 +64,21 @@ test("Step 1 sentence controls update the canonical profile and experience value
   const experienceControl = screen.getByRole("combobox", {
     name: "Training experience",
   });
+  const ageControl = screen.getByRole("spinbutton", { name: "Age" });
   expect(experienceControl).toHaveAttribute("aria-expanded", "false");
   expect(experienceControl).not.toHaveTextContent(/experience|select|choose/i);
   expect(screen.queryByRole("option")).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "About you" }).previousElementSibling).toHaveTextContent(
     "person"
   );
+  expect(ageControl).toHaveAttribute("inputmode", "numeric");
+  expect(ageControl).toHaveAttribute("pattern", "[0-9]*");
+  expect(screen.queryByText("Age and sex can't be changed later.")).not.toBeInTheDocument();
 
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
     target: { value: "Taylor" },
   });
-  fireEvent.change(screen.getByRole("spinbutton", { name: "Age" }), {
+  fireEvent.change(ageControl, {
     target: { value: "34" },
   });
   fireEvent.click(experienceControl);

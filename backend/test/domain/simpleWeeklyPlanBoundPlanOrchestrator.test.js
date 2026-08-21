@@ -157,12 +157,30 @@ function stageCounts(calls) {
 // ------------------------------------------------------------------ happy path
 
 test('BOUND_PLAN completes with exactly two AI calls and eight canonical artifacts', async () => {
-  const { result, calls, files } = await runBoundPlanPipeline();
+  const { result, calls, files, readArtifact } = await runBoundPlanPipeline();
 
   assert.equal(result.valid, true, JSON.stringify(result.error));
   assert.deepEqual(stageCounts(calls), { call1: 1, call2: 1 });
   assert.equal(files.length, 8);
   assert.equal(result.output8.fillResolution.mode, 'BOUND_PLAN_DETERMINISTIC');
+  assert.deepEqual(
+    result.sourceWorkoutNames,
+    GROUND_TRUTH.workouts.map((workout) => workout.name)
+  );
+  assert.deepEqual(
+    result.completedDocument.workouts.map((workout) => workout.name),
+    ['Chest Priority A', 'Chest Priority B']
+  );
+
+  const output4 = JSON.parse(readArtifact('04-output-ai_extracted-structure.json'));
+  const output5 = JSON.parse(readArtifact('05-output-backend_plan-skeleton.json'));
+  const output6 = JSON.parse(readArtifact('06-output-backend_deterministic-fills.json'));
+  assert.deepEqual(output4, GROUND_TRUTH);
+  assert.deepEqual(
+    output5.document.workouts.map((workout) => workout.name),
+    result.sourceWorkoutNames
+  );
+  assert.equal(output6.geometryHash, output5.geometryHash);
 });
 
 test('the completed plan matches what Call #1 actually wrote', async () => {

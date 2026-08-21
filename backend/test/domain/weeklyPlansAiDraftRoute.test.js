@@ -154,6 +154,7 @@ function createSuccessfulPipelineResult() {
       sessionsPerWeek: 1,
       workouts: [],
     },
+    sourceWorkoutNames: ['Day 1 - Upper Focus'],
     generatedPlanText: [
       'Summary',
       'A short public summary.',
@@ -183,6 +184,14 @@ test('POST /api/weekly-plans/ai-drafts runs once, persists published, and return
       ...pipelineResult.completedDocument,
       userId: 'user_123',
       source: 'AI',
+      generationContext: {
+        schemaVersion: 1,
+        presentation: {
+          ...fallbackPresentation,
+          summary: 'A short public summary.',
+        },
+        sourceWorkoutNames: ['Day 1 - Upper Focus'],
+      },
     },
     { initialStatus: 'PUBLISHED' },
   ]);
@@ -328,7 +337,7 @@ test('invalid or incomplete pipeline result never persists', async () => {
   assert.equal(calls.presentation.length, 0);
 });
 
-test('presentation failure returns the exact fallback after persistence', async () => {
+test('presentation failure persists and returns the exact deterministic fallback', async () => {
   presentationError = new Error('private presentation failure');
 
   const res = await invokeAIDraftsRoute();
@@ -336,6 +345,14 @@ test('presentation failure returns the exact fallback after persistence', async 
   assert.equal(res.statusCode, 201);
   assert.equal(calls.create.length, 1);
   assert.deepEqual(res.body.presentation, fallbackPresentation);
+  assert.deepEqual(
+    calls.create[0][0].generationContext,
+    {
+      schemaVersion: 1,
+      presentation: fallbackPresentation,
+      sourceWorkoutNames: ['Day 1 - Upper Focus'],
+    }
+  );
   assert.doesNotMatch(JSON.stringify(res.body), /private presentation failure/i);
 });
 

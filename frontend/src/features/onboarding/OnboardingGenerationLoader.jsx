@@ -1,3 +1,4 @@
+import { useLayoutEffect } from "react";
 import { ProgressIndicator } from "../../design-v2";
 import { buildGenerationProfileChips } from "./profileSummary";
 
@@ -67,6 +68,20 @@ export default function OnboardingGenerationLoader({
   const chips = buildGenerationProfileChips(profile);
   const title = message?.title || "Building Your Program";
   const description = message?.description || "Preparing your personalized training plan.";
+
+  useLayoutEffect(() => {
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousRootOverflow = document.documentElement.style.overflow;
+
+    window.scrollTo?.({ top: 0, left: 0, behavior: "auto" });
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousRootOverflow;
+    };
+  }, []);
 
   return (
     <section

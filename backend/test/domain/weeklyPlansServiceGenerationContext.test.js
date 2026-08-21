@@ -205,6 +205,7 @@ function createStoredVersion({
   id = 'version_123',
   status = 'DRAFT',
   versionNumber = 1,
+  generationContext = null,
 } = {}) {
   return {
     id,
@@ -213,6 +214,7 @@ function createStoredVersion({
     name: 'Temporal Draft',
     sessionsPerWeek: 1,
     status,
+    generationContext,
     createdAt: new Date('2026-06-01T12:00:00.000Z'),
     updatedAt: new Date('2026-06-01T12:00:00.000Z'),
     workouts: [createTemporalWorkout()],
@@ -549,7 +551,16 @@ test('targetSeconds survives AI preflight, create persistence input, and builder
 });
 
 test('targetSeconds is represented as seconds in weekly-plan details', async () => {
-  const version = createStoredVersion({ status: 'PUBLISHED' });
+  const presentation = {
+    title: 'Stored Presentation',
+    summary: null,
+    progression: 'Progress gradually with consistent technique and controlled effort.',
+    coachingNotes: [],
+  };
+  const version = createStoredVersion({
+    status: 'PUBLISHED',
+    generationContext: { schemaVersion: 1, presentation },
+  });
   const parent = createStoredParent({ latestPublishedVersion: version });
   prisma = {
     user: {
@@ -563,6 +574,7 @@ test('targetSeconds is represented as seconds in weekly-plan details', async () 
   const details = await getWeeklyPlanDetails('parent_123', 'user_123');
 
   assert.equal(details.workouts[0].blocks[0].prescription.repsLabel, '45s');
+  assert.deepEqual(details.presentation, presentation);
 });
 
 test('published edit-draft cloning is level-batched and preserves targetSeconds', async () => {

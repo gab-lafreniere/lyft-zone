@@ -1,10 +1,16 @@
-const TITLE_MAX_LENGTH = 160;
 const STRUCTURE_ITEM_MAX_LENGTH = 160;
 const MUSCLE_PRIORITY_MAX_ITEMS = 6;
 const SECTION_ITEM_MAX_LENGTH = 240;
 const SECTION_MAX_ITEMS = 3;
-const SUMMARY_MAX_LENGTH = 500;
-const PROGRESSION_MAX_LENGTH = 500;
+const {
+  FALLBACK_PROGRESSION,
+  FALLBACK_TITLE,
+  sanitizePresentationText,
+  validateCoachingNote,
+  validateProgression,
+  validateSummary,
+  validateTitle,
+} = require('./presentationText');
 
 const SECTION_BY_HEADING = new Map([
   ['summary', 'summary'],
@@ -12,6 +18,10 @@ const SECTION_BY_HEADING = new Map([
   ['plan summary', 'summary'],
   ['program overview', 'summary'],
   ['weekly logic', 'summary'],
+  ['weekly structure', 'summary'],
+  ['weekly split', 'summary'],
+  ['weekly volume logic', 'summary'],
+  ['overall weekly logic', 'summary'],
   ['overall strategy', 'summary'],
   ['constraints', 'constraintNotes'],
   ['constraint notes', 'constraintNotes'],
@@ -22,6 +32,11 @@ const SECTION_BY_HEADING = new Map([
   ['progression approach', 'progression'],
   ['progression plan', 'progression'],
   ['coaching notes', 'coachingNotes'],
+  ['notes', 'coachingNotes'],
+  ['notes on execution', 'coachingNotes'],
+  ['coaching note', 'coachingNotes'],
+  ['training note', 'coachingNotes'],
+  ['execution notes', 'coachingNotes'],
   ['practical notes', 'coachingNotes'],
   ['how to use this plan', 'coachingNotes'],
   ['implementation notes', 'coachingNotes'],
@@ -32,12 +47,8 @@ function toArray(value) {
 }
 
 function normalizeText(value, maxLength) {
-  if (typeof value !== 'string') {
-    return null;
-  }
-
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  return normalized ? normalized.slice(0, maxLength) : null;
+  const normalized = sanitizePresentationText(value);
+  return normalized && normalized.length <= maxLength ? normalized : null;
 }
 
 function normalizeHeading(value) {
@@ -52,14 +63,19 @@ function normalizeHeading(value) {
 
 function isUnsafePresentationLine(value) {
   const line = String(value || '').trim();
+  const sanitized = sanitizePresentationText(line);
 
   return (
     !line ||
     /^workout\s+\d+\b/i.test(line) ||
     /^\d+[.)]\s+/.test(line) ||
     /^[A-Z][.)]\s+/.test(line) ||
-    /\b(?:exerciseId|sets?|reps?|RIR|tempo|rest)\b/i.test(line) ||
-    /\b(?:exr|ex|exercise)_[A-Za-z0-9_-]+\b/i.test(line)
+    /\bexerciseId\b/i.test(line) ||
+    /\bexr_[A-Za-z0-9_-]+/i.test(line) ||
+    /\b\d+\s*(?:x|×)\s*\d+\b/i.test(sanitized) ||
+    /\b\d+\s*(?:sets?|reps?)\b/i.test(sanitized) ||
+    /\bRIR\s*\d/i.test(sanitized) ||
+    /\b\d\s*-\s*\d\s*-\s*\d\s*-\s*\d\b/.test(sanitized)
   );
 }
 
@@ -86,7 +102,6 @@ function extractGeneralSections(generatedPlanText) {
       }
 
       if (isUnsafePresentationLine(rawLine)) {
-        activeSection = null;
         return;
       }
 
@@ -145,13 +160,14 @@ function buildMusclePriorities(completedDocument) {
 }
 
 function buildSimpleWeeklyPlanResultPresentationFallback(completedDocument) {
+  const title = validateTitle(completedDocument?.name);
   return {
-    title: normalizeText(completedDocument?.name, TITLE_MAX_LENGTH) || '',
+    title: title.ok ? title.value : FALLBACK_TITLE,
     summary: null,
     weeklyStructure: [],
     musclePriorities: [],
     constraintNotes: [],
-    progression: null,
+    progression: FALLBACK_PROGRESSION,
     coachingNotes: [],
   };
 }
@@ -161,18 +177,21 @@ function buildSimpleWeeklyPlanResultPresentation({
   completedDocument,
 } = {}) {
   const sections = extractGeneralSections(generatedPlanText);
+  const title = validateTitle(completedDocument?.name);
+  const summary = validateSummary(sections.summary.join(' '));
+  const progression = validateProgression(sections.progression.join(' '));
 
   return {
-    title: normalizeText(completedDocument?.name, TITLE_MAX_LENGTH) || '',
-    summary: normalizeText(sections.summary.join(' '), SUMMARY_MAX_LENGTH),
+    title: title.ok ? title.value : FALLBACK_TITLE,
+    summary: summary.ok ? summary.value : null,
     weeklyStructure: buildWeeklyStructure(completedDocument),
     musclePriorities: buildMusclePriorities(completedDocument),
     constraintNotes: sections.constraintNotes,
-    progression: normalizeText(
-      sections.progression.join(' '),
-      PROGRESSION_MAX_LENGTH
-    ),
-    coachingNotes: sections.coachingNotes,
+    progression: progression.ok ? progression.value : FALLBACK_PROGRESSION,
+    coachingNotes: sections.coachingNotes
+      .map(validateCoachingNote)
+      .filter((result) => result.ok)
+      .map((result) => result.value),
   };
 }
 

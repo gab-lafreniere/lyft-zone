@@ -5,6 +5,50 @@ import { render, screen } from "@testing-library/react";
 import { DesignV2Scope } from "../../../design-v2";
 import OnboardingGenerationLoader from "../OnboardingGenerationLoader";
 
+beforeAll(() => {
+  jest.spyOn(window, "scrollTo").mockImplementation(() => {});
+});
+
+afterAll(() => {
+  window.scrollTo.mockRestore();
+});
+
+test("starts at the top and restores page overflow after unmounting", () => {
+  window.scrollTo.mockClear();
+  const originalBodyOverflow = document.body.style.overflow;
+  const originalRootOverflow = document.documentElement.style.overflow;
+  document.body.style.overflow = "scroll";
+  document.documentElement.style.overflow = "auto";
+
+  const { unmount } = render(
+    <DesignV2Scope>
+      <OnboardingGenerationLoader stage="generating" percent={10} />
+    </DesignV2Scope>
+  );
+
+  expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: "auto" });
+  expect(document.body.style.overflow).toBe("hidden");
+  expect(document.documentElement.style.overflow).toBe("hidden");
+
+  unmount();
+
+  expect(document.body.style.overflow).toBe("scroll");
+  expect(document.documentElement.style.overflow).toBe("auto");
+  document.body.style.overflow = originalBodyOverflow;
+  document.documentElement.style.overflow = originalRootOverflow;
+});
+
+test("uses a fixed dynamic-viewport layout on mobile", () => {
+  const css = fs.readFileSync(
+    path.join(__dirname, "../onboarding.css"),
+    "utf8"
+  );
+
+  expect(css).toMatch(
+    /@media \(max-width: 48rem\)[\s\S]*\.lz-onboarding-page--generation\s*\{[^}]*position: fixed;[^}]*height: 100dvh;[^}]*overflow: hidden;/
+  );
+});
+
 test("renders the Stitch-inspired progress hierarchy with curated profile context", () => {
   render(
     <DesignV2Scope>

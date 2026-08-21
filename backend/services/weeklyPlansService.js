@@ -940,6 +940,7 @@ function mapVisibleParentToDetails(parent, userId) {
     isBookmarked: Boolean(parent.bookmarks?.some((bookmark) => bookmark.userId === userId)),
     createdAt: visibleVersion.createdAt,
     updatedAt: visibleVersion.updatedAt,
+    presentation: visibleVersion.generationContext?.presentation ?? null,
     summary: {
       frequencyPerWeek: visibleVersion.sessionsPerWeek,
       workoutCount: visibleVersion.workouts.length,
