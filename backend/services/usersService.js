@@ -13,6 +13,7 @@ const {
   DURATION_PER_SESSION_VALUES,
   SESSIONS_PER_WEEK_VALUES,
   normalizeDurationPerSession,
+  normalizePreferredTrainingDays,
   normalizeSessionsPerWeek,
 } = require('../src/domain/trainingProfile/trainingProfileAvailability');
 const {
@@ -225,7 +226,11 @@ function validateAvailabilityOnlyPatch(payload) {
       ? Object.keys(availability)
       : [];
   availabilityKeys.forEach((key) => {
-    if (key !== 'sessionsPerWeek' && key !== 'durationPerSession') {
+    if (
+      key !== 'sessionsPerWeek' &&
+      key !== 'durationPerSession' &&
+      key !== 'preferredTrainingDays'
+    ) {
       issues.push({
         path: `availability.${key}`,
         code: 'UNKNOWN_FIELD',
@@ -240,6 +245,25 @@ function validateAvailabilityOnlyPatch(payload) {
   const durationPerSession = normalizeDurationPerSession(
     availability?.durationPerSession
   );
+  const hasPreferredTrainingDays = hasOwn(
+    availability,
+    'preferredTrainingDays'
+  );
+  let preferredTrainingDays;
+  if (hasPreferredTrainingDays) {
+    try {
+      preferredTrainingDays = normalizePreferredTrainingDays(
+        availability.preferredTrainingDays,
+        sessionsPerWeek
+      );
+    } catch (error) {
+      issues.push({
+        path: 'availability.preferredTrainingDays',
+        code: 'INVALID_TRAINING_DAYS',
+        message: error.message,
+      });
+    }
+  }
 
   if (sessionsPerWeek == null) {
     issues.push({
@@ -266,7 +290,11 @@ function validateAvailabilityOnlyPatch(payload) {
     );
   }
 
-  return { sessionsPerWeek, durationPerSession };
+  return {
+    sessionsPerWeek,
+    durationPerSession,
+    ...(hasPreferredTrainingDays ? { preferredTrainingDays } : {}),
+  };
 }
 
 async function upsertUserProfileRecord(userId, data, prisma) {
@@ -312,9 +340,25 @@ async function updateTrainingProfileSettings(userId, payload, deps = {}) {
         );
       }
 
+      let preferredTrainingDays = availability.preferredTrainingDays;
+      if (!hasOwn(availability, 'preferredTrainingDays')) {
+        try {
+          preferredTrainingDays = normalizePreferredTrainingDays(
+            currentSettings.trainingProfile.profile.availability
+              ?.preferredTrainingDays,
+            availability.sessionsPerWeek
+          );
+        } catch {
+          preferredTrainingDays = null;
+        }
+      }
+
       const mergedProfile = {
         ...currentSettings.trainingProfile.profile,
-        availability,
+        availability: {
+          ...availability,
+          preferredTrainingDays,
+        },
       };
       const data = buildCanonicalTrainingProfileUpdate(mergedProfile);
       await upsertUserProfileRecord(userId, data, tx);

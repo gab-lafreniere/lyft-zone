@@ -19,7 +19,11 @@ function createDraft(overrides = {}) {
   return {
     primaryGoal: "HYPERTROPHY",
     experience: "intermediate",
-    availability: { sessionsPerWeek: 4, durationPerSession: 60 },
+    availability: {
+      sessionsPerWeek: 4,
+      durationPerSession: 60,
+      preferredTrainingDays: ["MONDAY", "TUESDAY", "THURSDAY", "FRIDAY"],
+    },
     musclePriorities: {
       primaryFocus: null,
       secondaryFocuses: [],
@@ -91,6 +95,22 @@ test("uses only the exact server-provided availability enums", () => {
     sessionsPerWeek: expect.any(String),
     durationPerSession: expect.any(String),
   });
+});
+
+test("requires exactly one unique preferred day per weekly session", () => {
+  const invalid = validateTrainingStep(
+    createDraft({
+      availability: {
+        sessionsPerWeek: 3,
+        durationPerSession: 60,
+        preferredTrainingDays: ["MONDAY", "MONDAY", "FRIDAY"],
+      },
+    }),
+    availabilityOptions
+  );
+
+  expect(invalid.ok).toBe(false);
+  expect(invalid.fieldErrors.preferredTrainingDays).toEqual(expect.any(String));
 });
 
 test("preserves canonical muscle limits and conflict rules", () => {

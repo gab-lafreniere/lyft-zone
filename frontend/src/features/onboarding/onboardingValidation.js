@@ -6,6 +6,7 @@ import {
 } from "../settings/settingsOptions";
 import { isCompletePainIssue } from "../settings/settingsMappers";
 import { validateTrainingProfileDraft } from "../settings/settingsValidation";
+import { isValidPreferredTrainingDays } from "./trainingDayDefaults";
 
 export const MAX_DISPLAY_NAME_LENGTH = 80;
 const VALID_SEX_VALUES = new Set(["MALE", "FEMALE"]);
@@ -69,6 +70,15 @@ export function validateTrainingStep(draft, availabilityOptions) {
   }
   if (!allowedDurations.includes(duration)) {
     fieldErrors.durationPerSession = "Choose an available session duration.";
+  }
+  if (
+    allowedSessions.includes(sessions) &&
+    !isValidPreferredTrainingDays(
+      draft?.availability?.preferredTrainingDays,
+      sessions
+    )
+  ) {
+    fieldErrors.preferredTrainingDays = `Choose exactly ${sessions} unique training days.`;
   }
 
   return {

@@ -40,6 +40,7 @@ function createDefaultTrainingProfile() {
     availability: {
       sessionsPerWeek: null,
       durationPerSession: null,
+      preferredTrainingDays: null,
     },
     environment: {
       equipmentPreset: null,

@@ -191,3 +191,68 @@ test('publish regenerates sessions for the new Plan and no-change republish repl
     secondPublish.publishedPlanId
   );
 });
+
+test('a six-week Monday Wednesday Friday plan creates 18 local-noon sessions', async (t) => {
+  if (skipReason) {
+    t.skip(skipReason);
+    return;
+  }
+
+  const user = await createUser({ email: 'cycle-spaced-schedule@example.com' });
+  const cycle = await createCycle({
+    userId: user.id,
+    name: 'Spaced Scheduled Cycle',
+    startDate: '2035-09-03',
+    endDate: '2035-10-14',
+    durationWeeks: 6,
+    mode: 'FIXED',
+    timezone: 'UTC',
+  });
+  const draft = await createPlanForCycle(cycle.id, {
+    name: 'Spaced Scheduled Cycle',
+    sourceType: 'USER',
+    status: 'DRAFT',
+    weeks: Array.from({ length: 6 }, (_, weekIndex) => ({
+      weekNumber: weekIndex + 1,
+      orderIndex: weekIndex + 1,
+      label: `Week ${weekIndex + 1}`,
+      workouts: [
+        buildWorkout(`Monday workout ${weekIndex + 1}`, 1, 'MONDAY'),
+        buildWorkout(`Wednesday workout ${weekIndex + 1}`, 2, 'WEDNESDAY'),
+        buildWorkout(`Friday workout ${weekIndex + 1}`, 3, 'FRIDAY'),
+      ],
+    })),
+  });
+
+  await publishCycleDraft(cycle.id, {
+    userId: user.id,
+    planId: draft.id,
+    timezone: 'UTC',
+  });
+  const sessions = await loadSessions(cycle.id);
+
+  assert.equal(sessions.length, 18);
+  assert.deepEqual(
+    sessions.map((session) => session.scheduledStartAt.toISOString()),
+    [
+      '2035-09-03T12:00:00.000Z',
+      '2035-09-05T12:00:00.000Z',
+      '2035-09-07T12:00:00.000Z',
+      '2035-09-10T12:00:00.000Z',
+      '2035-09-12T12:00:00.000Z',
+      '2035-09-14T12:00:00.000Z',
+      '2035-09-17T12:00:00.000Z',
+      '2035-09-19T12:00:00.000Z',
+      '2035-09-21T12:00:00.000Z',
+      '2035-09-24T12:00:00.000Z',
+      '2035-09-26T12:00:00.000Z',
+      '2035-09-28T12:00:00.000Z',
+      '2035-10-01T12:00:00.000Z',
+      '2035-10-03T12:00:00.000Z',
+      '2035-10-05T12:00:00.000Z',
+      '2035-10-08T12:00:00.000Z',
+      '2035-10-10T12:00:00.000Z',
+      '2035-10-12T12:00:00.000Z',
+    ]
+  );
+});

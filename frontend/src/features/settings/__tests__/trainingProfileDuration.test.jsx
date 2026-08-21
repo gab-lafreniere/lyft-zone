@@ -66,3 +66,40 @@ test("Availability duration control clamps increments at 120", () => {
 
   expect(onChange).not.toHaveBeenCalled();
 });
+
+test("Availability edits preferred days for future cycles and keeps exact-count validation", () => {
+  const onChange = jest.fn();
+  const draft = createDraft(60);
+  draft.availability.preferredTrainingDays = [
+    "MONDAY",
+    "TUESDAY",
+    "THURSDAY",
+    "FRIDAY",
+  ];
+
+  render(
+    <AvailabilitySection
+      draft={draft}
+      onChange={onChange}
+      fieldErrors={{}}
+      options={AVAILABILITY_OPTIONS}
+    />
+  );
+
+  expect(screen.getByText(/future cycles only/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Friday" }));
+  expect(onChange).toHaveBeenCalledWith(
+    expect.objectContaining({
+      availability: expect.objectContaining({
+        preferredTrainingDays: ["MONDAY", "TUESDAY", "THURSDAY"],
+      }),
+    })
+  );
+
+  const invalidDraft = createDraft(60);
+  invalidDraft.availability.preferredTrainingDays = ["MONDAY"];
+  expect(
+    validateTrainingProfileDraft(invalidDraft, AVAILABILITY_OPTIONS)
+      .fieldErrors["availability.preferredTrainingDays"]
+  ).toEqual(expect.any(String));
+});

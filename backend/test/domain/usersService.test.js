@@ -77,6 +77,33 @@ function createNormalizedCanonicalProfile(overrides = {}) {
   return validation.value;
 }
 
+function createAvailabilityPatchHarness(currentProfile) {
+  let stored = mapTrainingProfileToUserProfileUpdate(currentProfile);
+  const calls = { upsert: null };
+  const prisma = {
+    user: {
+      findUnique: async () => ({
+        id: 'user_123',
+        email: 'athlete@example.com',
+        profile: {
+          trainingMode: 'FIXED',
+          onboardingSnapshot: stored.onboardingSnapshot,
+        },
+      }),
+    },
+    userProfile: {
+      upsert: async (args) => {
+        calls.upsert = args;
+        stored = { ...stored, ...args.update };
+        return stored;
+      },
+    },
+  };
+  prisma.$transaction = async (operation) => operation(prisma);
+
+  return { calls, prisma };
+}
+
 test('getUserSettings returns frontend-friendly defaults when userProfile is missing', async () => {
   let query = null;
   const prisma = {
@@ -439,6 +466,7 @@ test('updateTrainingProfileSettings merges an availability-only patch into the l
       availability: {
         sessionsPerWeek: 5,
         durationPerSession: 90,
+        preferredTrainingDays: ['MONDAY', 'TUESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'],
       },
     },
     { prisma }
@@ -449,6 +477,7 @@ test('updateTrainingProfileSettings merges an availability-only patch into the l
   assert.deepEqual(upsertArgs.update.onboardingSnapshot.profile.availability, {
     sessionsPerWeek: 5,
     durationPerSession: 90,
+    preferredTrainingDays: ['MONDAY', 'TUESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'],
   });
   assert.equal(
     upsertArgs.update.onboardingSnapshot.profile.physicalNotes,
@@ -461,11 +490,147 @@ test('updateTrainingProfileSettings merges an availability-only patch into the l
   assert.deepEqual(result.trainingProfile.profile.availability, {
     sessionsPerWeek: 5,
     durationPerSession: 90,
+    preferredTrainingDays: ['MONDAY', 'TUESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'],
   });
   assert.deepEqual(result.trainingProfile.options.availability, {
     sessionsPerWeek: [1, 2, 3, 4, 5, 6, 7],
     durationPerSession: [15, 30, 45, 60, 75, 90, 105, 120],
   });
+});
+
+test('availability-only patch preserves stored preferred training days when omitted and session count is unchanged', async () => {
+  const currentProfile = createNormalizedCanonicalProfile({
+    availability: {
+      sessionsPerWeek: 3,
+      durationPerSession: 60,
+      preferredTrainingDays: ['TUESDAY', 'THURSDAY', 'SATURDAY'],
+    },
+  });
+  const { calls, prisma } = createAvailabilityPatchHarness(currentProfile);
+
+  const result = await updateTrainingProfileSettings(
+    'user_123',
+    {
+      availability: {
+        sessionsPerWeek: 3,
+        durationPerSession: 75,
+      },
+    },
+    { prisma }
+  );
+
+  assert.deepEqual(
+    calls.upsert.update.onboardingSnapshot.profile.availability,
+    {
+      sessionsPerWeek: 3,
+      durationPerSession: 75,
+      preferredTrainingDays: ['TUESDAY', 'THURSDAY', 'SATURDAY'],
+    }
+  );
+  assert.deepEqual(result.trainingProfile.profile.availability, {
+    sessionsPerWeek: 3,
+    durationPerSession: 75,
+    preferredTrainingDays: ['TUESDAY', 'THURSDAY', 'SATURDAY'],
+  });
+});
+
+test('availability-only patch clears omitted stored preferred training days when the new session count is incompatible', async () => {
+  const currentProfile = createNormalizedCanonicalProfile({
+    availability: {
+      sessionsPerWeek: 3,
+      durationPerSession: 60,
+      preferredTrainingDays: ['TUESDAY', 'THURSDAY', 'SATURDAY'],
+    },
+  });
+  const { calls, prisma } = createAvailabilityPatchHarness(currentProfile);
+
+  const result = await updateTrainingProfileSettings(
+    'user_123',
+    {
+      availability: {
+        sessionsPerWeek: 4,
+        durationPerSession: 60,
+      },
+    },
+    { prisma }
+  );
+
+  assert.equal(
+    calls.upsert.update.onboardingSnapshot.profile.availability
+      .preferredTrainingDays,
+    null
+  );
+  assert.equal(
+    result.trainingProfile.profile.availability.preferredTrainingDays,
+    null
+  );
+});
+
+test('availability-only patch explicitly clears preferred training days with null', async () => {
+  const currentProfile = createNormalizedCanonicalProfile({
+    availability: {
+      sessionsPerWeek: 3,
+      durationPerSession: 60,
+      preferredTrainingDays: ['TUESDAY', 'THURSDAY', 'SATURDAY'],
+    },
+  });
+  const { calls, prisma } = createAvailabilityPatchHarness(currentProfile);
+
+  const result = await updateTrainingProfileSettings(
+    'user_123',
+    {
+      availability: {
+        sessionsPerWeek: 3,
+        durationPerSession: 60,
+        preferredTrainingDays: null,
+      },
+    },
+    { prisma }
+  );
+
+  assert.equal(
+    calls.upsert.update.onboardingSnapshot.profile.availability
+      .preferredTrainingDays,
+    null
+  );
+  assert.equal(
+    result.trainingProfile.profile.availability.preferredTrainingDays,
+    null
+  );
+});
+
+test('availability-only patch explicitly replaces and canonicalizes preferred training days', async () => {
+  const currentProfile = createNormalizedCanonicalProfile({
+    availability: {
+      sessionsPerWeek: 3,
+      durationPerSession: 60,
+      preferredTrainingDays: ['MONDAY', 'WEDNESDAY', 'FRIDAY'],
+    },
+  });
+  const { calls, prisma } = createAvailabilityPatchHarness(currentProfile);
+
+  const result = await updateTrainingProfileSettings(
+    'user_123',
+    {
+      availability: {
+        sessionsPerWeek: 3,
+        durationPerSession: 60,
+        preferredTrainingDays: ['SATURDAY', 'TUESDAY', 'THURSDAY'],
+      },
+    },
+    { prisma }
+  );
+
+  const expected = ['TUESDAY', 'THURSDAY', 'SATURDAY'];
+  assert.deepEqual(
+    calls.upsert.update.onboardingSnapshot.profile.availability
+      .preferredTrainingDays,
+    expected
+  );
+  assert.deepEqual(
+    result.trainingProfile.profile.availability.preferredTrainingDays,
+    expected
+  );
 });
 
 test('availability-only updates reject unknown fields and invalid values without writing', async () => {

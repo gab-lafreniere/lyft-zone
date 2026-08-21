@@ -138,8 +138,35 @@ test("Step 2 keeps the exact stepper values and behavior", () => {
   fireEvent.click(screen.getByRole("button", { name: "Increase session duration" }));
 
   const draft = JSON.parse(screen.getByTestId("training-state").textContent);
-  expect(draft.availability).toEqual({ sessionsPerWeek: 5, durationPerSession: 75 });
+  expect(draft.availability).toEqual({
+    sessionsPerWeek: 5,
+    durationPerSession: 75,
+    preferredTrainingDays: ["MONDAY", "TUESDAY", "THURSDAY", "FRIDAY", "SATURDAY"],
+  });
   expect(screen.getByText("Goal · Muscle Growth & Hypertrophy")).toBeInTheDocument();
+});
+
+test("Step 2 allows preferred-day customization and hides the control at seven sessions", () => {
+  render(<TrainingHarness />);
+
+  expect(screen.getByRole("button", { name: "Monday" })).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(screen.getByRole("button", { name: "Friday" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sunday" }));
+
+  let draft = JSON.parse(screen.getByTestId("training-state").textContent);
+  expect(draft.availability.preferredTrainingDays).toEqual([
+    "MONDAY",
+    "TUESDAY",
+    "THURSDAY",
+    "SUNDAY",
+  ]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Increase training days" }));
+  fireEvent.click(screen.getByRole("button", { name: "Increase training days" }));
+  fireEvent.click(screen.getByRole("button", { name: "Increase training days" }));
+  expect(screen.queryByLabelText("Preferred training days")).not.toBeInTheDocument();
+  draft = JSON.parse(screen.getByTestId("training-state").textContent);
+  expect(draft.availability.preferredTrainingDays).toHaveLength(7);
 });
 
 function AdditionalContextHarness() {

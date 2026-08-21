@@ -307,7 +307,11 @@ test("saves Step 1 demographics and always persists HYPERTROPHY at Step 2", asyn
     expect.objectContaining({
       primaryGoal: "HYPERTROPHY",
       experience: "beginner",
-      availability: { sessionsPerWeek: 1, durationPerSession: 15 },
+      availability: {
+        sessionsPerWeek: 1,
+        durationPerSession: 15,
+        preferredTrainingDays: ["MONDAY"],
+      },
     })
   );
   expect(window.localStorage.getItem("lyft_zone_onboarding_draft_v1:user_123")).toBeNull();
@@ -396,7 +400,12 @@ test("generates a published weekly plan, converts it once, then completes onboar
     name: "Generated Program",
     startDate: "2026-08-17",
     durationWeeks: 6,
-    workoutDayAssignmentStrategy: "DEFAULT",
+    workoutDayAssignments: [
+      { workoutOrderIndex: 1, scheduledDay: "MONDAY" },
+      { workoutOrderIndex: 2, scheduledDay: "TUESDAY" },
+      { workoutOrderIndex: 3, scheduledDay: "THURSDAY" },
+      { workoutOrderIndex: 4, scheduledDay: "FRIDAY" },
+    ],
     conflictWindow: {
       timezone: "America/Toronto",
       startDate: "2026-08-17",

@@ -72,6 +72,100 @@ test('default workout assignment maps source order Monday-forward', () => {
   ]);
 });
 
+test('spaced default workout assignment uses the locked defaults for one through seven workouts', () => {
+  const expected = {
+    1: ['MONDAY'],
+    2: ['MONDAY', 'THURSDAY'],
+    3: ['MONDAY', 'WEDNESDAY', 'FRIDAY'],
+    4: ['MONDAY', 'TUESDAY', 'THURSDAY', 'FRIDAY'],
+    5: ['MONDAY', 'TUESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'],
+    6: ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'],
+    7: ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'],
+  };
+
+  Object.entries(expected).forEach(([count, days]) => {
+    const workouts = Array.from({ length: Number(count) }, (_, index) => ({
+      orderIndex: index + 1,
+    })).reverse();
+    const assignments = _test.resolveWorkoutDayAssignments(
+      { workoutDayAssignmentStrategy: 'SPACED_DEFAULT' },
+      { workouts }
+    );
+    assert.deepEqual([...assignments.values()], days);
+  });
+});
+
+test('onboarding replacement honours explicit assignments in workout order', () => {
+  const assignments = _test.resolveCycleWorkoutDayAssignments(
+    {
+      workoutDayAssignmentStrategy: 'DEFAULT',
+      workoutDayAssignments: [
+        { workoutOrderIndex: 2, scheduledDay: 'FRIDAY' },
+        { workoutOrderIndex: 1, scheduledDay: 'TUESDAY' },
+      ],
+    },
+    { workouts: [{ orderIndex: 1 }, { orderIndex: 2 }] },
+    true
+  );
+
+  assert.deepEqual([...assignments.entries()], [
+    [2, 'FRIDAY'],
+    [1, 'TUESDAY'],
+  ]);
+});
+
+test('onboarding replacement falls back to spaced defaults only when assignments are absent', () => {
+  const sourceVersion = {
+    workouts: [{ orderIndex: 3 }, { orderIndex: 1 }, { orderIndex: 2 }],
+  };
+  const assignments = _test.resolveCycleWorkoutDayAssignments(
+    { workoutDayAssignmentStrategy: 'DEFAULT' },
+    sourceVersion,
+    true
+  );
+
+  assert.deepEqual([...assignments.entries()], [
+    [1, 'MONDAY'],
+    [2, 'WEDNESDAY'],
+    [3, 'FRIDAY'],
+  ]);
+  assert.throws(
+    () => _test.resolveCycleWorkoutDayAssignments(
+      { workoutDayAssignments: null },
+      sourceVersion,
+      true
+    ),
+    /assigned exactly once/
+  );
+});
+
+test('explicit workout assignments reject duplicate days and count mismatches', () => {
+  const sourceVersion = { workouts: [{ orderIndex: 1 }, { orderIndex: 2 }] };
+  assert.throws(
+    () => _test.resolveWorkoutDayAssignments(
+      {
+        workoutDayAssignments: [
+          { workoutOrderIndex: 1, scheduledDay: 'MONDAY' },
+          { workoutOrderIndex: 2, scheduledDay: 'MONDAY' },
+        ],
+      },
+      sourceVersion
+    ),
+    /Only one workout/
+  );
+  assert.throws(
+    () => _test.resolveWorkoutDayAssignments(
+      {
+        workoutDayAssignments: [
+          { workoutOrderIndex: 1, scheduledDay: 'MONDAY' },
+        ],
+      },
+      sourceVersion
+    ),
+    /assigned exactly once/
+  );
+});
+
 test('archiving conflicts preserves completed history and removes only future planning sessions', async () => {
   const deletedIds = [];
   const archived = [];

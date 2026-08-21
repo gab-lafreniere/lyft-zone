@@ -127,6 +127,51 @@ test('validateTrainingProfileInput accepts only the ordered availability values'
   }
 });
 
+test('validateTrainingProfileInput accepts legacy profiles without preferred training days', () => {
+  const payload = createValidPayload();
+  delete payload.availability.preferredTrainingDays;
+
+  const result = validateTrainingProfileInput(payload);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.value.availability.preferredTrainingDays, null);
+});
+
+test('validateTrainingProfileInput normalizes and validates preferred training days', () => {
+  const validPayload = createValidPayload();
+  validPayload.availability.preferredTrainingDays = [
+    'FRIDAY',
+    'MONDAY',
+    'THURSDAY',
+    'TUESDAY',
+  ];
+  const validResult = validateTrainingProfileInput(validPayload);
+
+  assert.equal(validResult.ok, true);
+  assert.deepEqual(validResult.value.availability.preferredTrainingDays, [
+    'MONDAY',
+    'TUESDAY',
+    'THURSDAY',
+    'FRIDAY',
+  ]);
+
+  for (const preferredTrainingDays of [
+    ['MONDAY', 'TUESDAY', 'WEDNESDAY'],
+    ['MONDAY', 'TUESDAY', 'THURSDAY', 'MONDAY'],
+    ['MONDAY', 'TUESDAY', 'THURSDAY', 'FUNDAY'],
+  ]) {
+    const payload = createValidPayload();
+    payload.availability.preferredTrainingDays = preferredTrainingDays;
+    const result = validateTrainingProfileInput(payload);
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.issues.some(
+        (issue) => issue.path === 'availability.preferredTrainingDays'
+      )
+    );
+  }
+});
+
 test('validateTrainingProfileInput keeps STRENGTH and MIXED in the product contract', () => {
   ['STRENGTH', 'MIXED'].forEach((primaryGoal) => {
     const result = validateTrainingProfileInput({

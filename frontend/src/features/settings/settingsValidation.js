@@ -9,6 +9,7 @@ import {
   getComparableArea,
 } from "./settingsOptions";
 import { isCompletePainIssue } from "./settingsMappers";
+import { isValidPreferredTrainingDays } from "../onboarding/trainingDayDefaults";
 
 const MAX_PAIN_DESCRIPTION = 500;
 const MAX_PAIN_ISSUES = 5;
@@ -244,6 +245,7 @@ export function validateTrainingProfileDraft(
   const durationPerSession = normalizeInteger(
     trainingProfileDraft?.availability?.durationPerSession
   );
+  const preferredTrainingDays = trainingProfileDraft?.availability?.preferredTrainingDays;
   const equipmentPreset = normalizeString(
     trainingProfileDraft?.environment?.equipmentPreset
   );
@@ -304,6 +306,19 @@ export function validateTrainingProfileDraft(
       formErrors,
       "availability.durationPerSession",
       "Select an available session duration."
+    );
+  }
+
+  if (
+    preferredTrainingDays != null &&
+    sessionsPerWeek != null &&
+    !isValidPreferredTrainingDays(preferredTrainingDays, sessionsPerWeek)
+  ) {
+    pushFieldError(
+      fieldErrors,
+      formErrors,
+      "availability.preferredTrainingDays",
+      `Select exactly ${sessionsPerWeek} unique training days.`
     );
   }
 

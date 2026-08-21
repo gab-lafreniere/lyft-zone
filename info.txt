@@ -162,6 +162,8 @@ RELATION ENTRE PLAN ET CYCLE
 
 - Un weekly plan publié peut être converti en cycle
 - La conversion clone la structure initiale
+- Lors de la conversion onboarding, `availability.preferredTrainingDays` fournit les assignations explicites de jours; si le champ est absent ou `null`, le backend utilise le défaut espacé canonique correspondant à `sessionsPerWeek`
+- Le mapping est déterministe: Workout N reçoit le Nième jour sélectionné dans l’ordre chronologique de la semaine
 - Une fois converti, le cycle évolue indépendamment du weekly plan
 
 --------------------------------------------------
@@ -283,7 +285,7 @@ Flow actuel:
 Entrées principales:
 
 - Objectif actuel: HYPERTROPHY par défaut dans l’onboarding
-- Disponibilités (séances par semaine, durée par séance)
+- Disponibilités (séances par semaine, durée par séance, jours d’entraînement préférés)
 - Environnement et équipements disponibles
 - Contraintes et préférences (exercices à éviter, limitations, inconforts, préférences de pratique)
 - Priorités musculaires (optionnel)
@@ -1656,7 +1658,8 @@ Settings
 │   │
 │   ├── Availability
 │   │   ├── Sessions per Week
-│   │   └── Duration per Session
+│   │   ├── Duration per Session
+│   │   └── Preferred Training Days
 │   │
 │   ├── Environment
 │   │   ├── Equipment Preset
@@ -2523,6 +2526,9 @@ Principes:
 
 Persistance Training Profile:
 - `user_profiles.onboardingSnapshot.profile` est le contrat canonique du Training Profile
+- `availability.preferredTrainingDays` est un tableau optionnel et nullable de valeurs `DayOfWeek`; son absence reste valide pour les profils existants et ne déclenche pas un nouvel onboarding
+- Ce champ reste dans le JSON canonique existant et ne requiert aucune migration Prisma
+- Cette préférence affecte uniquement la création de futurs Cycles. Une modification dans Settings ne modifie ni ne replanifie un Training Cycle existant, ne modifie aucune Scheduled Session et ne déclenche aucun draft/publish automatiquement
 - Settings et l’onboarding V2 écrivent tous les deux dans ce même contrat canonique
 - Le pipeline AI lit ce contrat: `buildProgramGenerationContext` et `buildExercisePoolForUser` échouent si `onboardingSnapshot.profile` est absent ou invalide
 - Le AI Builder lit les valeurs sauvegardées du Training Profile

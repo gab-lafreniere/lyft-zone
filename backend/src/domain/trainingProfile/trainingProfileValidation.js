@@ -16,6 +16,7 @@ const {
   DURATION_PER_SESSION_VALUES,
   SESSIONS_PER_WEEK_VALUES,
   normalizeDurationPerSession,
+  normalizePreferredTrainingDays,
   normalizeSessionsPerWeek,
 } = require('./trainingProfileAvailability');
 
@@ -594,6 +595,20 @@ function validateTrainingProfileInput(payload) {
   const durationPerSession = normalizeDurationPerSession(
     payload?.availability?.durationPerSession
   );
+  let preferredTrainingDays = null;
+  try {
+    preferredTrainingDays = normalizePreferredTrainingDays(
+      payload?.availability?.preferredTrainingDays,
+      sessionsPerWeek
+    );
+  } catch (error) {
+    pushIssue(
+      issues,
+      'availability.preferredTrainingDays',
+      'INVALID_TRAINING_DAYS',
+      error.message
+    );
+  }
   const experience = normalizeLowerString(payload?.experience);
   const environment = resolveEnvironmentInput(payload?.environment);
   const movementConstraints = normalizeMovementConstraintsInput(
@@ -769,6 +784,7 @@ function validateTrainingProfileInput(payload) {
     availability: {
       sessionsPerWeek,
       durationPerSession,
+      preferredTrainingDays,
     },
     environment: {
       equipmentPreset: environment.equipmentPreset,

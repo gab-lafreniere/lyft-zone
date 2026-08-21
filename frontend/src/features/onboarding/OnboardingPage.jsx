@@ -54,6 +54,7 @@ import TrainingSetupStep from "./steps/TrainingSetupStep";
 import TrainingStep from "./steps/TrainingStep";
 import { buildProfileSummaryItems } from "./profileSummary";
 import useOnboardingGenerationProgress from "./useOnboardingGenerationProgress";
+import { resolvePreferredTrainingDays } from "./trainingDayDefaults";
 import "./onboarding.css";
 
 const TOTAL_STEPS = 5;
@@ -62,6 +63,7 @@ const INITIAL_PROGRAM_FLOW = {
   window: null,
   conflicts: [],
   weeklyPlan: null,
+  trainingDays: null,
   cycle: null,
   failedStage: null,
   completionDestination: "result",
@@ -365,7 +367,10 @@ export default function OnboardingPage() {
         name: context.weeklyPlan.name,
         startDate: context.window.startDate,
         durationWeeks: 6,
-        workoutDayAssignmentStrategy: "DEFAULT",
+        workoutDayAssignments: context.trainingDays.map((scheduledDay, index) => ({
+          workoutOrderIndex: index + 1,
+          scheduledDay,
+        })),
         conflictWindow: context.window,
         confirmedConflicts: context.conflicts,
       });
@@ -411,12 +416,13 @@ export default function OnboardingPage() {
     }
   }
 
-  async function checkConflictsAndContinue() {
-    setProgramFlow({ ...INITIAL_PROGRAM_FLOW, phase: "checking" });
+  async function checkConflictsAndContinue(trainingDays = programFlow.trainingDays) {
+    setProgramFlow({ ...INITIAL_PROGRAM_FLOW, phase: "checking", trainingDays });
     try {
       const preview = await getOnboardingCycleConflicts();
       const context = {
         ...INITIAL_PROGRAM_FLOW,
+        trainingDays,
         window: preview.window,
         conflicts: preview.conflicts || [],
       };
@@ -428,6 +434,7 @@ export default function OnboardingPage() {
     } catch (error) {
       setProgramFlow({
         ...INITIAL_PROGRAM_FLOW,
+        trainingDays,
         phase: "error",
         failedStage: "checking",
         error: error?.message || "We couldn't check your training cycle schedule.",
@@ -437,8 +444,13 @@ export default function OnboardingPage() {
 
   async function beginProgramGeneration() {
     generationProgress.reset();
-    await saveFinalTrainingProfile();
-    await checkConflictsAndContinue();
+    const settingsResponse = await saveFinalTrainingProfile();
+    const availability = settingsResponse?.trainingProfile?.profile?.availability || {};
+    const trainingDays = resolvePreferredTrainingDays(
+      availability.preferredTrainingDays,
+      availability.sessionsPerWeek
+    );
+    await checkConflictsAndContinue(trainingDays);
   }
 
   async function handleConflictConfirm() {

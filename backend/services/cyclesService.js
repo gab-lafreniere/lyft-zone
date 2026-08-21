@@ -2,6 +2,9 @@ const { Prisma } = require('@prisma/client');
 const { getPrisma } = require('../lib/prisma');
 const { ApiError } = require('./usersService');
 const {
+  SPACED_DEFAULT_TRAINING_DAYS,
+} = require('../src/domain/trainingProfile/trainingProfileAvailability');
+const {
   regenerateScheduledSessionsForPublishedCycle,
   synchronizeScheduledSessionsForPublishedCycle,
 } = require('./scheduledSessionsService');
@@ -744,7 +747,10 @@ function normalizeWorkoutDayAssignments(assignments, sourceVersion) {
 }
 
 function resolveWorkoutDayAssignments(payload, sourceVersion) {
-  if (payload.workoutDayAssignmentStrategy === 'DEFAULT') {
+  if (
+    payload.workoutDayAssignmentStrategy === 'DEFAULT' ||
+    payload.workoutDayAssignmentStrategy === 'SPACED_DEFAULT'
+  ) {
     const sourceWorkouts = Array.isArray(sourceVersion?.workouts)
       ? [...sourceVersion.workouts].sort((left, right) => left.orderIndex - right.orderIndex)
       : [];
@@ -757,15 +763,36 @@ function resolveWorkoutDayAssignments(payload, sourceVersion) {
       );
     }
 
+    const workoutDays = payload.workoutDayAssignmentStrategy === 'SPACED_DEFAULT'
+      ? SPACED_DEFAULT_TRAINING_DAYS[sourceWorkouts.length]
+      : DEFAULT_WORKOUT_DAYS;
+
     return new Map(
       sourceWorkouts.map((workout, index) => [
         workout.orderIndex,
-        DEFAULT_WORKOUT_DAYS[index],
+        workoutDays[index],
       ])
     );
   }
 
   return normalizeWorkoutDayAssignments(payload.workoutDayAssignments, sourceVersion);
+}
+
+function resolveCycleWorkoutDayAssignments(payload, sourceVersion, isOnboardingReplacement) {
+  if (!isOnboardingReplacement) {
+    return resolveWorkoutDayAssignments(payload, sourceVersion);
+  }
+
+  const hasExplicitAssignments = Object.prototype.hasOwnProperty.call(
+    payload,
+    'workoutDayAssignments'
+  );
+  return resolveWorkoutDayAssignments(
+    hasExplicitAssignments
+      ? { ...payload, workoutDayAssignmentStrategy: null }
+      : { ...payload, workoutDayAssignmentStrategy: 'SPACED_DEFAULT' },
+    sourceVersion
+  );
 }
 
 function normalizeWorkoutsInput(workouts = []) {
@@ -2510,11 +2537,10 @@ async function createCycleFromWeeklyPlan(payload) {
     );
   }
 
-  const workoutDayAssignments = resolveWorkoutDayAssignments(
+  const workoutDayAssignments = resolveCycleWorkoutDayAssignments(
+    payload,
+    sourceVersion,
     isOnboardingReplacement
-      ? { ...payload, workoutDayAssignmentStrategy: 'DEFAULT' }
-      : payload,
-    sourceVersion
   );
   const document = buildDocumentFromWeeklyVersion(
     sourceVersion,
@@ -5078,6 +5104,7 @@ module.exports = {
     buildOnboardingCycleWindow,
     conflictSnapshotsMatch,
     findOverlappingCycles,
+    resolveCycleWorkoutDayAssignments,
     resolveWorkoutDayAssignments,
     runSerializableCycleTransaction,
   },
