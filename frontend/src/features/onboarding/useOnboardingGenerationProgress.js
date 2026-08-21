@@ -7,6 +7,7 @@ import {
   getGenerationMessage,
   getProgramPacingProfile,
   MINIMUM_VISIBLE_DURATION_MS,
+  resolveCollapsedGenerationPercent,
   resolveProgressTarget,
   resolveDisplayStage,
   resolveGenerationStage,
@@ -114,6 +115,12 @@ export default function useOnboardingGenerationProgress(
   }, []);
   const markWeeklyPlanReady = useCallback(() => {
     finalizationStartedAtRef.current = Date.now();
+    const readyPercent = Math.max(
+      percentRef.current,
+      GENERATION_PROGRESS_CEILING
+    );
+    percentRef.current = readyPercent;
+    setPercent((current) => Math.max(current, readyPercent));
     updateTargetPercent(GENERATION_PROGRESS_CEILING);
   }, [updateTargetPercent]);
   const markCycleReady = useCallback(() => {
@@ -181,8 +188,14 @@ export default function useOnboardingGenerationProgress(
         targetPercentRef.current = nextTarget;
         setTargetPercent(nextTarget);
       }
+      const collapsedPercent = phase === "generating"
+        ? resolveCollapsedGenerationPercent(percentRef.current, {
+            displayStage: displayStageRef.current,
+            targetStage,
+          })
+        : percentRef.current;
       const nextPercent = advanceVisualPercent(
-        percentRef.current,
+        collapsedPercent,
         nextTarget,
         { elapsedMs: progressElapsedMs, pacingMultiplier }
       );

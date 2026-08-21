@@ -230,6 +230,25 @@ export function resolveDisplayStage({
   return GENERATION_STAGES[nextIndex];
 }
 
+export function resolveCollapsedGenerationPercent(current, {
+  displayStage,
+  targetStage,
+}) {
+  const displayIndex = GENERATION_STAGES.indexOf(displayStage);
+  const targetIndex = GENERATION_STAGES.indexOf(targetStage);
+  const conditionalIndex = GENERATION_STAGES.indexOf("COMPLETING_DETAILS");
+  const validationIndex = GENERATION_STAGES.indexOf("VALIDATING_PROGRAM");
+
+  if (
+    displayIndex >= 0 &&
+    displayIndex < conditionalIndex &&
+    targetIndex >= validationIndex
+  ) {
+    return Math.max(current, STAGE_PROGRESS[targetStage].floor);
+  }
+  return current;
+}
+
 export function getProgressBounds({ phase, backendStage, elapsedMs = 0 }) {
   if (phase === "success") {
     return { floor: 100, ceiling: 100 };

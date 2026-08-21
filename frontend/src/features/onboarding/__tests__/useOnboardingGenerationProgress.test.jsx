@@ -281,6 +281,8 @@ test("finalization runway continues when converting changes to completing", () =
 
   try {
     fireEvent.click(screen.getByRole("button", { name: "Mark weekly ready" }));
+    expect(Number(screen.getByTestId("visual-percent").textContent)).toBe(96);
+    expect(Number(screen.getByTestId("target-percent").textContent)).toBe(96);
     view.rerender(<Harness phase="converting" />);
     act(() => {
       jest.advanceTimersByTime(2500);

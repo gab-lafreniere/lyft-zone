@@ -16,6 +16,7 @@ import {
   getFallbackStage,
   getStageInterpolationMs,
   resolveProgressTarget,
+  resolveCollapsedGenerationPercent,
   resolveDisplayStage,
 } from "../onboardingGenerationProgress";
 
@@ -313,6 +314,10 @@ test("timer-driven generation targets never exceed the hard 96 percent ceiling",
 });
 
 test("a validation signal collapses an unreported conditional detail band monotonically", () => {
+  expect(resolveCollapsedGenerationPercent(79, {
+    displayStage: "RESOLVING_EXERCISES",
+    targetStage: "VALIDATING_PROGRAM",
+  })).toBe(88);
   expect(resolveDisplayStage({
     displayStage: "RESOLVING_EXERCISES",
     targetStage: "VALIDATING_PROGRAM",
