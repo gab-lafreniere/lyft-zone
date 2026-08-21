@@ -15,7 +15,7 @@ const {
 } = require('./programGenerationSessionDirectives');
 
 const PROGRAM_GENERATION_PROMPT_VERSION =
-  'ai-weekly-plan-text-prompt-v1.4.0';
+  'ai-weekly-plan-text-prompt-v1.5.0';
 
 class ProgramGenerationPromptError extends Error {
   constructor(code, message) {
@@ -85,7 +85,10 @@ function assertProgramGenerationContext(context) {
   }
 }
 
-function buildProgramGenerationPrompt({ context } = {}) {
+function buildProgramGenerationPrompt({
+  context,
+  presentationContractEnabled = true,
+} = {}) {
   assertProgramGenerationContext(context);
 
   let promptInput;
@@ -154,6 +157,30 @@ function buildProgramGenerationPrompt({ context } = {}) {
     'Use only exercises from the eligible exercise pool.',
     'Return a clear human-readable training plan, not JSON.',
     'You are free to choose the most appropriate plan structure.',
+    ...(presentationContractEnabled
+      ? [
+        '',
+        'PRESENTATION AND WORKOUT HEADING CONTRACT',
+        'Place this exact plain-text block before the workouts:',
+        '',
+        'PROGRAM PRESENTATION',
+        'TITLE: <2 to 5 words naming the training focus>',
+        'SUMMARY: <exactly one concise sentence, no more than 220 characters, describing the overall program strategy, not a workout-by-workout recap>',
+        'PROGRESSION: <1 to 2 concise sentences, no more than 300 characters total, explaining how to progress through this specific program>',
+        'NOTE: <one concise program-specific coaching note, no more than 160 characters>',
+        'NOTE: <one concise program-specific coaching note, no more than 160 characters>',
+        'NOTE: <optional third concise program-specific coaching note, no more than 160 characters>',
+        '',
+        'Presentation requirements:',
+        '- Write plain text values with no Markdown or list markers.',
+        '- TITLE must have no day or session count, must not be "Weekly Training Plan" or a generic title such as "Personalized Training Plan", and must have no trailing punctuation.',
+        '- SUMMARY must describe the overall strategy in one sentence, not list or recap workouts.',
+        '- PROGRESSION may mention reps, sets, load, RIR, or rest, but must not repeat detailed exercise prescriptions.',
+        '- Include exactly 2 or 3 NOTE lines. Each note must be one useful sentence specific to this program, such as rationale, caution, execution priority, fatigue management, or program context. Do not use generic filler.',
+        '- Do not include exerciseId tokens or exercise-specific prescription rows in PROGRAM PRESENTATION.',
+        '- Start each workout with a heading of the exact form "## Day N - <short workout focus>". Keep the workout focus to approximately 2 to 5 words.',
+      ]
+      : []),
     '',
     'For every exercise, include:',
     '- exerciseId and exercise name',

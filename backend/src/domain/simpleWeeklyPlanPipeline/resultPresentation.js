@@ -2,6 +2,7 @@ const STRUCTURE_ITEM_MAX_LENGTH = 160;
 const MUSCLE_PRIORITY_MAX_ITEMS = 6;
 const SECTION_ITEM_MAX_LENGTH = 240;
 const SECTION_MAX_ITEMS = 3;
+const PROGRAM_PRESENTATION_HEADING = 'PROGRAM PRESENTATION';
 const {
   FALLBACK_PROGRESSION,
   FALLBACK_TITLE,
@@ -114,6 +115,59 @@ function extractGeneralSections(generatedPlanText) {
   return sections;
 }
 
+function extractProgramPresentation(generatedPlanText) {
+  const lines = String(generatedPlanText || '').split(/\r?\n/);
+  const startIndex = lines.findIndex(
+    (line) => String(line || '').trim().toUpperCase() === PROGRAM_PRESENTATION_HEADING
+  );
+  if (startIndex < 0) {
+    return null;
+  }
+
+  const result = {
+    title: null,
+    summary: null,
+    progression: null,
+    coachingNotes: [],
+  };
+  let matchedField = false;
+
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const line = String(lines[index] || '').trim();
+    if (!line) {
+      continue;
+    }
+    if (/^#{0,2}\s*(?:Day|Session|Workout)\s+\d+\b/i.test(line)) {
+      break;
+    }
+    const field = line.match(/^(TITLE|SUMMARY|PROGRESSION|NOTE):\s*(.*)$/i);
+    if (!field) {
+      if (matchedField) {
+        break;
+      }
+      continue;
+    }
+    matchedField = true;
+    const key = field[1].toUpperCase();
+    const value = field[2].trim();
+    if (!value) {
+      continue;
+    }
+    if (key === 'NOTE') {
+      if (result.coachingNotes.length < SECTION_MAX_ITEMS) {
+        result.coachingNotes.push(value);
+      }
+    } else {
+      const target = key.toLowerCase();
+      if (!result[target]) {
+        result[target] = value;
+      }
+    }
+  }
+
+  return matchedField ? result : null;
+}
+
 function buildWeeklyStructure(completedDocument) {
   return toArray(completedDocument?.workouts)
     .map((workout, index) => ({
@@ -159,10 +213,110 @@ function buildMusclePriorities(completedDocument) {
   return priorities;
 }
 
+const TITLE_PRIORITY_LABELS = Object.freeze({
+  chest: 'Chest',
+  upperchest: 'Chest',
+  midchest: 'Chest',
+  lowerchest: 'Chest',
+  back: 'Back',
+  lats: 'Back',
+  upperback: 'Back',
+  lowerback: 'Back',
+  shoulders: 'Shoulders',
+  frontdelts: 'Shoulders',
+  sidedelts: 'Shoulders',
+  reardelts: 'Shoulders',
+  biceps: 'Biceps',
+  bicepslonghead: 'Biceps',
+  bicepsshorthead: 'Biceps',
+  triceps: 'Triceps',
+  tricepslonghead: 'Triceps',
+  tricepslateralhead: 'Triceps',
+  quadriceps: 'Legs',
+  hamstrings: 'Legs',
+  glutes: 'Glutes',
+  calves: 'Calves',
+  abs: 'Core',
+  core: 'Core',
+  obliques: 'Core',
+});
+
+function buildPriorityTitle(musclePriorities) {
+  const labels = [];
+  toArray(musclePriorities).forEach((value) => {
+    const key = String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+    const label = TITLE_PRIORITY_LABELS[key];
+    if (label && !labels.includes(label) && labels.length < 2) {
+      labels.push(label);
+    }
+  });
+  if (labels.length === 0) {
+    return null;
+  }
+  const candidate = `${labels.join(' + ')} Hypertrophy`;
+  const validation = validateTitle(candidate);
+  return validation.ok ? validation.value : null;
+}
+
+function firstValid(validator, candidates, fallback) {
+  for (const candidate of candidates) {
+    const result = validator(candidate);
+    if (result.ok) {
+      return result.value;
+    }
+  }
+  return fallback;
+}
+
+function validCoachingNotes(value) {
+  return toArray(value)
+    .slice(0, SECTION_MAX_ITEMS)
+    .map(validateCoachingNote)
+    .filter((result) => result.ok)
+    .map((result) => result.value);
+}
+
+function firstUsableNotes(candidates) {
+  for (const candidate of candidates) {
+    const notes = validCoachingNotes(candidate);
+    if (notes.length > 0) {
+      return notes;
+    }
+  }
+  return [];
+}
+
+function exactBoundScalar(boundPresentation, exactPresentation, key) {
+  const bound = boundPresentation?.[key];
+  const exact = exactPresentation?.[key];
+  return typeof bound === 'string' && bound === exact ? bound : null;
+}
+
+function exactBoundNotes(boundPresentation, exactPresentation) {
+  const bound = boundPresentation?.coachingNotes;
+  const exact = exactPresentation?.coachingNotes;
+  if (
+    !Array.isArray(bound) ||
+    !Array.isArray(exact) ||
+    bound.length !== exact.length ||
+    bound.some((value, index) => value !== exact[index])
+  ) {
+    return null;
+  }
+  return bound;
+}
+
 function buildSimpleWeeklyPlanResultPresentationFallback(completedDocument) {
-  const title = validateTitle(completedDocument?.name);
+  const musclePriorities = buildMusclePriorities(completedDocument);
+  const title = firstValid(
+    validateTitle,
+    [completedDocument?.name, buildPriorityTitle(musclePriorities)],
+    FALLBACK_TITLE
+  );
   return {
-    title: title.ok ? title.value : FALLBACK_TITLE,
+    title,
     summary: null,
     weeklyStructure: [],
     musclePriorities: [],
@@ -175,23 +329,65 @@ function buildSimpleWeeklyPlanResultPresentationFallback(completedDocument) {
 function buildSimpleWeeklyPlanResultPresentation({
   generatedPlanText,
   completedDocument,
+  boundPresentation = null,
+  presentationContractEnabled = true,
 } = {}) {
   const sections = extractGeneralSections(generatedPlanText);
-  const title = validateTitle(completedDocument?.name);
-  const summary = validateSummary(sections.summary.join(' '));
-  const progression = validateProgression(sections.progression.join(' '));
+  const exactPresentation = presentationContractEnabled
+    ? extractProgramPresentation(generatedPlanText)
+    : null;
+  const structuredPresentation = presentationContractEnabled &&
+    boundPresentation &&
+    typeof boundPresentation === 'object' &&
+    !Array.isArray(boundPresentation)
+    ? boundPresentation
+    : null;
+  const musclePriorities = buildMusclePriorities(completedDocument);
+  const title = firstValid(
+    validateTitle,
+    [
+      exactBoundScalar(structuredPresentation, exactPresentation, 'title'),
+      exactPresentation?.title,
+      completedDocument?.name,
+      buildPriorityTitle(musclePriorities),
+    ],
+    FALLBACK_TITLE
+  );
+  const summary = firstValid(
+    validateSummary,
+    [
+      exactBoundScalar(structuredPresentation, exactPresentation, 'summary'),
+      exactPresentation?.summary,
+      sections.summary.join(' '),
+    ],
+    null
+  );
+  const progression = firstValid(
+    validateProgression,
+    [
+      exactBoundScalar(
+        structuredPresentation,
+        exactPresentation,
+        'progression'
+      ),
+      exactPresentation?.progression,
+      sections.progression.join(' '),
+    ],
+    FALLBACK_PROGRESSION
+  );
 
   return {
-    title: title.ok ? title.value : FALLBACK_TITLE,
-    summary: summary.ok ? summary.value : null,
+    title,
+    summary,
     weeklyStructure: buildWeeklyStructure(completedDocument),
-    musclePriorities: buildMusclePriorities(completedDocument),
+    musclePriorities,
     constraintNotes: sections.constraintNotes,
-    progression: progression.ok ? progression.value : FALLBACK_PROGRESSION,
-    coachingNotes: sections.coachingNotes
-      .map(validateCoachingNote)
-      .filter((result) => result.ok)
-      .map((result) => result.value),
+    progression,
+    coachingNotes: firstUsableNotes([
+      exactBoundNotes(structuredPresentation, exactPresentation),
+      exactPresentation?.coachingNotes,
+      sections.coachingNotes,
+    ]),
   };
 }
 
@@ -199,5 +395,6 @@ module.exports = {
   buildSimpleWeeklyPlanResultPresentation,
   buildSimpleWeeklyPlanResultPresentationFallback,
   extractGeneralSections,
+  extractProgramPresentation,
   isUnsafePresentationLine,
 };

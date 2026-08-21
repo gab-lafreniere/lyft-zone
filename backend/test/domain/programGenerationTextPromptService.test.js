@@ -82,7 +82,7 @@ test('text prompt service returns deterministic messages and exact character cou
   );
 
   assert.equal(result.userId, 'user_dynamic');
-  assert.equal(result.promptVersion, 'ai-weekly-plan-text-prompt-v1.4.0');
+  assert.equal(result.promptVersion, 'ai-weekly-plan-text-prompt-v1.5.0');
   assert.equal(result.sessionsPerWeek, 3);
   assert.equal(result.systemMessage.length > 0, true);
   assert.equal(result.userMessage.length > 0, true);
@@ -95,6 +95,24 @@ test('text prompt service returns deterministic messages and exact character cou
   assert.equal(contextCall[0], 'user_dynamic');
   assert.equal(contextCall[1].includeEvaluationPolicy, false);
   assert.deepEqual(contextCall[1].poolOptions, { includeDrafts: false });
+});
+
+test('presentation switch reaches the prompt without leaking into context options', async () => {
+  let contextOptions;
+  const result = await buildTextualAIWeeklyPlanPromptForUser(
+    'user_dynamic',
+    { presentationContractEnabled: false },
+    {
+      buildProgramGenerationContext: async (_userId, options) => {
+        contextOptions = options;
+        return createServiceContext();
+      },
+      buildProgramGenerationPrompt,
+    }
+  );
+
+  assert.equal(contextOptions.presentationContractEnabled, undefined);
+  assert.doesNotMatch(result.userMessage, /PROGRAM PRESENTATION/);
 });
 
 test('text prompt includes dynamic profile and pool but excludes outside exercises', async () => {

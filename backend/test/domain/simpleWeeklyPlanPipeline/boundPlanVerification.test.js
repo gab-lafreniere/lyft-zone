@@ -136,6 +136,16 @@ test('schema rejects unknown properties, wrong version and missing fields', () =
   assert.deepEqual(codesOf(verify(missing, fixture)), ['BOUND_PLAN_SCHEMA_INVALID']);
 });
 
+test('presentation can be missing or malformed without changing bind verification', () => {
+  const fixture = loadCase('smoke-203907');
+  const truth = loadGroundTruth('smoke-203907');
+  const baseline = verify(truth, fixture);
+  const malformed = { ...clone(truth), presentation: { unexpected: true } };
+
+  assert.equal(baseline.valid, true);
+  assert.deepEqual(verify(malformed, fixture), baseline);
+});
+
 // ------------------------------------------------------- ground truth is valid
 
 test('the smoke-203907 ground truth binds cleanly against its real source', () => {

@@ -99,11 +99,12 @@ function parseSourcePlan(text) {
   }
 
   for (const line of lines) {
-    const dayHeading = line.match(/^#{1,2}\s+(Day\s+\d+\b.*)$/i);
-    const workoutHeading = line.match(/^(Workout\s+\d+\b.*)$/i);
-    if (dayHeading || workoutHeading) {
+    const workoutHeading = line.match(
+      /^#{0,2}\s*((?:Day|Session|Workout)\s+\d+\b.*)$/i
+    );
+    if (workoutHeading) {
       closeWorkout();
-      workout = { name: (dayHeading?.[1] || workoutHeading?.[1]).trim(), blocks: [] };
+      workout = { name: workoutHeading[1].trim(), blocks: [] };
       strengthGrouping = null;
       continue;
     }

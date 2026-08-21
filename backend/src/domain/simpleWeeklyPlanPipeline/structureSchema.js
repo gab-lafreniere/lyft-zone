@@ -4,6 +4,33 @@ const SIMPLE_WEEKLY_PLAN_BLOCK_TYPES = Object.freeze([
   'CARDIO',
 ]);
 
+function nullable(schema) {
+  return {
+    anyOf: [
+      schema,
+      { type: 'null' },
+    ],
+  };
+}
+
+function buildPresentationSchema() {
+  return nullable({
+    type: 'object',
+    additionalProperties: false,
+    required: ['title', 'summary', 'progression', 'coachingNotes'],
+    properties: {
+      title: nullable({ type: 'string', minLength: 1, maxLength: 70 }),
+      summary: nullable({ type: 'string', minLength: 1, maxLength: 220 }),
+      progression: nullable({ type: 'string', minLength: 1, maxLength: 300 }),
+      coachingNotes: {
+        type: 'array',
+        maxItems: 3,
+        items: { type: 'string', minLength: 1, maxLength: 160 },
+      },
+    },
+  });
+}
+
 function assertSessionsPerWeek(sessionsPerWeek) {
   if (
     !Number.isInteger(sessionsPerWeek) ||
@@ -14,7 +41,10 @@ function assertSessionsPerWeek(sessionsPerWeek) {
   }
 }
 
-function buildSimpleWeeklyPlanStructureSchema(sessionsPerWeek) {
+function buildSimpleWeeklyPlanStructureSchema(
+  sessionsPerWeek,
+  { presentationContractEnabled = true } = {}
+) {
   assertSessionsPerWeek(sessionsPerWeek);
 
   const properties = {
@@ -24,6 +54,11 @@ function buildSimpleWeeklyPlanStructureSchema(sessionsPerWeek) {
     },
   };
   const required = ['planName'];
+
+  if (presentationContractEnabled) {
+    properties.presentation = buildPresentationSchema();
+    required.push('presentation');
+  }
 
   for (let workoutIndex = 1; workoutIndex <= sessionsPerWeek; workoutIndex += 1) {
     const workoutKey = `workout_${workoutIndex}`;
@@ -71,5 +106,6 @@ function buildSimpleWeeklyPlanStructureSchema(sessionsPerWeek) {
 
 module.exports = {
   SIMPLE_WEEKLY_PLAN_BLOCK_TYPES,
+  buildPresentationSchema,
   buildSimpleWeeklyPlanStructureSchema,
 };

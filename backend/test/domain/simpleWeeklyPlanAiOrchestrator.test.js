@@ -107,6 +107,9 @@ async function createScenario(t, options = {}) {
   const generatedPlanText = options.generatedPlanText ||
     await loadFixture('02-generated-plan-three-day.txt');
   const structure = await loadJsonFixture('03-extracted-structure.json');
+  if (options.presentation !== undefined) {
+    structure.presentation = structuredClone(options.presentation);
+  }
   const eligibleLookup =
     await loadJsonFixture('eligible-exercise-lookup.json');
   const skeleton = buildSimpleWeeklyPlanSkeleton(
@@ -213,7 +216,7 @@ async function createScenario(t, options = {}) {
       options.deterministicFillsEnabled ?? false,
     onProgress: options.onProgress,
     dependencies: {
-      env: {},
+      env: options.env || {},
       prisma,
       async buildPromptForUser(...args) {
         promptCalls.push(args);
@@ -304,6 +307,8 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
   assert.equal(call1.systemMessage, 'SYSTEM PROFILE CONTENT');
   assert.equal(call1.userMessage, 'USER PROFILE CONTENT');
   assert.deepEqual(call2.schema, buildSimpleWeeklyPlanStructureSchema(3));
+  assert.match(call2.userMessage, /Copy each value from the PROGRAM PRESENTATION section verbatim/);
+  assert.match(call2.userMessage, /Do not improve, summarize, shorten, rewrite, infer, complete, or invent/);
   assert.ok(call2.userMessage.includes(scenario.generatedPlanText.trim()));
   assert.ok(
     call2.userMessage.includes(
@@ -726,6 +731,38 @@ test('mocked end-to-end pipeline performs exactly three minimal AI calls and wri
     scenario.calls.some((call) => /review|repair/i.test(call.stage)),
     false
   );
+});
+
+test('GEOMETRY_ONLY carries presentation without making it part of geometry validity', async (t) => {
+  const presentation = {
+    title: 'Balanced Upper Specialization',
+    summary: 'Upper-body volume leads the week while lower-body work preserves balanced development.',
+    progression: 'Add load after every set reaches its target range with the prescribed effort.',
+    coachingNotes: [
+      'Keep pressing technique stable as weekly fatigue accumulates.',
+      'Use strict pulling mechanics to support balanced shoulder function.',
+    ],
+  };
+  const scenario = await createScenario(t, { presentation });
+
+  assert.equal(scenario.result.valid, true, JSON.stringify(scenario.result.error));
+  assert.deepEqual(scenario.result.boundPresentation, presentation);
+  assert.deepEqual(
+    scenario.output['04-output-ai_extracted-structure.json'].presentation,
+    presentation
+  );
+});
+
+test('presentation kill switch restores Phase 1A prompt, schema, and result tiers', async (t) => {
+  const scenario = await createScenario(t, {
+    env: { SIMPLE_WEEKLY_PLAN_PRESENTATION_CONTRACT: 'off' },
+  });
+  const call2 = scenario.calls.find((call) => call.stage === 'CALL_2_STRUCTURE');
+
+  assert.equal(call2.schema.properties.presentation, undefined);
+  assert.doesNotMatch(call2.userMessage, /PROGRAM PRESENTATION/);
+  assert.equal(scenario.result.boundPresentation, null);
+  assert.equal(scenario.result.presentationContractEnabled, false);
 });
 
 test('deterministic no-fallback path skips Call 3 and records resolver observability', async (t) => {

@@ -81,18 +81,37 @@ const BOUND_PLAN_BIND_INSTRUCTIONS = [
   'coach explicitly chose not to include.',
 ].join('\n');
 
+const PRESENTATION_BIND_INSTRUCTIONS = [
+  'Copy each value from the PROGRAM PRESENTATION section verbatim into presentation.',
+  'Do not improve, summarize, shorten, rewrite, infer, complete, or invent any',
+  'presentation content.',
+  'Never truncate a value to fit the schema. If a value cannot be copied in full,',
+  'return null for that field instead.',
+  'Map TITLE, SUMMARY, and PROGRESSION to their matching fields. Copy each NOTE value',
+  'in source order into coachingNotes.',
+  'If the PROGRAM PRESENTATION section is absent or unusable, return presentation null.',
+  'If an individual scalar field is absent, return null for that field. If no NOTE is',
+  'present, return an empty coachingNotes array.',
+].join('\n');
+
 function buildBoundPlanExtractionRequest({
   generatedPlanText,
   correctiveDirective = null,
+  presentationContractEnabled = true,
 }) {
-  const artifactUserMessage = correctiveDirective
-    ? `${BOUND_PLAN_BIND_INSTRUCTIONS}\n\n${correctiveDirective}`
+  const baseInstructions = presentationContractEnabled
+    ? `${BOUND_PLAN_BIND_INSTRUCTIONS}\n\n${PRESENTATION_BIND_INSTRUCTIONS}`
     : BOUND_PLAN_BIND_INSTRUCTIONS;
+  const artifactUserMessage = correctiveDirective
+    ? `${baseInstructions}\n\n${correctiveDirective}`
+    : baseInstructions;
   const sourcePlan = String(generatedPlanText || '');
 
   return {
     formatName: BOUND_PLAN_FORMAT_NAME,
-    schema: buildSimpleWeeklyPlanBoundPlanSchema(),
+    schema: buildSimpleWeeklyPlanBoundPlanSchema({
+      presentationContractEnabled,
+    }),
     systemMessage: 'You are a faithful training-plan binder.',
     userMessage: `${artifactUserMessage}\n\nSOURCE PLAN\n${sourcePlan}`,
     artifactUserMessage,
@@ -103,6 +122,7 @@ function buildBoundPlanExtractionRequest({
 function buildStructureExtractionRequest({
   generatedPlanText,
   sessionsPerWeek,
+  presentationContractEnabled = true,
 }) {
   const artifactUserMessage = [
     `The backend requires exactly ${sessionsPerWeek} workouts.`,
@@ -127,6 +147,9 @@ function buildStructureExtractionRequest({
     '- Do not return exercise names or exercise IDs.',
     '- Do not add, remove, merge, split, redesign, or correct workouts or blocks.',
     '- Consecutive blocks remain separate even when they have the same type and the same setCount. Never collapse or omit repeated-looking blocks.',
+    ...(presentationContractEnabled
+      ? ['', PRESENTATION_BIND_INSTRUCTIONS]
+      : []),
     '',
     'Before returning the JSON, verify each workout once:',
     '- every source-plan block is represented exactly once;',
@@ -137,7 +160,9 @@ function buildStructureExtractionRequest({
 
   return {
     formatName: STRUCTURE_OUTPUT_FORMAT_NAME,
-    schema: buildSimpleWeeklyPlanStructureSchema(sessionsPerWeek),
+    schema: buildSimpleWeeklyPlanStructureSchema(sessionsPerWeek, {
+      presentationContractEnabled,
+    }),
     systemMessage: 'You are a training-plan structure extractor.',
     userMessage: `${artifactUserMessage}\n\nSOURCE PLAN\n${sourcePlan}`,
     artifactUserMessage,
@@ -210,6 +235,7 @@ function buildFillExtractionRequest({
 
 module.exports = {
   BOUND_PLAN_BIND_INSTRUCTIONS,
+  PRESENTATION_BIND_INSTRUCTIONS,
   FILL_OUTPUT_FORMAT_NAME,
   STRUCTURE_OUTPUT_FORMAT_NAME,
   buildBoundPlanExtractionRequest,

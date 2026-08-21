@@ -5,6 +5,9 @@ const BOUND_PLAN_BLOCK_TYPES = Object.freeze([
   'SUPERSET',
   'CARDIO',
 ]);
+const {
+  buildPresentationSchema,
+} = require('./structureSchema');
 
 // Structured Outputs runs with strict: true (services/simpleWeeklyPlanAiProvider.js).
 // Under strict mode every property must appear in `required`, so optionality is
@@ -101,13 +104,18 @@ function buildBoundWorkoutSchema() {
 // is a Call #1 constraint (programGenerationProfileNarrative.js states it to the
 // coach); the binder must report what the source contains and let the backend
 // compare. See product decision D1.
-function buildSimpleWeeklyPlanBoundPlanSchema() {
+function buildSimpleWeeklyPlanBoundPlanSchema({
+  presentationContractEnabled = true,
+} = {}) {
   return closedObject({
     schemaVersion: {
       type: 'integer',
       const: BOUND_PLAN_SCHEMA_VERSION,
     },
     planName: { type: 'string', minLength: 1, maxLength: 200 },
+    ...(presentationContractEnabled
+      ? { presentation: buildPresentationSchema() }
+      : {}),
     workouts: {
       type: 'array',
       minItems: 1,

@@ -3,6 +3,7 @@ const { getOpenAIClient } = require('../src/ai/openaiClient');
 
 const SIMPLE_WEEKLY_PLAN_AI_DEFAULTS = Object.freeze({
   deterministicFillsEnabled: true,
+  presentationContractEnabled: true,
   // Migration flags. GEOMETRY_ONLY keeps the current production path byte for byte and
   // remains the rollback target for the BoundPlan work.
   extractionMode: 'GEOMETRY_ONLY',
@@ -228,6 +229,11 @@ function resolveSimpleWeeklyPlanAiConfig(env = process.env, overrides = {}) {
       overrides.deterministicFillsEnabled ??
         env.SIMPLE_WEEKLY_PLAN_DETERMINISTIC_FILLS_ENABLED,
       SIMPLE_WEEKLY_PLAN_AI_DEFAULTS.deterministicFillsEnabled
+    ),
+    presentationContractEnabled: resolveBoolean(
+      overrides.presentationContractEnabled ??
+        env.SIMPLE_WEEKLY_PLAN_PRESENTATION_CONTRACT,
+      SIMPLE_WEEKLY_PLAN_AI_DEFAULTS.presentationContractEnabled
     ),
     extractionMode: resolveEnum(
       overrides.extractionMode || env.SIMPLE_WEEKLY_PLAN_EXTRACTION_MODE,

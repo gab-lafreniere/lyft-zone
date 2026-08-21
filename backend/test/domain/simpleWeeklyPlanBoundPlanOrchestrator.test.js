@@ -220,6 +220,45 @@ test('the bind prompt never reveals the expected workout count', async () => {
     false
   );
   assert.equal(bind.schema.properties.workouts.minItems, 1);
+  assert.match(instructions, /Copy each value from the PROGRAM PRESENTATION section verbatim/);
+  assert.match(instructions, /Do not improve, summarize, shorten, rewrite, infer, complete, or invent/);
+});
+
+test('BOUND_PLAN returns the presentation copied from the source without affecting geometry', async () => {
+  const presentation = {
+    title: 'Chest Priority Hypertrophy',
+    summary: 'Chest leads the week while pulling volume preserves balanced upper-body development.',
+    progression: 'Add load after reaching each rep target while maintaining the prescribed RIR.',
+    coachingNotes: [
+      'Keep primary pressing performance stable across both weekly exposures.',
+      'Use strict pulling technique to balance the chest-priority workload.',
+    ],
+  };
+  const source = [
+    'PROGRAM PRESENTATION',
+    `TITLE: ${presentation.title}`,
+    `SUMMARY: ${presentation.summary}`,
+    `PROGRESSION: ${presentation.progression}`,
+    ...presentation.coachingNotes.map((note) => `NOTE: ${note}`),
+    '',
+    SOURCE_PLAN,
+  ].join('\n');
+  const bind = { ...structuredClone(GROUND_TRUTH), presentation };
+  const { result, readArtifact } = await runBoundPlanPipeline({
+    plans: [source],
+    binds: [bind],
+  });
+
+  assert.equal(result.valid, true, JSON.stringify(result.error));
+  assert.deepEqual(result.boundPresentation, presentation);
+  assert.deepEqual(
+    JSON.parse(readArtifact('04-output-ai_extracted-structure.json')).presentation,
+    presentation
+  );
+  assert.deepEqual(
+    result.sourceWorkoutNames,
+    GROUND_TRUTH.workouts.map((workout) => workout.name)
+  );
 });
 
 // --------------------------------------------------------------- recovery OFF

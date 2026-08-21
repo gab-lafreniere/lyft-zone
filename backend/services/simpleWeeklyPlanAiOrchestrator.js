@@ -534,6 +534,7 @@ async function bindPlanWithRecovery(context) {
     const bindRequest = buildBoundPlanExtractionRequest({
       generatedPlanText: planText,
       correctiveDirective,
+      presentationContractEnabled: config.presentationContractEnabled,
     });
     const bindArtifact = renderStructureModelInputArtifact({
       structureRequest: bindRequest,
@@ -692,6 +693,7 @@ async function runSimpleWeeklyPlanAiPipeline({
   timeouts,
   maxOutputTokens,
   deterministicFillsEnabled,
+  presentationContractEnabled,
   extractionMode,
   recoveryLevel,
   onProgress,
@@ -738,6 +740,7 @@ async function runSimpleWeeklyPlanAiPipeline({
       timeouts,
       maxOutputTokens,
       deterministicFillsEnabled,
+      presentationContractEnabled,
       extractionMode,
       recoveryLevel,
     }
@@ -800,6 +803,7 @@ async function runSimpleWeeklyPlanAiPipeline({
   let failureReceived;
   let prompt = null;
   let boundPlan = null;
+  let boundPresentation = null;
   const attemptSidecars = {};
   const attemptLedger = {
     creatorAttempts: 1,
@@ -828,7 +832,9 @@ async function runSimpleWeeklyPlanAiPipeline({
     startTimingStage('contextPreparationMs');
     prompt = await buildPrompt(
       userId,
-      {},
+      {
+        presentationContractEnabled: config.presentationContractEnabled,
+      },
       prismaDependencies
     );
     outputs.output1 = renderSimpleWeeklyPlanModelInput({
@@ -914,11 +920,15 @@ async function runSimpleWeeklyPlanAiPipeline({
       });
       // Canonical 01/02/03 were kept current inside the bind loop.
       boundPlan = bound.boundPlan;
+      boundPresentation = config.presentationContractEnabled
+        ? boundPlan?.presentation || null
+        : null;
       outputs.output4 = boundPlan;
     } else {
       const structureRequest = buildStructureExtractionRequest({
         generatedPlanText: outputs.output2,
         sessionsPerWeek: prompt.sessionsPerWeek,
+        presentationContractEnabled: config.presentationContractEnabled,
       });
       outputs.output3 = renderStructureModelInputArtifact({
         structureRequest,
@@ -949,6 +959,9 @@ async function runSimpleWeeklyPlanAiPipeline({
         })
       );
       extractedStructure = call2.value;
+      boundPresentation = config.presentationContractEnabled
+        ? extractedStructure?.presentation || null
+        : null;
       const structureValidation =
         validateSimpleWeeklyPlanStructure(extractedStructure, {
           sessionsPerWeek: prompt.sessionsPerWeek,
@@ -1266,6 +1279,8 @@ async function runSimpleWeeklyPlanAiPipeline({
     completedDocument: isValid ? outputs.output7 : null,
     metrics: isValid ? outputs.output8.metrics : null,
     generatedPlanText: isValid ? outputs.output2 : null,
+    boundPresentation: isValid ? boundPresentation : null,
+    presentationContractEnabled: config.presentationContractEnabled,
     sourceWorkoutNames,
     error: blockingError,
   };

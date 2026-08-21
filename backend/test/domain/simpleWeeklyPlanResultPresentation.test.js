@@ -7,6 +7,7 @@ const {
   buildSimpleWeeklyPlanResultPresentation,
   buildSimpleWeeklyPlanResultPresentationFallback,
   extractGeneralSections,
+  extractProgramPresentation,
   isUnsafePresentationLine,
 } = require('../../src/domain/simpleWeeklyPlanPipeline/resultPresentation');
 const {
@@ -108,6 +109,17 @@ test('fallback is exact and contains no generated plan text', () => {
   );
 });
 
+test('invalid stored titles use the deterministic backend muscle-area fallback', () => {
+  const completedDocument = createCompletedDocument();
+  completedDocument.name =
+    'An excessively verbose generated program title that exceeds the canonical presentation title character limit';
+
+  assert.equal(
+    buildSimpleWeeklyPlanResultPresentation({ completedDocument }).title,
+    'Glutes + Legs Hypertrophy'
+  );
+});
+
 test('normal coaching vocabulary is retained while prescription shapes are rejected', () => {
   const safe =
     'Keep reps clean, sets consistent, rest controlled, tempo steady, and RIR appropriate.';
@@ -165,4 +177,105 @@ test('real fixture heading vocabulary maps to the prescribed sections', () => {
       'This complete coaching sentence is long enough for extraction.',
     ]);
   }
+});
+
+const CONTRACT_PLAN = [
+  'PROGRAM PRESENTATION',
+  'TITLE: Chest Priority Hypertrophy',
+  'SUMMARY: Chest leads the week while pulling volume preserves balanced upper-body development.',
+  'PROGRESSION: Add load after reaching the top of each rep range while maintaining the prescribed RIR.',
+  'NOTE: Keep the first pressing movement technically consistent across the week.',
+  'NOTE: Use the pulling work to balance shoulder stress and upper-body volume.',
+  '',
+  '## Day 1 - Chest & Triceps',
+].join('\n');
+
+test('exact PROGRAM PRESENTATION keys are parsed without reading workout content', () => {
+  assert.deepEqual(extractProgramPresentation(CONTRACT_PLAN), {
+    title: 'Chest Priority Hypertrophy',
+    summary: 'Chest leads the week while pulling volume preserves balanced upper-body development.',
+    progression: 'Add load after reaching the top of each rep range while maintaining the prescribed RIR.',
+    coachingNotes: [
+      'Keep the first pressing movement technically consistent across the week.',
+      'Use the pulling work to balance shoulder stress and upper-body volume.',
+    ],
+  });
+});
+
+test('an exact bound presentation wins, then exact block, Phase 1A scrape, and fallbacks', () => {
+  const completedDocument = createCompletedDocument();
+  const bound = buildSimpleWeeklyPlanResultPresentation({
+    completedDocument,
+    generatedPlanText: CONTRACT_PLAN,
+    boundPresentation: {
+      title: 'Chest Priority Hypertrophy',
+      summary: 'Chest leads the week while pulling volume preserves balanced upper-body development.',
+      progression: 'Add load after reaching the top of each rep range while maintaining the prescribed RIR.',
+      coachingNotes: [
+        'Keep the first pressing movement technically consistent across the week.',
+        'Use the pulling work to balance shoulder stress and upper-body volume.',
+      ],
+    },
+  });
+  assert.equal(bound.title, 'Chest Priority Hypertrophy');
+  assert.match(bound.summary, /^Chest leads/);
+
+  const exact = buildSimpleWeeklyPlanResultPresentation({
+    completedDocument,
+    generatedPlanText: CONTRACT_PLAN,
+    boundPresentation: {
+      title: null,
+      summary: 'too short',
+      progression: null,
+      coachingNotes: [],
+    },
+  });
+  assert.equal(exact.title, 'Chest Priority Hypertrophy');
+  assert.match(exact.summary, /^Chest leads/);
+  assert.equal(exact.coachingNotes.length, 2);
+
+  const disabled = buildSimpleWeeklyPlanResultPresentation({
+    completedDocument,
+    generatedPlanText: CONTRACT_PLAN,
+    boundPresentation: bound,
+    presentationContractEnabled: false,
+  });
+  assert.equal(disabled.title, 'Balanced Hypertrophy');
+  assert.equal(disabled.summary, null);
+  assert.equal(disabled.progression, FALLBACK_PROGRESSION);
+});
+
+test('malformed presentation content never invalidates the deterministic result', () => {
+  assert.doesNotThrow(() => buildSimpleWeeklyPlanResultPresentation({
+    completedDocument: createCompletedDocument(),
+    generatedPlanText: 'PROGRAM PRESENTATION\nTITLE:\nNOTE: x\n## Day 1 - Upper',
+    boundPresentation: 'not-an-object',
+}));
+});
+
+test('a truncated bind cannot win tier 1 over the exact source block', () => {
+  const sourceProgression = `${'Add reps with stable technique before increasing load. '.repeat(7)}Finish strong.`;
+  const presentation = buildSimpleWeeklyPlanResultPresentation({
+    completedDocument: createCompletedDocument(),
+    generatedPlanText: [
+      'PROGRAM PRESENTATION',
+      'TITLE: Chest Priority Hypertrophy',
+      'SUMMARY: Chest leads the week while pulling volume preserves balanced upper-body development.',
+      `PROGRESSION: ${sourceProgression}`,
+      'NOTE: Keep the first pressing movement technically consistent across the week.',
+      'NOTE: Use the pulling work to balance shoulder stress and upper-body volume.',
+      '## Day 1 - Chest & Triceps',
+    ].join('\n'),
+    boundPresentation: {
+      title: 'Chest Priority Hypertrophy',
+      summary: 'Chest leads the week while pulling volume preserves balanced upper-body development.',
+      progression: sourceProgression.slice(0, 300),
+      coachingNotes: [
+        'Keep the first pressing movement technically consistent across the week.',
+        'Use the pulling work to balance shoulder stress and upper-body volume.',
+      ],
+    },
+  });
+
+  assert.equal(presentation.progression, FALLBACK_PROGRESSION);
 });

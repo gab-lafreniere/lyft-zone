@@ -13,7 +13,9 @@ function getValidator(sessionsPerWeek) {
   if (!validators.has(sessionsPerWeek)) {
     validators.set(
       sessionsPerWeek,
-      ajv.compile(buildSimpleWeeklyPlanStructureSchema(sessionsPerWeek))
+      ajv.compile(buildSimpleWeeklyPlanStructureSchema(sessionsPerWeek, {
+        presentationContractEnabled: false,
+      }))
     );
   }
   return validators.get(sessionsPerWeek);
@@ -55,7 +57,15 @@ function issue(path, code, message, received, expected) {
 
 function validateSimpleWeeklyPlanStructure(value, { sessionsPerWeek } = {}) {
   const validateSchema = getValidator(sessionsPerWeek);
-  const schemaValid = validateSchema(value);
+  const structureOnly = value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(
+      Object.entries(value).filter(([key]) => key !== 'presentation')
+    )
+    : value;
+  // Presentation is deliberately excluded from plan validity. Structured Output
+  // constrains it at the provider boundary, while this validator remains solely
+  // responsible for the geometry contract.
+  const schemaValid = validateSchema(structureOnly);
   const errors = schemaValid
     ? []
     : (validateSchema.errors || []).map(schemaErrorToResult);

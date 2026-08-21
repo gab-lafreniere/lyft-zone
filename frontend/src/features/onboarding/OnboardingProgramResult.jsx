@@ -1,7 +1,6 @@
 import { Button, StickyBottomActions } from "../../design-v2";
 import {
   AREA_KIND_MAP,
-  AREA_LABELS,
   AREA_PARENT_MAP,
 } from "../settings/settingsOptions";
 
@@ -28,17 +27,8 @@ const DISPLAY_PRIORITY_PARENT = {
   soleus: "calves",
 };
 
-const TITLE_STOP_WORDS = new Set([
-  "a", "an", "and", "around", "as", "built", "day", "days", "emphasis",
-  "for", "plan", "program", "secondary", "split", "the", "training", "with",
-]);
-
 function normalizeWords(value) {
   return String(value || "").trim().replace(/\s+/g, " ");
-}
-
-function wordCount(value) {
-  return normalizeWords(value).split(" ").filter(Boolean).length;
 }
 
 export function resolveDisplayPriority(value) {
@@ -77,58 +67,6 @@ function normalizeDistributionKey(entry) {
     .replace(/\s*&\s*/g, "_")
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_|_$/g, "");
-}
-
-export function condenseProgramTitle(storedName, profile, presentationTitle) {
-  const concisePresentationTitle = normalizeWords(presentationTitle);
-  if (
-    concisePresentationTitle &&
-    wordCount(concisePresentationTitle) <= 8
-  ) {
-    return concisePresentationTitle;
-  }
-
-  const original = normalizeWords(storedName) || "Your Program";
-  if (wordCount(original) <= 8) {
-    return original;
-  }
-
-  const priorities = profile?.musclePriorities || {};
-  const priorityMacros = [
-    priorities.primaryFocus,
-    ...(Array.isArray(priorities.secondaryFocuses)
-      ? priorities.secondaryFocuses
-      : []),
-  ]
-    .filter(Boolean)
-    .map(resolveDisplayPriority)
-    .filter((value, index, values) => values.indexOf(value) === index)
-    .slice(0, 2);
-  const priorityLabels = priorityMacros.map(
-    (value) => AREA_LABELS[value] || value
-  );
-  const programType = /hypertrophy/i.test(original) ||
-    profile?.primaryGoal === "HYPERTROPHY"
-    ? "Hypertrophy"
-    : /strength/i.test(original)
-      ? "Strength"
-      : /endurance/i.test(original)
-        ? "Endurance"
-        : "Program";
-
-  if (priorityLabels.length > 0) {
-    return `${priorityLabels.join(" + ")} ${programType}`;
-  }
-
-  const condensedWords = original
-    .replace(/\b\d+\s*[- ]?day\b/gi, " ")
-    .split(/\s+/)
-    .map((word) => word.replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, ""))
-    .filter(Boolean)
-    .filter((word) => !TITLE_STOP_WORDS.has(word.toLowerCase()))
-    .slice(0, 8);
-  const condensed = condensedWords.join(" ");
-  return condensed || original.split(" ").slice(0, 8).join(" ");
 }
 
 function isDisplayMetric(value) {
@@ -207,11 +145,7 @@ export default function OnboardingProgramResult({
 }) {
   const presentation = weeklyPlan?.presentation || {};
   const metrics = weeklyPlan?.metrics || {};
-  const name = condenseProgramTitle(
-    weeklyPlan?.name || presentation.title,
-    profile,
-    presentation.title
-  );
+  const name = presentation.title || weeklyPlan?.name || "Your Program";
   const prioritizedMuscleKeys = buildPrioritizedMuscleKeys(profile);
   const cycleId = cycle?.cycleId || cycle?.cycle?.id;
   const durationWeeks = Number(cycle?.durationWeeks || cycle?.cycle?.durationWeeks);

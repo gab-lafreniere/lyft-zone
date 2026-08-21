@@ -5,6 +5,7 @@ const path = require('node:path');
 
 const {
   deriveRestCandidates,
+  parseSourcePlan,
   parseRestSeconds,
   resolveDeterministicWeeklyPlanFills,
 } = require('../../../src/domain/simpleWeeklyPlanPipeline/deterministicFillResolver');
@@ -92,6 +93,19 @@ function plausibleFixtureBResolutions(result) {
     })),
   };
 }
+
+test('rollback parser accepts Day, Session, and Workout ordinal headings', () => {
+  for (const heading of [
+    '## Day 1 - Upper Focus',
+    '## Session 1 - Upper Focus',
+    'Workout 1 - Upper Focus',
+  ]) {
+    assert.deepEqual(parseSourcePlan(heading), [{
+      name: heading.replace(/^#{0,2}\s*/, ''),
+      blocks: [],
+    }]);
+  }
+});
 
 test('rest normalization keeps exact seconds and uses range upper bounds without 15-second rounding', () => {
   assert.equal(parseRestSeconds('68 sec'), 68);

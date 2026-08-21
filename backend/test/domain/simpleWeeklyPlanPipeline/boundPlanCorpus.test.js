@@ -9,6 +9,9 @@ const CORPUS_ROOT = path.join(
 );
 const corpus = require(path.join(CORPUS_ROOT, 'corpus.json'));
 const exerciseLibrary = require('../../../src/exercise-library/exercises.json');
+const {
+  parseSourcePlan,
+} = require('../../../src/domain/simpleWeeklyPlanPipeline/deterministicFillResolver');
 
 const LIBRARY_IDS = new Set(
   exerciseLibrary.map((exercise) => exercise.exerciseId)
@@ -80,15 +83,10 @@ test('smoke-203907 declares a superset that exists only as prose', () => {
   assert.equal(entry.truth.exerciseCount, 10);
 });
 
-test('smoke-203739 uses a workout heading the legacy parser cannot see', () => {
+test('smoke-203739 preserves the Session heading now supported by rollback parsing', () => {
   const source = readSource(caseById('smoke-203739'));
   assert.match(source, /^## Session 1 /m);
-  assert.equal(
-    /^#{1,2}\s+Day\s+\d+\b/m.test(source),
-    false,
-    'no Day heading exists, which is why the legacy resolver parsed zero workouts'
-  );
-  assert.equal(/^Workout\s+\d+\b/m.test(source), false);
+  assert.equal(parseSourcePlan(source).length, 2);
 });
 
 test('creator-fewer-workouts genuinely contains fewer workouts than required', () => {

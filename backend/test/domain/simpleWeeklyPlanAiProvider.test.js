@@ -32,6 +32,7 @@ test('provider configuration has isolated defaults and accepts pipeline-specific
     }),
     {
       deterministicFillsEnabled: true,
+      presentationContractEnabled: true,
       // Bound Plan migration defaults: the current production path stays selected
       // until the flags are flipped explicitly.
       extractionMode: 'GEOMETRY_ONLY',
@@ -49,6 +50,12 @@ test('provider configuration has isolated defaults and accepts pipeline-specific
     resolveSimpleWeeklyPlanAiConfig({
       SIMPLE_WEEKLY_PLAN_DETERMINISTIC_FILLS_ENABLED: 'false',
     }).deterministicFillsEnabled,
+    false
+  );
+  assert.equal(
+    resolveSimpleWeeklyPlanAiConfig({
+      SIMPLE_WEEKLY_PLAN_PRESENTATION_CONTRACT: 'off',
+    }).presentationContractEnabled,
     false
   );
 });

@@ -34,16 +34,21 @@ async function buildTextualAIWeeklyPlanPromptForUser(
     deps.buildProgramGenerationContext || buildProgramGenerationContext;
   const promptBuilder =
     deps.buildProgramGenerationPrompt || buildProgramGenerationPrompt;
+  const {
+    presentationContractEnabled = true,
+    ...contextOptions
+  } = options;
   const context = await contextBuilder(
     userId.trim(),
     {
-      ...options,
+      ...contextOptions,
       includeEvaluationPolicy: false,
     },
     deps
   );
   const { promptVersion, systemMessage, userMessage } = promptBuilder({
     context,
+    presentationContractEnabled,
   });
   const inputText = buildInputText(systemMessage, userMessage);
 

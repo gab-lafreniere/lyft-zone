@@ -11,7 +11,9 @@ let compiledBoundPlanValidator = null;
 function getBoundPlanValidator() {
   if (!compiledBoundPlanValidator) {
     compiledBoundPlanValidator = ajv.compile(
-      buildSimpleWeeklyPlanBoundPlanSchema()
+      buildSimpleWeeklyPlanBoundPlanSchema({
+        presentationContractEnabled: false,
+      })
     );
   }
   return compiledBoundPlanValidator;
@@ -85,7 +87,14 @@ function eachExercise(boundPlan, visit) {
 
 function verifySchema(boundPlan) {
   const validate = getBoundPlanValidator();
-  if (validate(boundPlan)) {
+  const planOnly = boundPlan && typeof boundPlan === 'object' && !Array.isArray(boundPlan)
+    ? Object.fromEntries(
+      Object.entries(boundPlan).filter(([key]) => key !== 'presentation')
+    )
+    : boundPlan;
+  // Presentation is non-authoritative metadata. It must never affect bind recovery,
+  // source/pool verification, occurrence integrity, or geometry validity.
+  if (validate(planOnly)) {
     return [];
   }
   return [

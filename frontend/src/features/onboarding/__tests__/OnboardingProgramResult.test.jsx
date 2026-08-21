@@ -94,10 +94,14 @@ test("renders real weekly metrics, split, insights, and result actions", () => {
   expect(onDetails).toHaveBeenCalledTimes(1);
 });
 
-test("condenses a verbose title for presentation without mutating stored data", () => {
+test("renders the canonical persisted presentation title without client synthesis", () => {
   const verbosePlan = {
     ...weeklyPlan,
     name: "2-day hypertrophy split built around chest priority, with biceps as the secondary emphasis",
+    presentation: {
+      ...weeklyPlan.presentation,
+      title: "Chest Priority Hypertrophy",
+    },
   };
   const originalName = verbosePlan.name;
 
@@ -114,7 +118,7 @@ test("condenses a verbose title for presentation without mutating stored data", 
   );
 
   expect(screen.getByRole("heading", {
-    name: "Chest + Biceps Hypertrophy",
+    name: "Chest Priority Hypertrophy",
   })).toBeInTheDocument();
   expect(screen.queryByText(originalName)).not.toBeInTheDocument();
   expect(verbosePlan.name).toBe(originalName);

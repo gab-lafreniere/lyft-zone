@@ -155,6 +155,13 @@ function createSuccessfulPipelineResult() {
       workouts: [],
     },
     sourceWorkoutNames: ['Day 1 - Upper Focus'],
+    boundPresentation: {
+      title: 'Upper Focus Hypertrophy',
+      summary: 'A short public summary.',
+      progression: null,
+      coachingNotes: [],
+    },
+    presentationContractEnabled: true,
     generatedPlanText: [
       'Summary',
       'A short public summary.',
@@ -196,6 +203,12 @@ test('POST /api/weekly-plans/ai-drafts runs once, persists published, and return
     { initialStatus: 'PUBLISHED' },
   ]);
   assert.equal(calls.presentation.length, 1);
+  assert.deepEqual(calls.presentation[0], {
+    generatedPlanText: pipelineResult.generatedPlanText,
+    completedDocument: pipelineResult.completedDocument,
+    boundPresentation: pipelineResult.boundPresentation,
+    presentationContractEnabled: true,
+  });
   assert.deepEqual(Object.keys(res.body).sort(), [
     'metrics',
     'name',

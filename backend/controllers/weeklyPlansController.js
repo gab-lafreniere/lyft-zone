@@ -208,6 +208,9 @@ async function createAIWeeklyPlanDraftHandler(req, res) {
       presentation = buildSimpleWeeklyPlanResultPresentation({
         generatedPlanText: pipelineResult.generatedPlanText,
         completedDocument: pipelineResult.completedDocument,
+        boundPresentation: pipelineResult.boundPresentation,
+        presentationContractEnabled:
+          pipelineResult.presentationContractEnabled !== false,
       });
     } catch (_error) {
       presentation = buildSimpleWeeklyPlanResultPresentationFallback(

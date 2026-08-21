@@ -79,7 +79,7 @@ test('text prompt contains the dynamic athlete, safe constraints, and eligible p
 
   assert.equal(
     PROGRAM_GENERATION_PROMPT_VERSION,
-    'ai-weekly-plan-text-prompt-v1.4.0'
+    'ai-weekly-plan-text-prompt-v1.5.0'
   );
   assert.equal(prompt.promptVersion, PROGRAM_GENERATION_PROMPT_VERSION);
   assert.equal(
@@ -95,6 +95,10 @@ test('text prompt contains the dynamic athlete, safe constraints, and eligible p
     /Create one complete, individualized, practical, and recoverable weekly training program for an advanced bodybuilding athlete whose primary goal is hypertrophy\./
   );
   assert.match(prompt.userMessage, /human-readable training plan, not JSON/);
+  assert.match(prompt.userMessage, /PROGRAM PRESENTATION/);
+  assert.match(prompt.userMessage, /TITLE: <2 to 5 words naming the training focus>/);
+  assert.match(prompt.userMessage, /exact form "## Day N - <short workout focus>"/);
+  assert.match(prompt.userMessage, /Do not include exerciseId tokens.*PROGRAM PRESENTATION/);
   assert.match(prompt.userMessage, /train exactly 4 times per week/);
   assert.match(prompt.userMessage, /approximately 75 minutes/);
   assert.match(prompt.userMessage, /upper_chest/);
@@ -261,12 +265,26 @@ test('text prompt adds only the single SUPERSET set-count rule', () => {
   );
   assert.equal(
     createHash('sha256').update(withoutRule).digest('hex'),
-    '70e23f927af05cb33278ced04df5d15ccf5eb7a3717ab26d5a9212a31a317b6e'
+    'fe93f73a0b78e04858bac96f61661c968597ab5777e79f1d635e2bad12afc121'
   );
   assert.equal(
     createHash('sha256').update(prompt.systemMessage).digest('hex'),
     'b1bfe54f23c7d7c719c591c2a5155fd8eddbbea5c5f589fa2d8787bc789b26dc'
   );
+});
+
+test('presentation contract can be disabled without changing the legacy prompt body', () => {
+  const enabled = buildProgramGenerationPrompt({
+    context: createTextContext(),
+  });
+  const disabled = buildProgramGenerationPrompt({
+    context: createTextContext(),
+    presentationContractEnabled: false,
+  });
+
+  assert.match(enabled.userMessage, /PROGRAM PRESENTATION/);
+  assert.doesNotMatch(disabled.userMessage, /PROGRAM PRESENTATION/);
+  assert.doesNotMatch(disabled.userMessage, /## Day N - <short workout focus>/);
 });
 
 test('profile narrative precedes exercise instructions, duration, coaching, and the complete pool', () => {

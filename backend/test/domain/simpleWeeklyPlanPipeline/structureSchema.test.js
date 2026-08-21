@@ -15,9 +15,14 @@ test('dynamic structure schema exposes exactly the requested workout keys', () =
 
     assert.deepEqual(Object.keys(schema.properties), [
       'planName',
+      'presentation',
       ...workoutKeys,
     ]);
-    assert.deepEqual(schema.required, ['planName', ...workoutKeys]);
+    assert.deepEqual(schema.required, [
+      'planName',
+      'presentation',
+      ...workoutKeys,
+    ]);
     assert.equal(schema.additionalProperties, false);
     workoutKeys.forEach((workoutKey) => {
       assert.equal(
@@ -26,6 +31,36 @@ test('dynamic structure schema exposes exactly the requested workout keys', () =
       );
     });
   }
+});
+
+test('presentation contract is nullable, bounded, and strictly extractive', () => {
+  const schema = buildSimpleWeeklyPlanStructureSchema(3);
+  const presentation = schema.properties.presentation.anyOf[0];
+
+  assert.deepEqual(presentation.required, [
+    'title',
+    'summary',
+    'progression',
+    'coachingNotes',
+  ]);
+  assert.equal(presentation.additionalProperties, false);
+  assert.equal(presentation.properties.title.anyOf[0].maxLength, 70);
+  assert.equal(presentation.properties.summary.anyOf[0].maxLength, 220);
+  assert.equal(presentation.properties.progression.anyOf[0].maxLength, 300);
+  assert.equal(presentation.properties.coachingNotes.maxItems, 3);
+  assert.equal(presentation.properties.coachingNotes.items.maxLength, 160);
+});
+
+test('presentation kill switch restores the Phase 1A structure schema', () => {
+  const schema = buildSimpleWeeklyPlanStructureSchema(2, {
+    presentationContractEnabled: false,
+  });
+  assert.deepEqual(Object.keys(schema.properties), [
+    'planName',
+    'workout_1',
+    'workout_2',
+  ]);
+  assert.equal(schema.required.includes('presentation'), false);
 });
 
 test('dynamic structure schema contains only the simple Output #4 block contract', () => {
