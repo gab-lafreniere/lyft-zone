@@ -1407,8 +1407,11 @@ CONTRAINTES POUR L’AGENT IA
 
 Règles AI Builder:
 - Call #1 est le CREATOR et reste le seul responsable des décisions de coaching: workouts, exercices, ordre, blocs, supersets, sets, reps, RIR/RPE, tempo, rest et cardio.
+- Call #1 rédige aussi un bloc explicite `PROGRAM PRESENTATION` contenant TITLE, SUMMARY, PROGRESSION et 2 ou 3 NOTE, puis ouvre chaque workout avec `## Day N - <short workout focus>`.
 - L’IA ne peut utiliser que les exercices provenant du User Exercise Pool et ne doit pas inventer d’exerciseId.
 - Call #2 est un BINDER fidèle: il enregistre la structure et les prescriptions présentes dans le plan de Call #1 sans coacher, compléter ou redessiner.
+- Call #2 copie fidèlement la présentation rédigée par Call #1; il ne peut pas l’améliorer, la résumer, la raccourcir, la réécrire, la compléter, l’inférer ni en inventer le contenu.
+- La présentation structurée n’est éligible au tier 1 que si chaque valeur correspond exactement au bloc source. Une présentation absente, malformée, raccourcie ou réécrite ne peut jamais invalider un Weekly Plan autrement valide.
 - Le backend vérifie la fidélité du bind, l’appartenance exacte au pool et l’intégrité des occurrences avant de construire la géométrie.
 - L’intégrité source/bind repose sur l’égalité exacte du multiset des exerciseIds éligibles: omission ou insertion déclenche retry binder puis fail closed si non corrigé.
 - Step 05 reste l’autorité déterministe de géométrie. Aucun parser legacy de Output 02 n’est utilisé en mode BOUND_PLAN.
@@ -1428,8 +1431,12 @@ Architecture candidate active en local: BOUND_PLAN
 
 1. Call #1 CREATOR
    - génère le programme textuel complet à partir du Training Profile et du User Exercise Pool
+   - rédige en tête un bloc explicite `PROGRAM PRESENTATION`: TITLE, SUMMARY, PROGRESSION et 2 ou 3 NOTE
+   - utilise `## Day N - <short workout focus>` pour chaque heading source de workout
 2. Call #2 BINDER
    - produit Bound Plan v1 en copiant fidèlement la structure et les prescriptions de Call #1
+   - copie la présentation source dans l’objet structuré `presentation` sans l’améliorer, la résumer, la raccourcir, la réécrire, la compléter, l’inférer ni l’inventer
+   - une valeur structurée n’est éligible au tier 1 que si elle correspond exactement à la valeur source
 3. Vérification backend déterministe
    - schema + source spans
    - exerciseIds exacts dans le pool
@@ -1450,6 +1457,9 @@ Architecture candidate active en local: BOUND_PLAN
 8. Persistance
    - génération initiale persistée comme Weekly Plan published
 9. Présentation
+   - résolution backend: présentation structurée Call #2 -> parsing exact du bloc source `PROGRAM PRESENTATION` -> scrape Phase 1A -> fallback déterministe
+   - tout contenu de présentation absent, malformé, raccourci ou réécrit tombe vers le tier suivant sans invalider un Weekly Plan autrement valide
+   - aucun appel IA additionnel ni passe IA dédiée à la présentation
    - résultat consultable puis éditable via Manual Builder / convertible en cycle
 
 Recovery BOUND_PLAN:
@@ -1462,6 +1472,7 @@ Recovery BOUND_PLAN:
 Feature flags:
 - SIMPLE_WEEKLY_PLAN_EXTRACTION_MODE=GEOMETRY_ONLY | BOUND_PLAN
 - SIMPLE_WEEKLY_PLAN_RECOVERY_LEVEL=OFF | BINDER_ONLY | FULL
+- SIMPLE_WEEKLY_PLAN_PRESENTATION_CONTRACT=on | off; `off` restaure le chemin de présentation Phase 1A sans modifier extraction, géométrie, vérification ou budgets de recovery
 - Toute valeur non vide inconnue est maintenant une erreur de configuration; aucun fallback silencieux vers GEOMETRY_ONLY
 - GEOMETRY_ONLY est conservé temporairement comme rollback legacy
 
