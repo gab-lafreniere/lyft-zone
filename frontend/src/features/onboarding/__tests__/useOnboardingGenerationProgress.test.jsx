@@ -76,7 +76,7 @@ test("a transient polling failure resets after RUNNING and still resolves SUCCEE
   jest.useFakeTimers();
   getAIWeeklyPlanGenerationProgress
     .mockRejectedValueOnce(new Error("Temporary network error"))
-    .mockResolvedValueOnce({ status: "RUNNING", stage: "BUILDING_PROGRAM" })
+    .mockResolvedValueOnce({ status: "RUNNING", stage: "RESOLVING_EXERCISES" })
     .mockResolvedValueOnce({ status: "SUCCEEDED", stage: "SAVING_PROGRAM" });
   const view = render(<Harness phase="generating" />);
 
@@ -138,7 +138,33 @@ test("three consecutive polling failures resolve the waiter as unavailable", asy
   }
 });
 
-test("BUILDING_PROGRAM rotates workout-aware messages every five seconds", async () => {
+test("poll failures do not stop conservative loader animation before unavailability", async () => {
+  jest.useFakeTimers();
+  getAIWeeklyPlanGenerationProgress.mockRejectedValue(
+    new Error("Progress unavailable")
+  );
+  const view = render(<Harness phase="generating" />);
+
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Start AI" }));
+    fireEvent.click(screen.getByRole("button", { name: "Wait for AI" }));
+    await act(async () => {
+      await Promise.resolve();
+      jest.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+
+    expect(Number(screen.getByTestId("visual-percent").textContent))
+      .toBeGreaterThan(0);
+    expect(screen.getByTestId("terminal-status")).toHaveTextContent("waiting");
+  } finally {
+    view.unmount();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  }
+});
+
+test("RESOLVING_EXERCISES rotates truthful stage messages every five seconds", async () => {
   jest.useFakeTimers();
   let resolveFirstProgress;
   getAIWeeklyPlanGenerationProgress.mockImplementation(
@@ -158,20 +184,16 @@ test("BUILDING_PROGRAM rotates workout-aware messages every five seconds", async
     await act(async () => {
       resolveFirstProgress({
         status: "RUNNING",
-        stage: "BUILDING_PROGRAM",
+        stage: "RESOLVING_EXERCISES",
       });
       await Promise.resolve();
     });
     expect(screen.getByTestId("display-stage")).not.toHaveTextContent(
-      "BUILDING_PROGRAM"
+      "RESOLVING_EXERCISES"
     );
-    // BUILDING_PROGRAM now begins at 75%, so the bar needs a longer catch-up before the
-    // display stage may advance to it. Step until it flips rather than hard-coding the
-    // duration, so the assertion tracks the stage change itself and not the pacing
-    // constants — a single long advance would also consume message-rotation time.
     for (let step = 0; step < 60; step += 1) {
       if (
-        screen.getByTestId("display-stage").textContent === "BUILDING_PROGRAM"
+        screen.getByTestId("display-stage").textContent === "RESOLVING_EXERCISES"
       ) {
         break;
       }
@@ -180,14 +202,14 @@ test("BUILDING_PROGRAM rotates workout-aware messages every five seconds", async
       });
     }
     expect(screen.getByTestId("display-stage")).toHaveTextContent(
-      "BUILDING_PROGRAM"
+      "RESOLVING_EXERCISES"
     );
-    expect(screen.getByText("Workout 1 of 3")).toBeInTheDocument();
+    expect(screen.getByText("Matching Your Exercises")).toBeInTheDocument();
 
     act(() => {
       jest.advanceTimersByTime(5000);
     });
-    expect(screen.getByText("Workout 2 of 3")).toBeInTheDocument();
+    expect(screen.getByText("Completing Set Guidance")).toBeInTheDocument();
   } finally {
     view.unmount();
     jest.clearAllTimers();
@@ -209,7 +231,7 @@ test("a backend stage update changes only the target and catches up without visi
     fireEvent.click(screen.getByRole("button", { name: "Start AI" }));
     await waitFor(() => expect(resolveProgress).toEqual(expect.any(Function)));
     await act(async () => {
-      resolveProgress({ status: "RUNNING", stage: "BUILDING_PROGRAM" });
+      resolveProgress({ status: "RUNNING", stage: "RESOLVING_EXERCISES" });
       await Promise.resolve();
     });
 
@@ -223,7 +245,7 @@ test("a backend stage update changes only the target and catches up without visi
     expect(firstVisual).toBeGreaterThan(0);
     expect(firstVisual).toBeLessThanOrEqual(1);
     expect(Number(screen.getByTestId("target-percent").textContent))
-      .toBeGreaterThanOrEqual(75);
+      .toBeGreaterThanOrEqual(62);
     expect(screen.getByTestId("display-stage")).toHaveTextContent(
       "PROFILE_SETUP"
     );
@@ -244,7 +266,7 @@ test("a backend stage update changes only the target and catches up without visi
       jest.advanceTimersByTime(9000);
     });
     expect(screen.getByTestId("display-stage")).toHaveTextContent(
-      "BUILDING_PROGRAM"
+      "RESOLVING_EXERCISES"
     );
   } finally {
     view.unmount();
@@ -277,7 +299,33 @@ test("finalization runway continues when converting changes to completing", () =
       screen.getByTestId("target-percent").textContent
     );
     expect(completingTarget).toBeGreaterThan(98);
-    expect(completingTarget).toBeLessThan(98.95);
+    expect(completingTarget).toBeLessThan(99);
+  } finally {
+    view.unmount();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  }
+});
+
+test("a fast run stays visible for 2.5 seconds before success can target 100", () => {
+  jest.useFakeTimers();
+  const view = render(<Harness phase="completing" />);
+
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Start AI" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mark success" }));
+
+    act(() => {
+      jest.advanceTimersByTime(2499);
+    });
+    expect(Number(screen.getByTestId("target-percent").textContent))
+      .toBeLessThan(100);
+    expect(screen.getByTestId("completion-ready")).toHaveTextContent("false");
+
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    expect(Number(screen.getByTestId("target-percent").textContent)).toBe(100);
   } finally {
     view.unmount();
     jest.clearAllTimers();

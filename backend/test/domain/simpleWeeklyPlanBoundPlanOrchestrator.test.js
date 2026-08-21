@@ -516,7 +516,8 @@ test('public progress never regresses across retries (D10)', async () => {
     'PROFILE_SETUP',
     'DESIGNING_PROGRAM',
     'EXTRACTING_STRUCTURE',
-    'BUILDING_PROGRAM',
+    'RESOLVING_EXERCISES',
+    'COMPLETING_DETAILS',
     'VALIDATING_PROGRAM',
   ];
 
@@ -541,6 +542,13 @@ test('public progress never regresses across retries (D10)', async () => {
     stages.length,
     'no stage is reported twice, so retries stay invisible to the client'
   );
+  assert.deepEqual(stages, [
+    'PROFILE_SETUP',
+    'DESIGNING_PROGRAM',
+    'EXTRACTING_STRUCTURE',
+    'RESOLVING_EXERCISES',
+    'VALIDATING_PROGRAM',
+  ], 'BOUND_PLAN skips conditional detail completion when fallback is unnecessary');
 });
 
 test('GEOMETRY_ONLY remains a working rollback and emits no attempt ledger', async () => {

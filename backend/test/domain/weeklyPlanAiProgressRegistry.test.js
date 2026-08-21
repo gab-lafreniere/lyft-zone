@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   PROGRESS_TTL_MS,
+  WEEKLY_PLAN_AI_STAGES,
   advanceGenerationProgress,
   beginGenerationProgress,
   claimGenerationProgress,
@@ -14,6 +15,18 @@ const {
 
 test.beforeEach(() => clearGenerationProgressForTests());
 
+test('stages expose the canonical monotonic generation order', () => {
+  assert.deepEqual(WEEKLY_PLAN_AI_STAGES, [
+    'PROFILE_SETUP',
+    'DESIGNING_PROGRAM',
+    'EXTRACTING_STRUCTURE',
+    'RESOLVING_EXERCISES',
+    'COMPLETING_DETAILS',
+    'VALIDATING_PROGRAM',
+    'SAVING_PROGRAM',
+  ]);
+});
+
 test('progress is owner-scoped, monotonic, and terminal', () => {
   const startedAt = Date.parse('2026-08-11T12:00:00.000Z');
   beginGenerationProgress(
@@ -22,7 +35,7 @@ test('progress is owner-scoped, monotonic, and terminal', () => {
   );
   advanceGenerationProgress(
     { generationId: 'generation_1', userId: 'user_1' },
-    'BUILDING_PROGRAM',
+    'RESOLVING_EXERCISES',
     startedAt + 1000
   );
   advanceGenerationProgress(
@@ -36,7 +49,7 @@ test('progress is owner-scoped, monotonic, and terminal', () => {
       { generationId: 'generation_1', userId: 'user_1' },
       startedAt + 2000
     ).stage,
-    'BUILDING_PROGRAM'
+    'RESOLVING_EXERCISES'
   );
   assert.equal(
     readGenerationProgress(

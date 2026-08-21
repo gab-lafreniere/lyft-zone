@@ -212,7 +212,7 @@ describe("createAIWeeklyPlanDraft", () => {
         json: async () => ({
           generationId: "generation_1",
           status: "RUNNING",
-          stage: "BUILDING_PROGRAM",
+          stage: "RESOLVING_EXERCISES",
         }),
       });
 

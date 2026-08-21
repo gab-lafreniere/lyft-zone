@@ -885,7 +885,7 @@ test('public progress stages follow real boundaries and callback failures are ha
     'PROFILE_SETUP',
     'DESIGNING_PROGRAM',
     'EXTRACTING_STRUCTURE',
-    'BUILDING_PROGRAM',
+    'RESOLVING_EXERCISES',
     'VALIDATING_PROGRAM',
   ]);
 });

@@ -41,6 +41,7 @@ test('Fixture B orchestration makes one fallback call for all eight fields and w
   const exactIds = new Set(source.match(/\b(?:exr|ex)_[A-Za-z0-9_:-]+\b/g) || []);
   const eligible = exerciseLibrary.filter((exercise) => exactIds.has(exercise.exerciseId));
   const calls = [];
+  const stages = [];
   const provider = {
     async generate(request) {
       calls.push(request);
@@ -84,6 +85,7 @@ test('Fixture B orchestration makes one fallback call for all eight fields and w
     runId: 'fixture-b',
     provider,
     deterministicFillsEnabled: true,
+    onProgress: (stage) => stages.push(stage),
     dependencies: {
       env: {},
       async buildPromptForUser() {
@@ -123,6 +125,14 @@ test('Fixture B orchestration makes one fallback call for all eight fields and w
   });
 
   assert.equal(result.valid, true, JSON.stringify(result.error));
+  assert.deepEqual(stages, [
+    'PROFILE_SETUP',
+    'DESIGNING_PROGRAM',
+    'EXTRACTING_STRUCTURE',
+    'RESOLVING_EXERCISES',
+    'COMPLETING_DETAILS',
+    'VALIDATING_PROGRAM',
+  ]);
   assert.deepEqual(
     calls.map((call) => call.stage),
     ['CALL_1_PLAN_TEXT', 'CALL_2_STRUCTURE', 'CALL_3_FILL_FALLBACK']

@@ -175,7 +175,7 @@ beforeEach(() => {
   getAIWeeklyPlanGenerationProgress.mockResolvedValue({
     generationId: "generation_test",
     status: "RUNNING",
-    stage: "BUILDING_PROGRAM",
+    stage: "RESOLVING_EXERCISES",
   });
   createAIWeeklyPlanDraft.mockResolvedValue({
     weeklyPlanParentId: "weekly_parent_1",

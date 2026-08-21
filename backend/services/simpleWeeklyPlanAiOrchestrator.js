@@ -820,6 +820,7 @@ async function runSimpleWeeklyPlanAiPipeline({
   let eligibleLookupPromise = null;
   function getEligibleExerciseLookup() {
     if (!eligibleLookupPromise) {
+      reportProgressSafely(onProgress, 'RESOLVING_EXERCISES');
       eligibleLookupPromise = buildPool(userId, {}, prismaDependencies)
         .then(buildEligibleExerciseLookup);
     }
@@ -977,7 +978,6 @@ async function runSimpleWeeklyPlanAiPipeline({
     }
 
     currentOutput = 5;
-    reportProgressSafely(onProgress, 'BUILDING_PROGRAM');
     startTimingStage('deterministicBuildMs');
     structureGeometry = boundPlanMode
       ? adaptBoundPlanToGeometry(boundPlan)
@@ -1043,6 +1043,7 @@ async function runSimpleWeeklyPlanAiPipeline({
           throw error;
         }
         currentOutput = 7;
+        reportProgressSafely(onProgress, 'COMPLETING_DETAILS');
         const fallbackStartedAt = monotonicNow();
         let fallback;
         try {

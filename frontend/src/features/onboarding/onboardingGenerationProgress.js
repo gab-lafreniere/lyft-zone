@@ -24,9 +24,6 @@ const DESIGN_MESSAGES = [
   },
 ];
 
-// This stage covers the whole structuring pass, which is the longest and most variable
-// part of a generation. Two messages rotating every 5s read as a stuck loop on a long
-// run, so the list is long enough to keep moving without describing internal mechanics.
 const STRUCTURE_MESSAGES = [
   {
     title: "Structuring Your Workouts",
@@ -41,16 +38,16 @@ const STRUCTURE_MESSAGES = [
     description: "Grouping exercises into singles and supersets.",
   },
   {
-    title: "Confirming Exercise Selections",
-    description: "Matching every movement to your available equipment.",
+    title: "Mapping Workout Order",
+    description: "Preserving the training sequence for every session.",
   },
   {
-    title: "Aligning Set Structure",
-    description: "Checking set counts across each block.",
+    title: "Capturing Set Structure",
+    description: "Mapping the planned set counts to each training block.",
   },
   {
-    title: "Reviewing Session Balance",
-    description: "Comparing volume across your training week.",
+    title: "Connecting Your Weekly Structure",
+    description: "Bringing every workout into one consistent plan.",
   },
   {
     title: "Finalizing Workout Structure",
@@ -58,12 +55,34 @@ const STRUCTURE_MESSAGES = [
   },
 ];
 
-const BUILDING_MESSAGE_TITLES = [
-  "Selecting Exercises",
-  "Building Set Structure",
-  "Setting Rep Targets",
-  "Adding Tempo & Rest",
-  "Setting Effort Targets",
+const EXERCISE_RESOLUTION_MESSAGES = [
+  {
+    title: "Matching Your Exercises",
+    description: "Connecting planned movements with exercises available to you.",
+  },
+  {
+    title: "Completing Set Guidance",
+    description: "Applying rep, effort, tempo, and rest guidance to each exercise.",
+  },
+  {
+    title: "Aligning Exercise Details",
+    description: "Making each exercise fit its role in the workout.",
+  },
+];
+
+const DETAIL_COMPLETION_MESSAGES = [
+  {
+    title: "Completing Workout Details",
+    description: "Filling in a few remaining training details.",
+  },
+  {
+    title: "Finishing Set Guidance",
+    description: "Completing the remaining guidance for your workouts.",
+  },
+  {
+    title: "Preparing for Final Review",
+    description: "Bringing the last program details together.",
+  },
 ];
 
 const VALIDATION_MESSAGES = [
@@ -79,32 +98,23 @@ const VALIDATION_MESSAGES = [
 
 const SAVING_MESSAGES = [
   {
-    title: "Finalizing Your Program",
-    description: "Saving your weekly plan and preparing your 6-week cycle.",
+    title: "Saving Your Weekly Plan",
+    description: "Persisting your completed weekly training plan.",
   },
 ];
 
-// Ranges and interpolation constants are sized from measured backend stage durations
-// rather than from equal visual weight.
-//
-// EXTRACTING_STRUCTURE absorbs the entire structuring pass, so it is by far the longest
-// and most variable stage: it runs ~25s on a clean generation and can exceed 90s when
-// the backend needs additional passes. It previously held only 10 points with a 9s
-// interpolation, so its curve flattened after ~30s and the bar sat effectively still for
-// the rest of the stage. It now holds the widest band with an interpolation matched to
-// the long case, so it keeps moving perceptibly throughout.
-//
-// BUILDING_PROGRAM is deterministic backend work and finishes in a few seconds. Its old
-// 55-point / 65s budget meant it never approached its ceiling, and the next stage's floor
-// then yanked the bar ~50 points in about a second. It now holds a band it can actually
-// traverse, which removes the jump.
+export const GENERATION_PROGRESS_CEILING = 96;
+export const SLOW_GENERATION_THRESHOLD_MS = 120000;
+export const MINIMUM_VISIBLE_DURATION_MS = 2500;
+
 export const STAGE_PROGRESS = {
-  PROFILE_SETUP: { floor: 2, ceiling: 8, interpolationMs: 1800 },
-  DESIGNING_PROGRAM: { floor: 8, ceiling: 25, interpolationMs: 16000 },
-  EXTRACTING_STRUCTURE: { floor: 25, ceiling: 75, interpolationMs: 55000 },
-  BUILDING_PROGRAM: { floor: 75, ceiling: 90, interpolationMs: 8000 },
-  VALIDATING_PROGRAM: { floor: 90, ceiling: 93, interpolationMs: 4000 },
-  SAVING_PROGRAM: { floor: 93, ceiling: 94, interpolationMs: 2500 },
+  PROFILE_SETUP: { floor: 0, ceiling: 6, interpolationMs: 1800 },
+  DESIGNING_PROGRAM: { floor: 6, ceiling: 24, interpolationMs: 16000 },
+  EXTRACTING_STRUCTURE: { floor: 24, ceiling: 62, interpolationMs: 55000 },
+  RESOLVING_EXERCISES: { floor: 62, ceiling: 80, interpolationMs: 20000 },
+  COMPLETING_DETAILS: { floor: 80, ceiling: 88, interpolationMs: 65000 },
+  VALIDATING_PROGRAM: { floor: 88, ceiling: 93, interpolationMs: 4000 },
+  SAVING_PROGRAM: { floor: 93, ceiling: 96, interpolationMs: 2500 },
 };
 
 const GENERATION_STAGES = Object.keys(STAGE_PROGRESS);
@@ -115,8 +125,8 @@ export const COMPLETION_HOLD_MS = 500;
 export const COMPLETION_FADE_MS = 180;
 export const REDUCED_MOTION_COMPLETION_HOLD_MS = 80;
 export const FINALIZATION_PROGRESS = {
-  floor: 95,
-  ceiling: 98.95,
+  floor: 96,
+  ceiling: 99,
   interpolationMs: 2500,
 };
 
@@ -129,11 +139,8 @@ const EARLY_PROGRESS_MINIMUM_MULTIPLIER = 2.5;
 const FINAL_MILESTONE_SPEED_BOOST = 10;
 const MAX_ELAPSED_STEP_MS = 64;
 
-// Used only when backend progress never arrives. It stops at EXTRACTING_STRUCTURE
-// because that stage now owns the widest band and a 55s interpolation: it keeps the bar
-// moving for as long as the generation runs without ever claiming a later stage the
-// backend has not confirmed. Advancing blind to BUILDING_PROGRAM would jump the bar to
-// its 75% floor on a run whose real progress is unknown.
+// Without a backend signal, never claim exercise resolution, detail completion,
+// validation, or persistence. The loader remains in the last stage it can justify.
 const FALLBACK_STAGES = [
   [0, "PROFILE_SETUP"],
   [1500, "DESIGNING_PROGRAM"],
@@ -144,14 +151,11 @@ const STATIC_MESSAGES_BY_STAGE = {
   PROFILE_SETUP: PROFILE_MESSAGES,
   DESIGNING_PROGRAM: DESIGN_MESSAGES,
   EXTRACTING_STRUCTURE: STRUCTURE_MESSAGES,
+  RESOLVING_EXERCISES: EXERCISE_RESOLUTION_MESSAGES,
+  COMPLETING_DETAILS: DETAIL_COMPLETION_MESSAGES,
   VALIDATING_PROGRAM: VALIDATION_MESSAGES,
   SAVING_PROGRAM: SAVING_MESSAGES,
 };
-
-function normalizeWorkoutCount(sessionsPerWeek) {
-  const parsed = Number(sessionsPerWeek);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 1;
-}
 
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -187,16 +191,6 @@ export function getStageInterpolationMs(stage, pacingMultiplier = 1) {
   return baseDuration / Math.max(1, Number(pacingMultiplier) || 1);
 }
 
-export function buildBuildingProgramMessages(sessionsPerWeek) {
-  const workoutCount = normalizeWorkoutCount(sessionsPerWeek);
-  return BUILDING_MESSAGE_TITLES.flatMap((title) =>
-    Array.from({ length: workoutCount }, (_, index) => ({
-      title,
-      description: `Workout ${index + 1} of ${workoutCount}`,
-    }))
-  );
-}
-
 export function getFallbackStage(elapsedMs) {
   return FALLBACK_STAGES.reduce(
     (current, [threshold, stage]) => (elapsedMs >= threshold ? stage : current),
@@ -221,8 +215,15 @@ export function resolveDisplayStage({
 
   let nextIndex = currentIndex;
   for (let index = currentIndex + 1; index <= targetIndex; index += 1) {
-    if (visualPercent < STAGE_PROGRESS[GENERATION_STAGES[index]].floor) {
+    const candidateStage = GENERATION_STAGES[index];
+    if (visualPercent < STAGE_PROGRESS[candidateStage].floor) {
       break;
+    }
+    if (
+      candidateStage === "COMPLETING_DETAILS" &&
+      targetStage !== "COMPLETING_DETAILS"
+    ) {
+      continue;
     }
     nextIndex = index;
   }
@@ -351,12 +352,9 @@ export function resolveProgressTarget(current, input) {
     stage,
     input.pacingMultiplier
   );
-  return Math.max(
-    current,
-    stageConfig.floor +
-      availableRange *
-        (1 - Math.exp(-stageElapsedMs / interpolationMs))
-  );
+  const timerTarget = stageConfig.floor +
+    availableRange * (1 - Math.exp(-stageElapsedMs / interpolationMs));
+  return Math.max(current, Math.min(GENERATION_PROGRESS_CEILING, timerTarget));
 }
 
 export function advanceProgress(current, input, timing) {
@@ -382,19 +380,22 @@ export function getCompletionTiming(reducedMotion = false) {
     };
 }
 
-export function getGenerationMessages(stage, sessionsPerWeek) {
-  if (stage === "BUILDING_PROGRAM") {
-    return buildBuildingProgramMessages(sessionsPerWeek);
-  }
+export function getGenerationMessages(stage) {
   return STATIC_MESSAGES_BY_STAGE[stage] || PROFILE_MESSAGES;
 }
 
 export function getGenerationMessage({
   stage,
   messageIndex = 0,
-  sessionsPerWeek,
+  generationElapsedMs = 0,
 }) {
-  const messages = getGenerationMessages(stage, sessionsPerWeek);
+  if (generationElapsedMs >= SLOW_GENERATION_THRESHOLD_MS) {
+    return {
+      title: "Still Working",
+      description: "Larger programs can take a little longer. We're continuing to prepare yours.",
+    };
+  }
+  const messages = getGenerationMessages(stage);
   const normalizedIndex = Math.max(0, Number(messageIndex) || 0) % messages.length;
   return messages[normalizedIndex];
 }

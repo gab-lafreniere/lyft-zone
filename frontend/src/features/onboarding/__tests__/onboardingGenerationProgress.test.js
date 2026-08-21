@@ -1,33 +1,39 @@
 import {
   FINALIZATION_PROGRESS,
+  GENERATION_PROGRESS_CEILING,
   LARGE_PROGRAM_PACING_MULTIPLIER,
   MAX_VISUAL_STEP,
   SMALL_PROGRAM_PACING_MULTIPLIER,
   STAGE_PROGRESS,
+  SLOW_GENERATION_THRESHOLD_MS,
   advanceProgress,
   advanceVisualPercent,
-  buildBuildingProgramMessages,
   getCatchUpSpeedPerSecond,
   getCompletionTiming,
   getGenerationMessage,
   getProgramPacingProfile,
   getProgressBounds,
+  getFallbackStage,
   getStageInterpolationMs,
   resolveProgressTarget,
   resolveDisplayStage,
 } from "../onboardingGenerationProgress";
 
 test("real stages use the recalibrated pipeline bounds", () => {
-  expect(STAGE_PROGRESS).toEqual(
-    expect.objectContaining({
-      PROFILE_SETUP: expect.objectContaining({ floor: 2, ceiling: 8 }),
-      DESIGNING_PROGRAM: expect.objectContaining({ floor: 8, ceiling: 25 }),
-      EXTRACTING_STRUCTURE: expect.objectContaining({ floor: 25, ceiling: 75 }),
-      BUILDING_PROGRAM: expect.objectContaining({ floor: 75, ceiling: 90 }),
-      VALIDATING_PROGRAM: expect.objectContaining({ floor: 90, ceiling: 93 }),
-      SAVING_PROGRAM: expect.objectContaining({ floor: 93, ceiling: 94 }),
-    })
-  );
+  expect(Object.fromEntries(
+    Object.entries(STAGE_PROGRESS).map(([stage, { floor, ceiling }]) => [
+      stage,
+      { floor, ceiling },
+    ])
+  )).toEqual({
+    PROFILE_SETUP: { floor: 0, ceiling: 6 },
+    DESIGNING_PROGRAM: { floor: 6, ceiling: 24 },
+    EXTRACTING_STRUCTURE: { floor: 24, ceiling: 62 },
+    RESOLVING_EXERCISES: { floor: 62, ceiling: 80 },
+    COMPLETING_DETAILS: { floor: 80, ceiling: 88 },
+    VALIDATING_PROGRAM: { floor: 88, ceiling: 93 },
+    SAVING_PROGRAM: { floor: 93, ceiling: 96 },
+  });
   expect(getProgressBounds({ phase: "converting" }))
     .toEqual(FINALIZATION_PROGRESS);
   expect(getProgressBounds({ phase: "completing" }))
@@ -62,7 +68,7 @@ test("program load produces a continuous 2.5 to 1 pacing multiplier", () => {
   expect(intermediate.pacingMultiplier).toBe(1.75);
 });
 
-test("small-program passive BUILDING interpolation is 2.5x the large base rate", () => {
+test("small-program passive exercise resolution is 2.5x the large base rate", () => {
   const smallMultiplier = getProgramPacingProfile({
     sessionsPerWeek: 2,
     durationPerSession: 45,
@@ -72,22 +78,22 @@ test("small-program passive BUILDING interpolation is 2.5x the large base rate",
     durationPerSession: 90,
   }).pacingMultiplier;
 
-  expect(getStageInterpolationMs("BUILDING_PROGRAM", smallMultiplier))
-    .toBe(3200);
-  expect(getStageInterpolationMs("BUILDING_PROGRAM", largeMultiplier))
+  expect(getStageInterpolationMs("RESOLVING_EXERCISES", smallMultiplier))
     .toBe(8000);
+  expect(getStageInterpolationMs("RESOLVING_EXERCISES", largeMultiplier))
+    .toBe(20000);
 
   const commonInput = {
     phase: "generating",
-    backendStage: "BUILDING_PROGRAM",
-    displayStage: "BUILDING_PROGRAM",
+    backendStage: "RESOLVING_EXERCISES",
+    displayStage: "RESOLVING_EXERCISES",
     stageElapsedMs: 10000,
   };
-  const smallTarget = resolveProgressTarget(75, {
+  const smallTarget = resolveProgressTarget(62, {
     ...commonInput,
     pacingMultiplier: smallMultiplier,
   });
-  const largeTarget = resolveProgressTarget(75, {
+  const largeTarget = resolveProgressTarget(62, {
     ...commonInput,
     pacingMultiplier: largeMultiplier,
   });
@@ -169,50 +175,50 @@ test("display stage changes only after its visual threshold", () => {
   expect(resolveDisplayStage({
     displayStage: "DESIGNING_PROGRAM",
     targetStage: "EXTRACTING_STRUCTURE",
-    visualPercent: 24.999,
+    visualPercent: 23.999,
   })).toBe("DESIGNING_PROGRAM");
   expect(resolveDisplayStage({
     displayStage: "DESIGNING_PROGRAM",
     targetStage: "EXTRACTING_STRUCTURE",
-    visualPercent: 25,
+    visualPercent: 24,
   })).toBe("EXTRACTING_STRUCTURE");
 });
 
-test("90 to 95 catches up quickly without a large frame jump", () => {
-  let visualPercent = 90;
+test("88 to 96 catches up quickly without a large frame jump", () => {
+  let visualPercent = 88;
   let elapsedMs = 0;
-  while (visualPercent < 95) {
+  while (visualPercent < 96) {
     const previous = visualPercent;
-    visualPercent = advanceVisualPercent(visualPercent, 95, {
+    visualPercent = advanceVisualPercent(visualPercent, 96, {
       elapsedMs: 16,
       pacingMultiplier: 1,
     });
     expect(visualPercent - previous).toBeLessThanOrEqual(MAX_VISUAL_STEP);
     elapsedMs += 16;
   }
-  expect(elapsedMs).toBeLessThanOrEqual(500);
+  expect(elapsedMs).toBeLessThanOrEqual(1000);
 });
 
-test("both lifecycle phases share one continuous 95 to 98.95 runway", () => {
+test("both lifecycle phases share one continuous 96 to 99 runway", () => {
   const elapsedSamples = [0, 1000, 2500, 5000, 10000, 15000];
   const convertingTargets = elapsedSamples.map((finalizationElapsedMs) =>
-    resolveProgressTarget(95, {
+    resolveProgressTarget(96, {
       phase: "converting",
       finalizationElapsedMs,
     })
   );
   const completingTargets = elapsedSamples.map((finalizationElapsedMs) =>
-    resolveProgressTarget(95, {
+    resolveProgressTarget(96, {
       phase: "completing",
       finalizationElapsedMs,
     })
   );
 
   expect(convertingTargets).toEqual(completingTargets);
-  expect(convertingTargets[0]).toBe(95);
+  expect(convertingTargets[0]).toBe(96);
   expect(convertingTargets.at(-1)).toBeGreaterThan(98.9);
-  expect(convertingTargets.every((target) => target < 98.95)).toBe(true);
-  expect(convertingTargets.map(Math.floor)).toEqual([95, 96, 97, 98, 98, 98]);
+  expect(convertingTargets.every((target) => target < 99)).toBe(true);
+  expect(convertingTargets.map(Math.floor)).toEqual([96, 96, 97, 98, 98, 98]);
   expect(convertingTargets.every((target, index) =>
     index === 0 || target >= convertingTargets[index - 1]
   )).toBe(true);
@@ -254,37 +260,67 @@ test("completion timing preserves ordering and shortens decorative motion when r
   expect(getCompletionTiming(true)).toEqual({ holdMs: 80, fadeMs: 0 });
 });
 
-test("BUILDING_PROGRAM messages scale with workout count and loop gracefully", () => {
-  const twoWorkoutMessages = buildBuildingProgramMessages(2);
-  const fiveWorkoutMessages = buildBuildingProgramMessages(5);
-
-  expect(twoWorkoutMessages).toHaveLength(10);
-  expect(fiveWorkoutMessages).toHaveLength(25);
-  expect(fiveWorkoutMessages[0]).toEqual({
-    title: "Selecting Exercises",
-    description: "Workout 1 of 5",
+test("stage copy describes exercise resolution and conditional detail completion", () => {
+  expect(getGenerationMessage({ stage: "RESOLVING_EXERCISES" })).toEqual({
+    title: "Matching Your Exercises",
+    description: "Connecting planned movements with exercises available to you.",
   });
-  expect(fiveWorkoutMessages[4]).toEqual({
-    title: "Selecting Exercises",
-    description: "Workout 5 of 5",
+  expect(getGenerationMessage({ stage: "COMPLETING_DETAILS" })).toEqual({
+    title: "Completing Workout Details",
+    description: "Filling in a few remaining training details.",
   });
-  expect(fiveWorkoutMessages[5]).toEqual({
-    title: "Building Set Structure",
-    description: "Workout 1 of 5",
-  });
-  expect(
-    getGenerationMessage({
-      stage: "BUILDING_PROGRAM",
-      messageIndex: fiveWorkoutMessages.length,
-      sessionsPerWeek: 5,
-    })
-  ).toEqual(fiveWorkoutMessages[0]);
 });
 
-test("fallback pacing holds the long structuring phase until real backend progress arrives", () => {
-  // Without backend stages the loader must keep moving inside a stage it can justify,
-  // rather than advancing blind into a later one.
+test("slow generation copy is concise, reassuring, and percentage-free", () => {
+  const message = getGenerationMessage({
+    stage: "EXTRACTING_STRUCTURE",
+    generationElapsedMs: SLOW_GENERATION_THRESHOLD_MS,
+  });
+  expect(message).toEqual({
+    title: "Still Working",
+    description: "Larger programs can take a little longer. We're continuing to prepare yours.",
+  });
+  expect(`${message.title} ${message.description}`).not.toMatch(/\d+%|retry|schema|binder|creator/i);
+});
+
+test("blind fallback never advances beyond structure extraction", () => {
+  expect(getFallbackStage(0)).toBe("PROFILE_SETUP");
+  expect(getFallbackStage(1500)).toBe("DESIGNING_PROGRAM");
+  expect(getFallbackStage(23000)).toBe("EXTRACTING_STRUCTURE");
+  expect(getFallbackStage(Number.MAX_SAFE_INTEGER)).toBe("EXTRACTING_STRUCTURE");
   expect(
     getProgressBounds({ phase: "generating", elapsedMs: 240000 })
-  ).toEqual(expect.objectContaining({ floor: 25, ceiling: 75 }));
+  ).toEqual(expect.objectContaining({ floor: 24, ceiling: 62 }));
+});
+
+test("timer-driven generation targets never exceed the hard 96 percent ceiling", () => {
+  Object.keys(STAGE_PROGRESS).forEach((backendStage) => {
+    const target = resolveProgressTarget(0, {
+      phase: "generating",
+      backendStage,
+      displayStage: backendStage,
+      stageElapsedMs: Number.MAX_SAFE_INTEGER,
+      pacingMultiplier: SMALL_PROGRAM_PACING_MULTIPLIER,
+    });
+    expect(target).toBeLessThanOrEqual(GENERATION_PROGRESS_CEILING);
+  });
+  expect(resolveProgressTarget(96, {
+    phase: "generating",
+    backendStage: "SAVING_PROGRAM",
+    displayStage: "SAVING_PROGRAM",
+    stageElapsedMs: Number.MAX_SAFE_INTEGER,
+  })).toBe(96);
+});
+
+test("a validation signal collapses an unreported conditional detail band monotonically", () => {
+  expect(resolveDisplayStage({
+    displayStage: "RESOLVING_EXERCISES",
+    targetStage: "VALIDATING_PROGRAM",
+    visualPercent: 87.999,
+  })).toBe("RESOLVING_EXERCISES");
+  expect(resolveDisplayStage({
+    displayStage: "RESOLVING_EXERCISES",
+    targetStage: "VALIDATING_PROGRAM",
+    visualPercent: 88,
+  })).toBe("VALIDATING_PROGRAM");
 });

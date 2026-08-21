@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getAIWeeklyPlanGenerationProgress } from "../../services/api";
 import {
   advanceVisualPercent,
+  GENERATION_PROGRESS_CEILING,
   getCompletionTiming,
   getGenerationMessage,
   getProgramPacingProfile,
+  MINIMUM_VISIBLE_DURATION_MS,
   resolveProgressTarget,
   resolveDisplayStage,
   resolveGenerationStage,
@@ -36,6 +38,7 @@ export default function useOnboardingGenerationProgress(
   const lastProgressAtRef = useRef(Date.now());
   const displayStageRef = useRef("PROFILE_SETUP");
   const messageStartedAtRef = useRef(Date.now());
+  const completionDelayTimeoutRef = useRef(null);
   const terminalStatusRef = useRef(null);
   const terminalWaitersRef = useRef([]);
   const { pacingMultiplier } = getProgramPacingProfile({
@@ -53,6 +56,10 @@ export default function useOnboardingGenerationProgress(
   }, []);
 
   const reset = useCallback(() => {
+    if (completionDelayTimeoutRef.current != null) {
+      window.clearTimeout(completionDelayTimeoutRef.current);
+      completionDelayTimeoutRef.current = null;
+    }
     terminalWaitersRef.current.splice(0).forEach((resolve) => resolve("STOPPED"));
     terminalStatusRef.current = null;
     setPercent(0);
@@ -74,6 +81,10 @@ export default function useOnboardingGenerationProgress(
   }, []);
 
   const beginAI = useCallback((generationId) => {
+    if (completionDelayTimeoutRef.current != null) {
+      window.clearTimeout(completionDelayTimeoutRef.current);
+      completionDelayTimeoutRef.current = null;
+    }
     terminalWaitersRef.current.splice(0).forEach((resolve) => resolve("STOPPED"));
     terminalStatusRef.current = null;
     targetPercentRef.current = percentRef.current;
@@ -103,15 +114,37 @@ export default function useOnboardingGenerationProgress(
   }, []);
   const markWeeklyPlanReady = useCallback(() => {
     finalizationStartedAtRef.current = Date.now();
-    updateTargetPercent(95);
+    updateTargetPercent(GENERATION_PROGRESS_CEILING);
   }, [updateTargetPercent]);
   const markCycleReady = useCallback(() => {
     updateTargetPercent(97);
   }, [updateTargetPercent]);
-  const markSuccess = useCallback(() => {
+  const unlockSuccess = useCallback(() => {
+    completionDelayTimeoutRef.current = null;
     updateTargetPercent(100);
     setCompletionState("animating");
   }, [updateTargetPercent]);
+  const markSuccess = useCallback(() => {
+    if (completionDelayTimeoutRef.current != null) {
+      return;
+    }
+    const generationStartedAt = generationStartedAtRef.current;
+    const visibleElapsedMs = generationStartedAt == null
+      ? MINIMUM_VISIBLE_DURATION_MS
+      : Date.now() - generationStartedAt;
+    const remainingMs = Math.max(
+      0,
+      MINIMUM_VISIBLE_DURATION_MS - visibleElapsedMs
+    );
+    if (remainingMs === 0) {
+      unlockSuccess();
+      return;
+    }
+    completionDelayTimeoutRef.current = window.setTimeout(
+      unlockSuccess,
+      remainingMs
+    );
+  }, [unlockSuccess]);
 
   useEffect(() => {
     const now = Date.now();
@@ -252,12 +285,18 @@ export default function useOnboardingGenerationProgress(
 
   useEffect(() => () => {
     terminalWaitersRef.current.splice(0).forEach((resolve) => resolve("STOPPED"));
+    if (completionDelayTimeoutRef.current != null) {
+      window.clearTimeout(completionDelayTimeoutRef.current);
+    }
   }, []);
 
+  const generationElapsedMs = generationStartedAtRef.current == null
+    ? 0
+    : Math.max(0, Date.now() - generationStartedAtRef.current);
   let message = getGenerationMessage({
     stage: displayStage,
     messageIndex,
-    sessionsPerWeek,
+    generationElapsedMs,
   });
   if (phase === "checking") {
     message = {
