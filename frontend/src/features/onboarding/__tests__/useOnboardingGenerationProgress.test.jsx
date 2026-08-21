@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom";
+import { useState } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { getAIWeeklyPlanGenerationProgress } from "../../../services/api";
 import useOnboardingGenerationProgress from "../useOnboardingGenerationProgress";
@@ -17,13 +18,21 @@ function Harness({
     sessionsPerWeek,
     durationPerSession
   );
+  const [terminalStatus, setTerminalStatus] = useState("waiting");
   return (
     <div>
-      <button type="button" onClick={progress.beginAI}>Start AI</button>
+      <button type="button" onClick={() => progress.beginAI("generation_test")}>Start AI</button>
+      <button
+        type="button"
+        onClick={() => progress.waitForAICompletion().then(setTerminalStatus)}
+      >
+        Wait for AI
+      </button>
       <button type="button" onClick={progress.markWeeklyPlanReady}>Mark weekly ready</button>
       <button type="button" onClick={progress.markSuccess}>Mark success</button>
       <output data-testid="visual-percent">{progress.percent}</output>
       <output data-testid="target-percent">{progress.targetPercent}</output>
+      <output data-testid="terminal-status">{terminalStatus}</output>
       <span data-testid="display-stage">{progress.displayStage}</span>
       <span data-testid="completion-exiting">
         {String(progress.isCompletionExiting)}
@@ -53,7 +62,7 @@ test("polling starts for an AI attempt and aborts when the phase changes", async
 
   await waitFor(() =>
     expect(getAIWeeklyPlanGenerationProgress).toHaveBeenCalledWith(
-      expect.any(String),
+      "generation_test",
       { signal: expect.any(AbortSignal) }
     )
   );
@@ -61,6 +70,72 @@ test("polling starts for an AI attempt and aborts when the phase changes", async
 
   view.rerender(<Harness phase="converting" />);
   expect(capturedSignal.aborted).toBe(true);
+});
+
+test("a transient polling failure resets after RUNNING and still resolves SUCCEEDED", async () => {
+  jest.useFakeTimers();
+  getAIWeeklyPlanGenerationProgress
+    .mockRejectedValueOnce(new Error("Temporary network error"))
+    .mockResolvedValueOnce({ status: "RUNNING", stage: "BUILDING_PROGRAM" })
+    .mockResolvedValueOnce({ status: "SUCCEEDED", stage: "SAVING_PROGRAM" });
+  const view = render(<Harness phase="generating" />);
+
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Start AI" }));
+    fireEvent.click(screen.getByRole("button", { name: "Wait for AI" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("terminal-status")).toHaveTextContent("waiting");
+
+    await act(async () => {
+      jest.advanceTimersByTime(2000);
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("terminal-status")).toHaveTextContent("waiting");
+
+    await act(async () => {
+      jest.advanceTimersByTime(2000);
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("terminal-status")).toHaveTextContent("SUCCEEDED");
+    expect(getAIWeeklyPlanGenerationProgress).toHaveBeenCalledTimes(3);
+  } finally {
+    view.unmount();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  }
+});
+
+test("three consecutive polling failures resolve the waiter as unavailable", async () => {
+  jest.useFakeTimers();
+  getAIWeeklyPlanGenerationProgress.mockRejectedValue(
+    new Error("Progress unavailable")
+  );
+  const view = render(<Harness phase="generating" />);
+
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Start AI" }));
+    fireEvent.click(screen.getByRole("button", { name: "Wait for AI" }));
+    await act(async () => {
+      await Promise.resolve();
+      jest.advanceTimersByTime(4000);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("terminal-status")).toHaveTextContent("UNAVAILABLE");
+    expect(getAIWeeklyPlanGenerationProgress).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      jest.advanceTimersByTime(4000);
+      await Promise.resolve();
+    });
+    expect(getAIWeeklyPlanGenerationProgress).toHaveBeenCalledTimes(3);
+  } finally {
+    view.unmount();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  }
 });
 
 test("BUILDING_PROGRAM rotates workout-aware messages every five seconds", async () => {

@@ -15,7 +15,10 @@ import {
   updateUserProfile,
 } from "../../../services/api";
 import OnboardingPage from "../OnboardingPage";
-import { saveOnboardingRecovery } from "../onboardingStorage";
+import {
+  getOnboardingDraftStorageKey,
+  saveOnboardingRecovery,
+} from "../onboardingStorage";
 
 jest.mock("../../../services/api", () => ({
   analyzeMovementConstraintsPainIssue: jest.fn(),
@@ -132,7 +135,7 @@ function findGeneratedProgramHeading() {
   return screen.findByRole(
     "heading",
     { name: "Generated Program" },
-    { timeout: 4000 }
+    { timeout: 6000 }
   );
 }
 
@@ -337,7 +340,7 @@ test("preserves edits on failure, prevents duplicate saves, and supports retry",
   const continueButton = screen.getByRole("button", { name: "Continue" });
   fireEvent.click(continueButton);
   fireEvent.click(continueButton);
-  expect(updateTrainingProfileSettings).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(updateTrainingProfileSettings).toHaveBeenCalledTimes(1));
 
   await act(async () => {
     rejectSave(new Error("Temporary save failure"));
@@ -391,9 +394,10 @@ test("generates a published weekly plan, converts it once, then completes onboar
   });
   expect(getOnboardingCycleConflicts).toHaveBeenCalledTimes(1);
   expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(1);
-  expect(createAIWeeklyPlanDraft).toHaveBeenCalledWith({
+  expect(createAIWeeklyPlanDraft).toHaveBeenCalledWith(expect.objectContaining({
     generationId: expect.any(String),
-  });
+    signal: expect.any(AbortSignal),
+  }));
   expect(createCycleFromWeeklyPlan).toHaveBeenCalledWith({
     weeklyPlanParentId: "weekly_parent_1",
     weeklyPlanVersionId: "weekly_version_1",
@@ -418,6 +422,292 @@ test("generates a published weekly plan, converts it once, then completes onboar
 
   fireEvent.click(screen.getByRole("button", { name: "Details" }));
   expect(await screen.findByText("Cycle details destination")).toBeInTheDocument();
+});
+
+test("double submit mints one generationId and dispatches generation once", async () => {
+  const settings = createSettings({
+    lastCompletedStep: 4,
+    trainingProfile: createCanonicalProfile({
+      cardioProfile: { cardioRole: "none", preferredModalities: [] },
+    }),
+  });
+  getUserSettings.mockResolvedValue(settings);
+  let releaseProfileSave;
+  updateTrainingProfileSettings.mockReturnValue(new Promise((resolve) => {
+    releaseProfileSave = () => resolve(settings);
+  }));
+
+  renderPage();
+  const generateButton = await screen.findByRole("button", { name: "Generate my program" });
+  fireEvent.click(generateButton);
+  fireEvent.click(generateButton);
+
+  await waitFor(() => expect(updateTrainingProfileSettings).toHaveBeenCalledTimes(1));
+  await act(async () => releaseProfileSave());
+  await findGeneratedProgramHeading();
+  expect(getOnboardingCycleConflicts).toHaveBeenCalledTimes(1);
+  expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+  expect(createAIWeeklyPlanDraft.mock.calls[0][0].generationId).toEqual(expect.any(String));
+});
+
+test("conflict confirmation preserves the generationId minted by the original attempt", async () => {
+  const settings = createSettings({
+    lastCompletedStep: 4,
+    trainingProfile: createCanonicalProfile({
+      cardioProfile: { cardioRole: "none", preferredModalities: [] },
+    }),
+  });
+  getUserSettings.mockResolvedValue(settings);
+  updateTrainingProfileSettings.mockResolvedValue(settings);
+  getOnboardingCycleConflicts.mockResolvedValue({
+    window: {
+      timezone: "America/Toronto",
+      startDate: "2026-08-17",
+      endDate: "2026-09-27",
+      durationWeeks: 6,
+    },
+    conflicts: [{
+      cycleId: "cycle_existing",
+      name: "Existing cycle",
+      startDate: "2026-08-17",
+      endDate: "2026-09-01",
+      updatedAt: "2026-08-11T10:00:00.000Z",
+    }],
+  });
+
+  renderPage();
+  fireEvent.click(await screen.findByRole("button", { name: "Generate my program" }));
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  const recovery = JSON.parse(
+    window.localStorage.getItem(getOnboardingDraftStorageKey("user_123"))
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Yes, replace cycles" }));
+
+  await findGeneratedProgramHeading();
+  expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+  expect(createAIWeeklyPlanDraft.mock.calls[0][0].generationId).toBe(
+    recovery.generation.generationId
+  );
+});
+
+test("unmount aborts the active AI request and late completion cannot continue the flow", async () => {
+  const settings = createSettings({
+    lastCompletedStep: 4,
+    trainingProfile: createCanonicalProfile({
+      cardioProfile: { cardioRole: "none", preferredModalities: [] },
+    }),
+  });
+  getUserSettings.mockResolvedValue(settings);
+  updateTrainingProfileSettings.mockResolvedValue(settings);
+  let resolveGeneration;
+  createAIWeeklyPlanDraft.mockReturnValue(new Promise((resolve) => {
+    resolveGeneration = resolve;
+  }));
+
+  const view = renderPage();
+  fireEvent.click(await screen.findByRole("button", { name: "Generate my program" }));
+  await waitFor(() => expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(1));
+  const { signal } = createAIWeeklyPlanDraft.mock.calls[0][0];
+  expect(signal.aborted).toBe(false);
+
+  view.unmount();
+  expect(signal.aborted).toBe(true);
+  await act(async () => {
+    resolveGeneration({
+      weeklyPlanParentId: "weekly_parent_late",
+      weeklyPlanVersionId: "weekly_version_late",
+      name: "Late program",
+    });
+    await Promise.resolve();
+  });
+  expect(createCycleFromWeeklyPlan).not.toHaveBeenCalled();
+});
+
+test("refresh recovery reuses the generationId and frozen training days, then clears recovery", async () => {
+  const settings = createSettings({
+    lastCompletedStep: 4,
+    trainingProfile: createCanonicalProfile({
+      availability: {
+        sessionsPerWeek: 4,
+        durationPerSession: 60,
+        preferredTrainingDays: ["MONDAY", "TUESDAY", "THURSDAY", "FRIDAY"],
+      },
+      cardioProfile: { cardioRole: "none", preferredModalities: [] },
+    }),
+  });
+  getUserSettings.mockResolvedValue(settings);
+  const frozenTrainingDays = ["SUNDAY", "TUESDAY", "THURSDAY", "SATURDAY"];
+  saveOnboardingRecovery("user_123", {
+    draft: settings.trainingProfile.profile,
+    profile: settings.account.profile,
+    step: 5,
+    generation: {
+      generationId: "generation_recovered_success",
+      startedAt: new Date().toISOString(),
+      trainingDays: frozenTrainingDays,
+      phase: "converting",
+      window: {
+        timezone: "America/Toronto",
+        startDate: "2026-08-17",
+        endDate: "2026-09-27",
+        durationWeeks: 6,
+      },
+      conflicts: [],
+    },
+  });
+
+  renderPage();
+  await findGeneratedProgramHeading();
+
+  expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+  expect(createAIWeeklyPlanDraft.mock.calls[0][0].generationId).toBe(
+    "generation_recovered_success"
+  );
+  expect(createCycleFromWeeklyPlan.mock.calls[0][0].workoutDayAssignments).toEqual(
+    frozenTrainingDays.map((scheduledDay, index) => ({
+      workoutOrderIndex: index + 1,
+      scheduledDay,
+    }))
+  );
+  expect(window.localStorage.getItem(getOnboardingDraftStorageKey("user_123"))).toBeNull();
+  expect(updateTrainingProfileSettings).not.toHaveBeenCalled();
+});
+
+test("refresh while RUNNING polls existing progress and replays with the same generationId", async () => {
+  const settings = createSettings({
+    lastCompletedStep: 4,
+    trainingProfile: createCanonicalProfile({
+      cardioProfile: { cardioRole: "none", preferredModalities: [] },
+    }),
+  });
+  getUserSettings.mockResolvedValue(settings);
+  const inProgress = new Error("Still running");
+  inProgress.code = "AI_GENERATION_IN_PROGRESS";
+  createAIWeeklyPlanDraft
+    .mockRejectedValueOnce(inProgress)
+    .mockResolvedValueOnce({
+      weeklyPlanParentId: "weekly_parent_1",
+      weeklyPlanVersionId: "weekly_version_1",
+      name: "Generated Program",
+      status: "PUBLISHED",
+    });
+  getAIWeeklyPlanGenerationProgress.mockResolvedValue({
+    generationId: "generation_running_recovery",
+    status: "SUCCEEDED",
+    stage: "SAVING_PROGRAM",
+  });
+  saveOnboardingRecovery("user_123", {
+    draft: settings.trainingProfile.profile,
+    profile: settings.account.profile,
+    step: 5,
+    generation: {
+      generationId: "generation_running_recovery",
+      startedAt: new Date().toISOString(),
+      trainingDays: ["MONDAY", "TUESDAY", "THURSDAY", "FRIDAY"],
+      phase: "generating",
+      window: {
+        timezone: "America/Toronto",
+        startDate: "2026-08-17",
+        endDate: "2026-09-27",
+        durationWeeks: 6,
+      },
+      conflicts: [],
+    },
+  });
+
+  renderPage();
+  await findGeneratedProgramHeading();
+
+  expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(2);
+  expect(createAIWeeklyPlanDraft.mock.calls.map(([input]) => input.generationId)).toEqual([
+    "generation_running_recovery",
+    "generation_running_recovery",
+  ]);
+  expect(getAIWeeklyPlanGenerationProgress).toHaveBeenCalledWith(
+    "generation_running_recovery",
+    expect.objectContaining({ signal: expect.any(AbortSignal) })
+  );
+  expect(createCycleFromWeeklyPlan).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+test("persistent RUNNING recovery polling failure preserves recovery for an explicit same-ID retry", async () => {
+  jest.useFakeTimers();
+  let view;
+
+  try {
+    const settings = createSettings({
+      lastCompletedStep: 4,
+      trainingProfile: createCanonicalProfile({
+        cardioProfile: { cardioRole: "none", preferredModalities: [] },
+      }),
+    });
+    getUserSettings.mockResolvedValue(settings);
+    const inProgress = new Error("Still running");
+    inProgress.code = "AI_GENERATION_IN_PROGRESS";
+    createAIWeeklyPlanDraft
+      .mockRejectedValueOnce(inProgress)
+      .mockImplementationOnce(() => new Promise(() => {}));
+    getAIWeeklyPlanGenerationProgress.mockRejectedValue(
+      new Error("Progress unavailable")
+    );
+    saveOnboardingRecovery("user_123", {
+      draft: settings.trainingProfile.profile,
+      profile: settings.account.profile,
+      step: 5,
+      generation: {
+        generationId: "generation_running_unavailable",
+        startedAt: new Date().toISOString(),
+        trainingDays: ["MONDAY", "TUESDAY", "THURSDAY", "FRIDAY"],
+        phase: "generating",
+        window: {
+          timezone: "America/Toronto",
+          startDate: "2026-08-17",
+          endDate: "2026-09-27",
+          durationWeeks: 6,
+        },
+        conflicts: [],
+      },
+    });
+
+    view = renderPage();
+    await waitFor(() => expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(getAIWeeklyPlanGenerationProgress).toHaveBeenCalledTimes(1)
+    );
+    await act(async () => {
+      jest.advanceTimersByTime(2000);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(2000);
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Program generation was interrupted."
+    );
+    expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(1);
+    expect(createCycleFromWeeklyPlan).not.toHaveBeenCalled();
+    const recovery = JSON.parse(
+      window.localStorage.getItem(getOnboardingDraftStorageKey("user_123"))
+    );
+    expect(recovery.generation).toEqual(expect.objectContaining({
+      generationId: "generation_running_unavailable",
+      phase: "generating",
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(2));
+    expect(createAIWeeklyPlanDraft.mock.calls.map(([input]) => input.generationId)).toEqual([
+      "generation_running_unavailable",
+      "generation_running_unavailable",
+    ]);
+  } finally {
+    view?.unmount();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  }
 });
 
 test("holds the completed loader at 100% before showing the result", async () => {
@@ -598,6 +888,9 @@ test("AI retry generates again only after the first AI request fails", async () 
 
   expect(await findGeneratedProgramHeading()).toBeInTheDocument();
   expect(createAIWeeklyPlanDraft).toHaveBeenCalledTimes(2);
+  expect(createAIWeeklyPlanDraft.mock.calls[0][0].generationId).toBe(
+    createAIWeeklyPlanDraft.mock.calls[1][0].generationId
+  );
   expect(createCycleFromWeeklyPlan).toHaveBeenCalledTimes(1);
 });
 

@@ -60,6 +60,8 @@ import "./onboarding.css";
 const TOTAL_STEPS = 5;
 const INITIAL_PROGRAM_FLOW = {
   phase: "step",
+  generationId: null,
+  generationStartedAt: null,
   window: null,
   conflicts: [],
   weeklyPlan: null,
@@ -69,6 +71,13 @@ const INITIAL_PROGRAM_FLOW = {
   completionDestination: "result",
   error: "",
 };
+
+function createGenerationId() {
+  if (typeof window !== "undefined" && typeof window.crypto?.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+  return `generation_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+}
 
 function resetResultScroll(mainElement) {
   let element = mainElement;
@@ -107,6 +116,11 @@ export default function OnboardingPage() {
   const [hasMovementLimitations, setHasMovementLimitations] = useState(false);
   const [programFlow, setProgramFlow] = useState(INITIAL_PROGRAM_FLOW);
   const pageMainRef = useRef(null);
+  const mountedRef = useRef(true);
+  const generationInFlightRef = useRef(false);
+  const generationRequestControllerRef = useRef(null);
+  const pendingRecoveryRef = useRef(null);
+  const recoveryDispatchStartedRef = useRef(false);
   const generationProgress = useOnboardingGenerationProgress(
     programFlow.phase,
     draft?.availability?.sessionsPerWeek,
@@ -117,6 +131,20 @@ export default function OnboardingPage() {
     sessionsPerWeek: [],
     durationPerSession: [],
   };
+
+  const safeSetProgramFlow = useCallback((nextProgramFlow) => {
+    if (mountedRef.current) {
+      setProgramFlow(nextProgramFlow);
+    }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      generationRequestControllerRef.current?.abort();
+    };
+  }, []);
 
   const initialize = useCallback(async () => {
     setLoadState({ status: "loading", error: "" });
@@ -154,6 +182,30 @@ export default function OnboardingPage() {
         (session.draft?.movementConstraints?.painIssues || []).length > 0 ||
           (session.draft?.movementConstraints?.manualBlockedExerciseIds || []).length > 0
       );
+      const recoveredGeneration = recovery?.generation;
+      if (recoveredGeneration) {
+        const recoveredContext = {
+          ...INITIAL_PROGRAM_FLOW,
+          generationId: recoveredGeneration.generationId,
+          generationStartedAt: recoveredGeneration.startedAt,
+          trainingDays: recoveredGeneration.trainingDays,
+          window: recoveredGeneration.window || null,
+          conflicts: recoveredGeneration.conflicts || [],
+          recoveryPhase: recoveredGeneration.phase,
+        };
+        if (recoveredGeneration.phase === "confirmation") {
+          safeSetProgramFlow({ ...recoveredContext, phase: "confirmation" });
+        } else {
+          pendingRecoveryRef.current = recoveredContext;
+          recoveryDispatchStartedRef.current = false;
+          safeSetProgramFlow({
+            ...recoveredContext,
+            phase: recoveredGeneration.phase === "checking"
+              ? "checking"
+              : "generating",
+          });
+        }
+      }
       navigate(`/onboarding?step=${resumeStep}`, { replace: true });
       setLoadState({ status: "loaded", error: "" });
     } catch (error) {
@@ -162,7 +214,7 @@ export default function OnboardingPage() {
         error: error?.message || "Unable to start onboarding.",
       });
     }
-  }, [navigate]);
+  }, [navigate, safeSetProgramFlow]);
 
   useEffect(() => {
     if (enabled) {
@@ -175,11 +227,11 @@ export default function OnboardingPage() {
       programFlow.phase === "completing" &&
       generationProgress.completionReady
     ) {
-      setProgramFlow((current) => current.phase === "completing"
+      safeSetProgramFlow((current) => current.phase === "completing"
         ? { ...current, phase: "success" }
         : current);
     }
-  }, [generationProgress.completionReady, programFlow.phase]);
+  }, [generationProgress.completionReady, programFlow.phase, safeSetProgramFlow]);
 
   useLayoutEffect(() => {
     if (programFlow.phase === "success") {
@@ -220,6 +272,30 @@ export default function OnboardingPage() {
       );
     }
   }, [draft, lastCompletedStep, loadState.status, profile, step, userId]);
+
+  useEffect(() => {
+    if (
+      loadState.status !== "loaded" ||
+      !pendingRecoveryRef.current ||
+      recoveryDispatchStartedRef.current
+    ) {
+      return;
+    }
+
+    recoveryDispatchStartedRef.current = true;
+    const recoveredContext = pendingRecoveryRef.current;
+    pendingRecoveryRef.current = null;
+    generationProgress.reset();
+    runGenerationOperation(async () => {
+      if (recoveredContext.recoveryPhase === "checking") {
+        await checkConflictsAndContinue(recoveredContext);
+      } else {
+        await generateWeeklyPlan(recoveredContext);
+      }
+    });
+    // Recovery is dispatched once from the state populated by initialize().
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadState.status]);
 
   if (!enabled) {
     return <Navigate to="/" replace />;
@@ -324,23 +400,61 @@ export default function OnboardingPage() {
     const response = await updateTrainingProfileSettings(payload);
     const authoritativeDraft = createOnboardingDraft(response);
 
-    setSettings(response);
-    setDraft(authoritativeDraft);
-    clearOnboardingRecovery(userId);
+    if (mountedRef.current) {
+      setSettings(response);
+      setDraft(authoritativeDraft);
+    }
     return response;
   }
 
+  function persistGenerationRecovery(context, phase) {
+    if (!userId || !draft || !profile || !context.generationId) {
+      return;
+    }
+    saveOnboardingRecovery(userId, {
+      ...createOnboardingRecovery({ draft, profile, step }),
+      generation: {
+        generationId: context.generationId,
+        startedAt: context.generationStartedAt,
+        trainingDays: context.trainingDays,
+        phase,
+        window: context.window,
+        conflicts: context.conflicts || [],
+      },
+    });
+  }
+
+  async function runGenerationOperation(operation) {
+    if (generationInFlightRef.current) {
+      return;
+    }
+    generationInFlightRef.current = true;
+    try {
+      await operation();
+    } finally {
+      generationInFlightRef.current = false;
+    }
+  }
+
   async function completeOnboardingLifecycle(context, destination = "result") {
-    setProgramFlow({
+    safeSetProgramFlow({
       ...context,
       phase: "completing",
       failedStage: null,
       completionDestination: destination,
       error: "",
     });
+    if (destination === "home") {
+      clearOnboardingRecovery(userId);
+    } else {
+      persistGenerationRecovery(context, "completing");
+    }
 
     try {
       await updateUserOnboarding({ action: "COMPLETE" });
+      if (!mountedRef.current) {
+        return;
+      }
       clearOnboardingRecovery(userId);
       if (destination === "home") {
         navigate("/", { replace: true });
@@ -348,7 +462,7 @@ export default function OnboardingPage() {
       }
       generationProgress.markSuccess();
     } catch (error) {
-      setProgramFlow({
+      safeSetProgramFlow({
         ...context,
         phase: "error",
         failedStage: "completion",
@@ -359,7 +473,14 @@ export default function OnboardingPage() {
   }
 
   async function convertWeeklyPlan(context) {
-    setProgramFlow({ ...context, phase: "converting", failedStage: null, error: "" });
+    const convertingContext = {
+      ...context,
+      phase: "converting",
+      failedStage: null,
+      error: "",
+    };
+    safeSetProgramFlow(convertingContext);
+    persistGenerationRecovery(convertingContext, "converting");
     try {
       const cycle = await createCycleFromWeeklyPlan({
         weeklyPlanParentId: context.weeklyPlan.weeklyPlanParentId,
@@ -374,21 +495,26 @@ export default function OnboardingPage() {
         conflictWindow: context.window,
         confirmedConflicts: context.conflicts,
       });
+      if (!mountedRef.current) {
+        return;
+      }
       generationProgress.markCycleReady();
       await completeOnboardingLifecycle({ ...context, cycle }, "result");
     } catch (error) {
       if (error?.code === "CYCLE_CONFLICT_CONFIRMATION_REQUIRED" && error?.details) {
-        setProgramFlow({
+        const confirmationContext = {
           ...context,
           phase: "confirmation",
           window: error.details.window,
           conflicts: error.details.conflicts || [],
           failedStage: null,
           error: "",
-        });
+        };
+        safeSetProgramFlow(confirmationContext);
+        persistGenerationRecovery(confirmationContext, "confirmation");
         return;
       }
-      setProgramFlow({
+      safeSetProgramFlow({
         ...context,
         phase: "error",
         failedStage: "conversion",
@@ -398,16 +524,59 @@ export default function OnboardingPage() {
   }
 
   async function generateWeeklyPlan(context) {
-    setProgramFlow({ ...context, phase: "generating", failedStage: null, error: "" });
-    const generationId = generationProgress.beginAI();
+    const generatingContext = {
+      ...context,
+      phase: "generating",
+      failedStage: null,
+      error: "",
+    };
+    safeSetProgramFlow(generatingContext);
+    persistGenerationRecovery(generatingContext, "generating");
+    generationProgress.beginAI(context.generationId);
     try {
-      const weeklyPlan = await createAIWeeklyPlanDraft({ generationId });
+      let controller = new AbortController();
+      generationRequestControllerRef.current = controller;
+      let weeklyPlan;
+      try {
+        weeklyPlan = await createAIWeeklyPlanDraft({
+          generationId: context.generationId,
+          signal: controller.signal,
+        });
+      } catch (error) {
+        if (error?.code !== "AI_GENERATION_IN_PROGRESS") {
+          throw error;
+        }
+        const terminalStatus = await generationProgress.waitForAICompletion();
+        if (terminalStatus !== "SUCCEEDED") {
+          throw new Error(
+            terminalStatus === "FAILED"
+              ? "We couldn't generate your weekly plan."
+              : "Program generation was interrupted."
+          );
+        }
+        controller = new AbortController();
+        generationRequestControllerRef.current = controller;
+        weeklyPlan = await createAIWeeklyPlanDraft({
+          generationId: context.generationId,
+          signal: controller.signal,
+        });
+      }
+      if (!mountedRef.current) {
+        return;
+      }
+      if (generationRequestControllerRef.current === controller) {
+        generationRequestControllerRef.current = null;
+      }
       generationProgress.stopAI();
       generationProgress.markWeeklyPlanReady();
       await convertWeeklyPlan({ ...context, weeklyPlan });
     } catch (error) {
+      generationRequestControllerRef.current = null;
+      if (!mountedRef.current) {
+        return;
+      }
       generationProgress.stopAI();
-      setProgramFlow({
+      safeSetProgramFlow({
         ...context,
         phase: "error",
         failedStage: "ai",
@@ -416,25 +585,36 @@ export default function OnboardingPage() {
     }
   }
 
-  async function checkConflictsAndContinue(trainingDays = programFlow.trainingDays) {
-    setProgramFlow({ ...INITIAL_PROGRAM_FLOW, phase: "checking", trainingDays });
+  async function checkConflictsAndContinue(context) {
+    const checkingContext = {
+      ...context,
+      phase: "checking",
+      window: null,
+      conflicts: [],
+      failedStage: null,
+      error: "",
+    };
+    safeSetProgramFlow(checkingContext);
+    persistGenerationRecovery(checkingContext, "checking");
     try {
       const preview = await getOnboardingCycleConflicts();
-      const context = {
-        ...INITIAL_PROGRAM_FLOW,
-        trainingDays,
+      if (!mountedRef.current) {
+        return;
+      }
+      const nextContext = {
+        ...checkingContext,
         window: preview.window,
         conflicts: preview.conflicts || [],
       };
-      if (context.conflicts.length > 0) {
-        setProgramFlow({ ...context, phase: "confirmation" });
+      if (nextContext.conflicts.length > 0) {
+        safeSetProgramFlow({ ...nextContext, phase: "confirmation" });
+        persistGenerationRecovery(nextContext, "confirmation");
       } else {
-        await generateWeeklyPlan(context);
+        await generateWeeklyPlan(nextContext);
       }
     } catch (error) {
-      setProgramFlow({
-        ...INITIAL_PROGRAM_FLOW,
-        trainingDays,
+      safeSetProgramFlow({
+        ...checkingContext,
         phase: "error",
         failedStage: "checking",
         error: error?.message || "We couldn't check your training cycle schedule.",
@@ -443,22 +623,41 @@ export default function OnboardingPage() {
   }
 
   async function beginProgramGeneration() {
-    generationProgress.reset();
-    const settingsResponse = await saveFinalTrainingProfile();
-    const availability = settingsResponse?.trainingProfile?.profile?.availability || {};
-    const trainingDays = resolvePreferredTrainingDays(
-      availability.preferredTrainingDays,
-      availability.sessionsPerWeek
-    );
-    await checkConflictsAndContinue(trainingDays);
+    await runGenerationOperation(async () => {
+      generationProgress.reset();
+      const generationId = programFlow.generationId || createGenerationId();
+      const generationStartedAt = programFlow.generationStartedAt || new Date().toISOString();
+      safeSetProgramFlow({
+        ...programFlow,
+        generationId,
+        generationStartedAt,
+      });
+      const settingsResponse = await saveFinalTrainingProfile();
+      if (!mountedRef.current) {
+        return;
+      }
+      const availability = settingsResponse?.trainingProfile?.profile?.availability || {};
+      const trainingDays = resolvePreferredTrainingDays(
+        availability.preferredTrainingDays,
+        availability.sessionsPerWeek
+      );
+      await checkConflictsAndContinue({
+        ...INITIAL_PROGRAM_FLOW,
+        generationId,
+        generationStartedAt,
+        trainingDays,
+      });
+    });
   }
 
   async function handleConflictConfirm() {
-    if (programFlow.weeklyPlan) {
-      await convertWeeklyPlan(programFlow);
-    } else {
-      await generateWeeklyPlan(programFlow);
-    }
+    await runGenerationOperation(async () => {
+      if (programFlow.weeklyPlan) {
+        await convertWeeklyPlan(programFlow);
+      } else {
+        await generateWeeklyPlan(programFlow);
+      }
+    });
   }
 
   async function handleConflictCancel() {
@@ -466,18 +665,20 @@ export default function OnboardingPage() {
   }
 
   async function handleProgramRetry() {
-    if (programFlow.failedStage === "checking") {
-      await checkConflictsAndContinue();
-    } else if (programFlow.failedStage === "ai") {
-      await generateWeeklyPlan(programFlow);
-    } else if (programFlow.failedStage === "conversion") {
-      await convertWeeklyPlan(programFlow);
-    } else if (programFlow.failedStage === "completion") {
-      await completeOnboardingLifecycle(
-        programFlow,
-        programFlow.completionDestination || "result"
-      );
-    }
+    await runGenerationOperation(async () => {
+      if (programFlow.failedStage === "checking") {
+        await checkConflictsAndContinue(programFlow);
+      } else if (programFlow.failedStage === "ai") {
+        await generateWeeklyPlan(programFlow);
+      } else if (programFlow.failedStage === "conversion") {
+        await convertWeeklyPlan(programFlow);
+      } else if (programFlow.failedStage === "completion") {
+        await completeOnboardingLifecycle(
+          programFlow,
+          programFlow.completionDestination || "result"
+        );
+      }
+    });
   }
 
   async function handleContinue() {
@@ -520,6 +721,9 @@ export default function OnboardingPage() {
         await beginProgramGeneration();
       }
     } catch (error) {
+      if (!mountedRef.current) {
+        return;
+      }
       const nextErrors = {};
       (Array.isArray(error?.details) ? error.details : []).forEach((issue) => {
         if (issue?.path && !nextErrors[issue.path]) {
@@ -529,7 +733,9 @@ export default function OnboardingPage() {
       setFieldErrors(nextErrors);
       setSaveError(error?.message || "Unable to save. Your changes are still here.");
     } finally {
-      setIsSaving(false);
+      if (mountedRef.current) {
+        setIsSaving(false);
+      }
     }
   }
 

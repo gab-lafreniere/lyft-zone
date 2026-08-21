@@ -1,3 +1,14 @@
+/**
+ * Best-effort, single-instance AI generation registry.
+ *
+ * Records live in an in-process Map for 10 minutes. They do not survive a
+ * process restart or Render redeploy, and they are not shared between backend
+ * instances. If Render scales beyond one instance, generation idempotency is
+ * only best-effort. The durable future direction is a transactional
+ * Neon/Postgres uniqueness claim (for example, an ai_generation_attempts table
+ * or a unique persisted generationId); that is deliberately not implemented
+ * here.
+ */
 const PROGRESS_TTL_MS = 10 * 60 * 1000;
 
 const WEEKLY_PLAN_AI_STAGES = Object.freeze([
@@ -14,14 +25,18 @@ const STAGE_INDEX = new Map(
 );
 const records = new Map();
 
+function recordKey({ generationId, userId }) {
+  return `${String(userId).length}:${userId}:${generationId}`;
+}
+
 function toIsoString(now) {
   return new Date(now).toISOString();
 }
 
 function pruneExpired(now = Date.now()) {
-  records.forEach((record, generationId) => {
+  records.forEach((record, key) => {
     if (record.expiresAt <= now) {
-      records.delete(generationId);
+      records.delete(key);
     }
   });
 }
@@ -38,27 +53,60 @@ function toPublicRecord(record) {
   };
 }
 
-function beginGenerationProgress({ generationId, userId }, now = Date.now()) {
-  pruneExpired(now);
-  const existing = records.get(generationId);
-  if (existing) {
-    return existing.userId === userId ? toPublicRecord(existing) : null;
-  }
-  const record = {
+function createRunningRecord({ generationId, userId }, now) {
+  return {
     generationId,
     userId,
     status: 'RUNNING',
     stage: 'PROFILE_SETUP',
+    result: null,
     updatedAt: toIsoString(now),
     expiresAt: now + PROGRESS_TTL_MS,
   };
-  records.set(generationId, record);
+}
+
+function beginGenerationProgress(identity, now = Date.now()) {
+  pruneExpired(now);
+  const key = recordKey(identity);
+  const existing = records.get(key);
+  if (existing) {
+    return toPublicRecord(existing);
+  }
+  const record = createRunningRecord(identity, now);
+  records.set(key, record);
   return toPublicRecord(record);
 }
 
-function updateRecord(generationId, updater, now = Date.now()) {
+/**
+ * Synchronously claims pipeline ownership before any asynchronous work starts.
+ * FAILED records are reset for a legitimate retry; RUNNING and successful
+ * memoized records are never mutated by a duplicate request.
+ */
+function claimGenerationProgress(identity, now = Date.now()) {
   pruneExpired(now);
-  const current = records.get(generationId);
+  const key = recordKey(identity);
+  const existing = records.get(key);
+
+  if (existing?.status === 'RUNNING') {
+    return { outcome: 'RUNNING', progress: toPublicRecord(existing), result: null };
+  }
+  if (existing?.status === 'SUCCEEDED' && existing.result) {
+    return {
+      outcome: 'SUCCEEDED',
+      progress: toPublicRecord(existing),
+      result: existing.result,
+    };
+  }
+
+  const record = createRunningRecord(identity, now);
+  records.set(key, record);
+  return { outcome: 'CLAIMED', progress: toPublicRecord(record), result: null };
+}
+
+function updateRecord(identity, updater, now = Date.now()) {
+  pruneExpired(now);
+  const key = recordKey(identity);
+  const current = records.get(key);
   if (!current || current.status !== 'RUNNING') {
     return null;
   }
@@ -72,13 +120,13 @@ function updateRecord(generationId, updater, now = Date.now()) {
     updatedAt: toIsoString(now),
     expiresAt: now + PROGRESS_TTL_MS,
   };
-  records.set(generationId, record);
+  records.set(key, record);
   return toPublicRecord(record);
 }
 
-function advanceGenerationProgress(generationId, stage, now = Date.now()) {
+function advanceGenerationProgress(identity, stage, now = Date.now()) {
   return updateRecord(
-    generationId,
+    identity,
     (current) => {
       const currentIndex = STAGE_INDEX.get(current.stage);
       const nextIndex = STAGE_INDEX.get(stage);
@@ -91,25 +139,21 @@ function advanceGenerationProgress(generationId, stage, now = Date.now()) {
   );
 }
 
-function finishGenerationProgress(generationId, now = Date.now()) {
+function finishGenerationProgress(identity, result, now = Date.now()) {
   return updateRecord(
-    generationId,
-    () => ({ status: 'SUCCEEDED', stage: 'SAVING_PROGRAM' }),
+    identity,
+    () => ({ status: 'SUCCEEDED', stage: 'SAVING_PROGRAM', result }),
     now
   );
 }
 
-function failGenerationProgress(generationId, now = Date.now()) {
-  return updateRecord(generationId, () => ({ status: 'FAILED' }), now);
+function failGenerationProgress(identity, now = Date.now()) {
+  return updateRecord(identity, () => ({ status: 'FAILED', result: null }), now);
 }
 
-function readGenerationProgress({ generationId, userId }, now = Date.now()) {
+function readGenerationProgress(identity, now = Date.now()) {
   pruneExpired(now);
-  const record = records.get(generationId);
-  if (!record || record.userId !== userId) {
-    return null;
-  }
-  return toPublicRecord(record);
+  return toPublicRecord(records.get(recordKey(identity)));
 }
 
 function clearGenerationProgressForTests() {
@@ -121,6 +165,7 @@ module.exports = {
   WEEKLY_PLAN_AI_STAGES,
   advanceGenerationProgress,
   beginGenerationProgress,
+  claimGenerationProgress,
   clearGenerationProgressForTests,
   failGenerationProgress,
   finishGenerationProgress,

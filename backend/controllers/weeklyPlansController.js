@@ -23,7 +23,7 @@ const {
 } = require('../services/weeklyPlanPipelineArtifactWriter');
 const {
   advanceGenerationProgress,
-  beginGenerationProgress,
+  claimGenerationProgress,
   failGenerationProgress,
   finishGenerationProgress,
   readGenerationProgress,
@@ -160,10 +160,18 @@ async function createAIWeeklyPlanDraftHandler(req, res) {
 
     generationId = normalizeGenerationId(req.body?.generationId);
     if (generationId) {
-      progressEnabled = Boolean(reportProgressBestEffort(
-        () => beginGenerationProgress({ generationId, userId }),
-        { generationId, operation: 'begin' }
-      ));
+      const claim = claimGenerationProgress({ generationId, userId });
+      if (claim.outcome === 'SUCCEEDED') {
+        return res.status(200).json(claim.result);
+      }
+      if (claim.outcome === 'RUNNING') {
+        throw new ApiError(
+          409,
+          'AI_GENERATION_IN_PROGRESS',
+          'AI weekly plan generation is already in progress'
+        );
+      }
+      progressEnabled = true;
     }
 
     const pipelineResult = await runSimpleWeeklyPlanAiPipeline({
@@ -171,7 +179,7 @@ async function createAIWeeklyPlanDraftHandler(req, res) {
       ...(progressEnabled
         ? {
             onProgress: (stage) => reportProgressBestEffort(
-              () => advanceGenerationProgress(generationId, stage),
+              () => advanceGenerationProgress({ generationId, userId }, stage),
               { generationId, operation: 'advance', stage }
             ),
           }
@@ -198,7 +206,10 @@ async function createAIWeeklyPlanDraftHandler(req, res) {
 
     if (progressEnabled) {
       reportProgressBestEffort(
-        () => advanceGenerationProgress(generationId, 'SAVING_PROGRAM'),
+        () => advanceGenerationProgress(
+          { generationId, userId },
+          'SAVING_PROGRAM'
+        ),
         { generationId, operation: 'advance', stage: 'SAVING_PROGRAM' }
       );
     }
@@ -243,23 +254,12 @@ async function createAIWeeklyPlanDraftHandler(req, res) {
       });
       throw persistenceError;
     }
-    await finalizeOutput8BestEffort(pipelineResult, {
-      totalDurationMs: performance.now() - generationStartedAt,
-      persistenceMs: performance.now() - persistenceStartedAt,
-      persistenceOutcome: 'SUCCEEDED',
-    });
-    if (progressEnabled) {
-      reportProgressBestEffort(
-        () => finishGenerationProgress(generationId),
-        { generationId, operation: 'finish' }
-      );
-    }
     const name = String(
       createdPlan?.builderPayload?.programName ||
         pipelineResult.completedDocument.name ||
         ''
     );
-    return res.status(201).json({
+    const publicResult = {
       weeklyPlanParentId: createdPlan.weeklyPlanParentId,
       weeklyPlanVersionId: createdPlan.weeklyPlanVersionId,
       name,
@@ -267,11 +267,29 @@ async function createAIWeeklyPlanDraftHandler(req, res) {
       source: 'ai',
       metrics: projectPublicMetrics(pipelineResult.output8.metrics),
       presentation,
+    };
+    if (progressEnabled) {
+      reportProgressBestEffort(
+        () => finishGenerationProgress(
+          { generationId, userId },
+          publicResult
+        ),
+        { generationId, operation: 'finish' }
+      );
+    }
+    await finalizeOutput8BestEffort(pipelineResult, {
+      totalDurationMs: performance.now() - generationStartedAt,
+      persistenceMs: performance.now() - persistenceStartedAt,
+      persistenceOutcome: 'SUCCEEDED',
     });
+    return res.status(201).json(publicResult);
   } catch (error) {
     if (progressEnabled) {
       reportProgressBestEffort(
-        () => failGenerationProgress(generationId),
+        () => failGenerationProgress({
+          generationId,
+          userId: String(req.body?.userId || '').trim(),
+        }),
         { generationId, operation: 'fail' }
       );
     }

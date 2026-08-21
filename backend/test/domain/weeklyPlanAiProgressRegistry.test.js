@@ -5,6 +5,7 @@ const {
   PROGRESS_TTL_MS,
   advanceGenerationProgress,
   beginGenerationProgress,
+  claimGenerationProgress,
   clearGenerationProgressForTests,
   failGenerationProgress,
   finishGenerationProgress,
@@ -20,12 +21,12 @@ test('progress is owner-scoped, monotonic, and terminal', () => {
     startedAt
   );
   advanceGenerationProgress(
-    'generation_1',
+    { generationId: 'generation_1', userId: 'user_1' },
     'BUILDING_PROGRAM',
     startedAt + 1000
   );
   advanceGenerationProgress(
-    'generation_1',
+    { generationId: 'generation_1', userId: 'user_1' },
     'DESIGNING_PROGRAM',
     startedAt + 2000
   );
@@ -45,8 +46,15 @@ test('progress is owner-scoped, monotonic, and terminal', () => {
     null
   );
 
-  finishGenerationProgress('generation_1', startedAt + 3000);
-  failGenerationProgress('generation_1', startedAt + 4000);
+  finishGenerationProgress(
+    { generationId: 'generation_1', userId: 'user_1' },
+    { weeklyPlanParentId: 'parent_1' },
+    startedAt + 3000
+  );
+  failGenerationProgress(
+    { generationId: 'generation_1', userId: 'user_1' },
+    startedAt + 4000
+  );
   beginGenerationProgress(
     { generationId: 'generation_1', userId: 'user_1' },
     startedAt + 5000
@@ -80,15 +88,12 @@ test('expired progress disappears without affecting newer records', () => {
   );
 });
 
-test('another user cannot overwrite an existing generation id', () => {
+test('the same generation id is independently owner-scoped', () => {
   const now = Date.parse('2026-08-11T12:00:00.000Z');
   beginGenerationProgress({ generationId: 'shared', userId: 'owner' }, now);
-  assert.equal(
-    beginGenerationProgress(
-      { generationId: 'shared', userId: 'other' },
-      now + 1
-    ),
-    null
+  beginGenerationProgress(
+    { generationId: 'shared', userId: 'other' },
+    now + 1
   );
   assert.equal(
     readGenerationProgress(
@@ -96,5 +101,36 @@ test('another user cannot overwrite an existing generation id', () => {
       now + 1
     ).status,
     'RUNNING'
+  );
+  assert.equal(
+    readGenerationProgress(
+      { generationId: 'shared', userId: 'other' },
+      now + 1
+    ).status,
+    'RUNNING'
+  );
+});
+
+test('claim is atomic, replays success, retries failure, and expires the result memo', () => {
+  const startedAt = Date.parse('2026-08-11T12:00:00.000Z');
+  const identity = { generationId: 'claimed', userId: 'user_1' };
+  const result = {
+    weeklyPlanParentId: 'parent_1',
+    weeklyPlanVersionId: 'version_1',
+  };
+
+  assert.equal(claimGenerationProgress(identity, startedAt).outcome, 'CLAIMED');
+  assert.equal(claimGenerationProgress(identity, startedAt + 1).outcome, 'RUNNING');
+
+  failGenerationProgress(identity, startedAt + 2);
+  assert.equal(claimGenerationProgress(identity, startedAt + 3).outcome, 'CLAIMED');
+  finishGenerationProgress(identity, result, startedAt + 4);
+
+  const replay = claimGenerationProgress(identity, startedAt + 5);
+  assert.equal(replay.outcome, 'SUCCEEDED');
+  assert.deepEqual(replay.result, result);
+  assert.equal(
+    claimGenerationProgress(identity, startedAt + 4 + PROGRESS_TTL_MS + 1).outcome,
+    'CLAIMED'
   );
 });

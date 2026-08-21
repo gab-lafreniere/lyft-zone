@@ -13,13 +13,7 @@ import {
 const POLL_INTERVAL_MS = 2000;
 const PROGRESS_INTERVAL_MS = 16;
 const MESSAGE_INTERVAL_MS = 5000;
-
-function createGenerationId() {
-  if (typeof window !== "undefined" && typeof window.crypto?.randomUUID === "function") {
-    return window.crypto.randomUUID();
-  }
-  return `generation_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
-}
+const MAX_CONSECUTIVE_POLL_FAILURES = 3;
 
 export default function useOnboardingGenerationProgress(
   phase,
@@ -42,6 +36,8 @@ export default function useOnboardingGenerationProgress(
   const lastProgressAtRef = useRef(Date.now());
   const displayStageRef = useRef("PROFILE_SETUP");
   const messageStartedAtRef = useRef(Date.now());
+  const terminalStatusRef = useRef(null);
+  const terminalWaitersRef = useRef([]);
   const { pacingMultiplier } = getProgramPacingProfile({
     sessionsPerWeek,
     durationPerSession,
@@ -57,6 +53,8 @@ export default function useOnboardingGenerationProgress(
   }, []);
 
   const reset = useCallback(() => {
+    terminalWaitersRef.current.splice(0).forEach((resolve) => resolve("STOPPED"));
+    terminalStatusRef.current = null;
     setPercent(0);
     percentRef.current = 0;
     setTargetPercent(0);
@@ -75,8 +73,9 @@ export default function useOnboardingGenerationProgress(
     messageStartedAtRef.current = Date.now();
   }, []);
 
-  const beginAI = useCallback(() => {
-    const generationId = createGenerationId();
+  const beginAI = useCallback((generationId) => {
+    terminalWaitersRef.current.splice(0).forEach((resolve) => resolve("STOPPED"));
+    terminalStatusRef.current = null;
     targetPercentRef.current = percentRef.current;
     setTargetPercent(percentRef.current);
     setBackendStage(null);
@@ -91,10 +90,17 @@ export default function useOnboardingGenerationProgress(
     lastProgressAtRef.current = Date.now();
     displayStageRef.current = "PROFILE_SETUP";
     messageStartedAtRef.current = Date.now();
-    return generationId;
   }, []);
 
   const stopAI = useCallback(() => setActiveGenerationId(null), []);
+  const waitForAICompletion = useCallback(() => {
+    if (terminalStatusRef.current) {
+      return Promise.resolve(terminalStatusRef.current);
+    }
+    return new Promise((resolve) => {
+      terminalWaitersRef.current.push(resolve);
+    });
+  }, []);
   const markWeeklyPlanReady = useCallback(() => {
     finalizationStartedAtRef.current = Date.now();
     updateTargetPercent(95);
@@ -200,6 +206,7 @@ export default function useOnboardingGenerationProgress(
     }
     let stopped = false;
     let activeController = null;
+    let consecutiveFailures = 0;
 
     async function poll() {
       activeController?.abort();
@@ -210,12 +217,27 @@ export default function useOnboardingGenerationProgress(
           { signal: activeController.signal }
         );
         if (stopped) return;
+        consecutiveFailures = 0;
         if (progress?.stage) setBackendStage(progress.stage);
         if (progress?.status === "SUCCEEDED" || progress?.status === "FAILED") {
+          terminalStatusRef.current = progress.status;
+          terminalWaitersRef.current
+            .splice(0)
+            .forEach((resolve) => resolve(progress.status));
           setActiveGenerationId(null);
         }
-      } catch (_error) {
-        // Progress is best effort. The simulated model remains active.
+      } catch (error) {
+        if (stopped || error?.name === "AbortError") return;
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+          // Bound recovery when the best-effort in-process registry disappears.
+          // The page surfaces its existing explicit retry state; it does not regenerate here.
+          terminalStatusRef.current = "UNAVAILABLE";
+          terminalWaitersRef.current
+            .splice(0)
+            .forEach((resolve) => resolve("UNAVAILABLE"));
+          setActiveGenerationId(null);
+        }
       }
     }
 
@@ -227,6 +249,10 @@ export default function useOnboardingGenerationProgress(
       window.clearInterval(interval);
     };
   }, [activeGenerationId, phase]);
+
+  useEffect(() => () => {
+    terminalWaitersRef.current.splice(0).forEach((resolve) => resolve("STOPPED"));
+  }, []);
 
   let message = getGenerationMessage({
     stage: displayStage,
@@ -265,5 +291,6 @@ export default function useOnboardingGenerationProgress(
     markWeeklyPlanReady,
     reset,
     stopAI,
+    waitForAICompletion,
   };
 }

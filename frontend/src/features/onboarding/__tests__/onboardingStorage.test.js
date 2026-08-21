@@ -4,6 +4,7 @@ import {
   restoreOnboardingSession,
 } from "../onboardingDraft";
 import {
+  ONBOARDING_GENERATION_RECOVERY_TTL_MS,
   clearOnboardingRecovery,
   getOnboardingDraftStorageKey,
   loadOnboardingRecovery,
@@ -81,6 +82,73 @@ test("rejects malformed or incompatible recovery", () => {
 
   window.localStorage.setItem(getOnboardingDraftStorageKey("user_1"), "not-json");
   expect(loadOnboardingRecovery("user_1")).toBeNull();
+  expect(window.localStorage.getItem(getOnboardingDraftStorageKey("user_1"))).toBeNull();
+});
+
+test("rehydrates a valid generation attempt with its frozen training days", () => {
+  const now = Date.parse("2026-08-21T12:00:00.000Z");
+  saveOnboardingRecovery("user_1", {
+    draft: createOnboardingDraft(createSettings()),
+    profile: { displayName: "Alex", age: 30, sex: "MALE" },
+    step: 5,
+    generation: {
+      generationId: "generation_recovery_1",
+      startedAt: new Date(now).toISOString(),
+      trainingDays: ["TUESDAY", "THURSDAY"],
+      phase: "generating",
+      window: { startDate: "2026-08-24", durationWeeks: 6 },
+      conflicts: [],
+    },
+  });
+
+  expect(loadOnboardingRecovery("user_1", window.localStorage, now).generation).toEqual({
+    generationId: "generation_recovery_1",
+    startedAt: new Date(now).toISOString(),
+    trainingDays: ["TUESDAY", "THURSDAY"],
+    phase: "generating",
+    window: { startDate: "2026-08-24", durationWeeks: 6 },
+    conflicts: [],
+  });
+});
+
+test("clears corrupt and stale generation recovery without bricking draft loading", () => {
+  const now = Date.parse("2026-08-21T12:00:00.000Z");
+  const base = {
+    version: 1,
+    userId: "user_1",
+    draft: createOnboardingDraft(createSettings()),
+    profile: {},
+    step: 5,
+  };
+  window.localStorage.setItem(
+    getOnboardingDraftStorageKey("user_1"),
+    JSON.stringify({
+      ...base,
+      generation: {
+        generationId: "contains spaces",
+        startedAt: new Date(now).toISOString(),
+        trainingDays: ["MONDAY"],
+        phase: "generating",
+      },
+    })
+  );
+  expect(loadOnboardingRecovery("user_1", window.localStorage, now)).toBeNull();
+  expect(window.localStorage.getItem(getOnboardingDraftStorageKey("user_1"))).toBeNull();
+
+  window.localStorage.setItem(
+    getOnboardingDraftStorageKey("user_1"),
+    JSON.stringify({
+      ...base,
+      generation: {
+        generationId: "stale_generation",
+        startedAt: new Date(now - ONBOARDING_GENERATION_RECOVERY_TTL_MS - 1).toISOString(),
+        trainingDays: ["MONDAY"],
+        phase: "generating",
+      },
+    })
+  );
+  expect(loadOnboardingRecovery("user_1", window.localStorage, now)).toBeNull();
+  expect(window.localStorage.getItem(getOnboardingDraftStorageKey("user_1"))).toBeNull();
 });
 
 test("restores local draft before Step 2 and ignores it once the server is authoritative", () => {

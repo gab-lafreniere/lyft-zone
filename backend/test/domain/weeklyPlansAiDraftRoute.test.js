@@ -15,6 +15,7 @@ const calls = {
   presentation: [],
 };
 let pipelineResult;
+let pipelineImplementation = null;
 let presentationError = null;
 
 require.cache[orchestratorPath] = {
@@ -24,6 +25,9 @@ require.cache[orchestratorPath] = {
   exports: {
     runSimpleWeeklyPlanAiPipeline: async (input) => {
       calls.pipeline.push(input);
+      if (pipelineImplementation) {
+        return pipelineImplementation(input);
+      }
       return pipelineResult;
     },
   },
@@ -37,8 +41,8 @@ require.cache[weeklyPlansServicePath] = {
     createWeeklyPlan: async (...args) => {
       calls.create.push(args);
       return {
-        weeklyPlanParentId: 'parent_ai_1',
-        weeklyPlanVersionId: 'version_ai_1',
+        weeklyPlanParentId: `parent_ai_${calls.create.length}`,
+        weeklyPlanVersionId: `version_ai_${calls.create.length}`,
         status: 'PUBLISHED',
         source: 'ai',
         builderPayload: {
@@ -89,6 +93,7 @@ const weeklyPlansRouter = require('../../routes/weeklyPlans');
 const {
   beginGenerationProgress,
   clearGenerationProgressForTests,
+  readGenerationProgress,
 } = require('../../services/weeklyPlanAiProgressRegistry');
 
 function findRoute(path, method) {
@@ -175,6 +180,7 @@ test.beforeEach(() => {
   calls.create.length = 0;
   calls.presentation.length = 0;
   pipelineResult = createSuccessfulPipelineResult();
+  pipelineImplementation = null;
   presentationError = null;
   clearGenerationProgressForTests();
 });
@@ -278,6 +284,114 @@ test('optional generationId enables progress without changing the POST response'
     stage: 'SAVING_PROGRAM',
     updatedAt: progressRes.body.updatedAt,
   });
+});
+
+test('a successful generation is replayed exactly without rerunning the pipeline', async () => {
+  const request = {
+    body: { userId: 'user_123', generationId: 'replay_generation' },
+  };
+
+  const original = await invokeAIDraftsRoute(request);
+  const progressBeforeReplay = readGenerationProgress({
+    generationId: 'replay_generation',
+    userId: 'user_123',
+  });
+  const replay = await invokeAIDraftsRoute(request);
+
+  assert.equal(original.statusCode, 201);
+  assert.equal(replay.statusCode, 200);
+  assert.deepEqual(replay.body, original.body);
+  assert.equal(replay.body.weeklyPlanParentId, 'parent_ai_1');
+  assert.equal(replay.body.weeklyPlanVersionId, 'version_ai_1');
+  assert.equal(calls.pipeline.length, 1);
+  assert.equal(calls.create.length, 1);
+  assert.equal(calls.presentation.length, 1);
+  assert.deepEqual(
+    readGenerationProgress({
+      generationId: 'replay_generation',
+      userId: 'user_123',
+    }),
+    progressBeforeReplay
+  );
+});
+
+test('a concurrent duplicate receives AI_GENERATION_IN_PROGRESS and cannot start a second pipeline', async () => {
+  let releasePipeline;
+  pipelineImplementation = () => new Promise((resolve) => {
+    releasePipeline = () => resolve(pipelineResult);
+  });
+  const request = {
+    body: { userId: 'user_123', generationId: 'concurrent_generation' },
+  };
+
+  const firstRequest = invokeAIDraftsRoute(request);
+  await Promise.resolve();
+  const duplicate = await invokeAIDraftsRoute(request);
+
+  assert.equal(duplicate.statusCode, 409);
+  assert.equal(duplicate.body.error.code, 'AI_GENERATION_IN_PROGRESS');
+  assert.equal(calls.pipeline.length, 1);
+  assert.equal(calls.create.length, 0);
+
+  releasePipeline();
+  const original = await firstRequest;
+  assert.equal(original.statusCode, 201);
+  assert.equal(calls.pipeline.length, 1);
+  assert.equal(calls.create.length, 1);
+});
+
+test('the same generationId belongs to the user and never replays another user result', async () => {
+  const owner = await invokeAIDraftsRoute({
+    body: { userId: 'owner', generationId: 'shared_generation' },
+  });
+  const other = await invokeAIDraftsRoute({
+    body: { userId: 'other', generationId: 'shared_generation' },
+  });
+
+  assert.equal(owner.statusCode, 201);
+  assert.equal(other.statusCode, 201);
+  assert.equal(owner.body.weeklyPlanParentId, 'parent_ai_1');
+  assert.equal(other.body.weeklyPlanParentId, 'parent_ai_2');
+  assert.equal(calls.pipeline.length, 2);
+  assert.equal(calls.create.length, 2);
+});
+
+test('a FAILED record permits a legitimate rerun with the same generationId', async () => {
+  const request = {
+    body: { userId: 'user_123', generationId: 'retry_generation' },
+  };
+  pipelineResult = { ...createSuccessfulPipelineResult(), valid: false };
+  const failed = await invokeAIDraftsRoute(request);
+  pipelineResult = createSuccessfulPipelineResult();
+  const retried = await invokeAIDraftsRoute(request);
+
+  assert.equal(failed.statusCode, 422);
+  assert.equal(retried.statusCode, 201);
+  assert.equal(calls.pipeline.length, 2);
+  assert.equal(calls.create.length, 1);
+});
+
+test('TTL expiry removes the memo and permits regeneration', async () => {
+  const originalDateNow = Date.now;
+  let now = Date.parse('2026-08-11T12:00:00.000Z');
+  Date.now = () => now;
+  try {
+    const request = {
+      body: { userId: 'user_123', generationId: 'expired_generation' },
+    };
+    const original = await invokeAIDraftsRoute(request);
+    now += 10 * 60 * 1000 + 1;
+    const regenerated = await invokeAIDraftsRoute(request);
+
+    assert.equal(original.statusCode, 201);
+    assert.equal(regenerated.statusCode, 201);
+    assert.equal(original.body.weeklyPlanParentId, 'parent_ai_1');
+    assert.equal(regenerated.body.weeklyPlanParentId, 'parent_ai_2');
+    assert.equal(calls.pipeline.length, 2);
+    assert.equal(calls.create.length, 2);
+  } finally {
+    Date.now = originalDateNow;
+  }
 });
 
 test('progress GET hides missing and wrong-owner records', async () => {

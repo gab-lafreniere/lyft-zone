@@ -204,6 +204,10 @@ GÉNÉRATION INITIALE (EN COURS)
   - convertir le weekly plan publié en cycle
 - L’onboarding V2 a remplacé l’ancien Wizard et est maintenant implémenté séparément du AI Builder UI
 - À la fin de l’onboarding, le profil est sauvegardé puis le même pipeline AI Weekly Plan est déclenché avant conversion en cycle
+- `generationId` est la clé d’idempotence de la génération AI déclenchée par l’onboarding: elle est créée une seule fois par tentative, conservée dans le flow et réutilisée pour les retries et la récupération après refresh ou perte de réponse
+- Le résultat public d’une génération réussie est mémorisé dans le registre backend en mémoire afin qu’un retry avec le même utilisateur et le même `generationId` retourne exactement le même Weekly Plan sans relancer le pipeline ni réécrire les artefacts
+- Cette garantie est limitée aux 10 minutes de vie du registre dans le processus Node courant; elle ne survit ni à un restart ni à un redéploiement Render et ne couvre pas plusieurs instances backend
+- Si la topologie Render devient multi-instance, la direction durable est une revendication d’unicité transactionnelle dans Neon/Postgres (par exemple une table `ai_generation_attempts` ou une persistance unique de `generationId`)
 
 Limitation temporaire des objectifs:
 - AI Weekly Plan Builder (version actuelle) supporte uniquement HYPERTROPHY
